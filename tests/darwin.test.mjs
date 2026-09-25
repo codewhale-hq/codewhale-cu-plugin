@@ -151,6 +151,13 @@ test('native window matching refuses another process, mismatched geometry and am
     assert.equal(owner([{...floating,kCGWindowAlpha:0},selected]).owner_pid,123,'transparent overlays do not intercept');
   }
   assert.equal(owner([{...selected,kCGWindowLayer:8}]).owner_pid,123,'the bound app can target its own floating panels');
+  // The agent's own drawn cursor sits on the point it marks and never occludes it.
+  const agentCursor={kCGWindowOwnerPID:777,kCGWindowOwnerName:'Codewhale Computer Use',kCGWindowLayer:1000,kCGWindowAlpha:1,kCGWindowNumber:46,kCGWindowBounds:{X:2,Y:2,Width:96,Height:96}};
+  assert.equal(owner([agentCursor,selected]).owner_pid,123,'the agent cursor is click-through');
+  assert.equal(owner([{...agentCursor,kCGWindowBounds:{X:0,Y:0,Width:400,Height:300}},selected]).owner_pid,777,'a full-size window of the same owner still occludes');
+  assert.equal(owner([{...agentCursor,kCGWindowLayer:0},selected]).owner_pid,777,'only the screen-saver-level cursor panel is exempt');
+  const hide=spawnSync(binary,[JSON.stringify({tool:'agent_cursor',args:{hide:true}})],{encoding:'utf8'});
+  assert.equal(hide.status,0,hide.stderr);assert.deepEqual(JSON.parse(hide.stdout),{hidden:true});
 
 });
 
@@ -238,6 +245,33 @@ test('macOS background binding avoids reopen and delivers a held drag at the age
   assert.equal(drag.args.input_app_ref.pid,123);
   assert.ok(!calls.some(c=>['pointer_sequence','release_input','window_at_point'].includes(c.tool)));
   assert.ok(!calls.some(c=>c.tool==='preview_notify'),'background actions do not open preview');
+});
+
+test('the agent cursor glides to every acting point and never rides on reads', async t => {
+  const reply = r => r.tool === 'input_capabilities' ? { input_lease: 1, window_record: 1, background_focus_guard: 1, background_actions: 1 }
+    : r.tool === 'hit_test' ? PRESSABLE : undefined;
+  const { backend, calls } = stubBackend(t, reply);
+  await backend.open_application({ name: 'TextEdit' });
+  await backend.left_click({ target: { x: 50, y: 60 } });
+  const hit = calls.find(c => c.tool === 'hit_test');
+  assert.deepEqual(hit.args.agent_pointer, { x: 50, y: 60, click: true, glide_ms: 180 });
+  assert.ok(calls.filter(c => c.tool !== 'hit_test').every(c => c.args.agent_pointer === undefined), 'reads and lookups never move the agent cursor');
+  await backend.open_application({ name: 'TextEdit', activate: true });
+  await backend.left_mouse_down({ target: { x: 100, y: 200 } });
+  await backend.mouse_move({ target: { x: 140, y: 250 } });
+  await backend.left_mouse_up({});
+  assert.deepEqual(calls.findLast(c => c.tool === 'bg_pointer').args.agent_pointer, { x: 140, y: 250, click: true, glide_ms: 180 }, 'a drag ends where the agent pointer let go');
+  await backend.closeSession();
+  assert.ok(calls.some(c => c.tool === 'agent_cursor' && c.args.hide === true), 'closing the session hides its cursor');
+});
+
+test('CODEWHALE_CU_AGENT_CURSOR=0 turns the drawn agent cursor and its glide off', async t => {
+  withEnv(t, { CODEWHALE_CU_AGENT_CURSOR: '0' });
+  const { backend, calls } = stubBackend(t, r => r.tool === 'hit_test' ? PRESSABLE : undefined);
+  await backend.open_application({ name: 'TextEdit' });
+  await backend.left_click({ target: { x: 50, y: 60 } });
+  assert.ok(calls.some(c => c.tool === 'hit_test'));
+  assert.ok(calls.every(c => c.args.agent_pointer === undefined));
 });
 
 /** Backend wired to a scripted native helper; returns the requests it made. */

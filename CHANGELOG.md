@@ -1,5 +1,9 @@
 # Release notes
 
+## Unreleased
+
+- **A visible Codewhale cursor on macOS.** Every action that targets a point glides an on-screen Codewhale pointer there before the action lands: the cyan arrow from the app icon with a whale badge, and a ring on clicks. The helper app draws it in a click-through window that screen capture excludes, and the helper's occlusion check ignores it, so it never blocks the point it marks. Your own cursor still never moves. It fades after 8 s idle and hides when the session closes. `CODEWHALE_CU_AGENT_CURSOR=0` turns it off and `CODEWHALE_CU_AGENT_CURSOR_GLIDE_MS` (default 180, max 600) sets the glide, which each pointing action waits for. Needs the new helper; an older helper ignores it. The preview panel draws the same pointer.
+
 ## 0.16.1 — 2026-11-05
 
 Published from `5b2466aef68de52aa1b46e58446135adeb850e7c`, runtime `4c743d2017143416`, with 11 verified assets. Exact-source three-platform CI and CodeQL passed; local Mac suite 550 pass, 29 platform skips, zero failures. Verified installed by a signed Codewhale desktop on macOS 26.1. [Qualification record](docs/RELEASE_CHECKLIST.md#0161--published-2026-11-05).
