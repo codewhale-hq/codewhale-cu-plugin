@@ -469,9 +469,9 @@ test("Wayland input maps keys, clicks and scrolls onto virtual-device steps in l
   await backend.key({ text: "ctrl+shift+Left" });
   assert.deepEqual(sent.at(-1), [["key", "Control_L", 1], ["key", "Shift_L", 1], ["key", "Left", 1], ["key", "Left", 0], ["key", "Shift_L", 0], ["key", "Control_L", 0]]);
   await backend.right_click({ target: { x: 1300, y: 20 } });
-  assert.deepEqual(sent.slice(-2), [[["move", 1300, 20, 2560, 800]], [["button", 0x111, 1], ["button", 0x111, 0]]]);
+  assert.deepEqual(sent.slice(-2), [[["move", 1300, 20, 2560, 800], ["sleep", 30], ["move", 1301, 20, 2560, 800], ["move", 1300, 20, 2560, 800]], [["button", 0x111, 1], ["button", 0x111, 0]]]);
   await backend.scroll({ target: { x: 10, y: 10 }, direction: "up", amount: 2 });
-  assert.deepEqual(sent.at(-1), [["axis", 0, -15, -1], ["axis", 0, -15, -1]]);
+  assert.deepEqual(sent.at(-1), [["axis", 0, -15, -1], ["sleep", 16], ["axis", 0, -15, -1]]);
   await backend.type({ text: "café ok" });
   assert.deepEqual(sent.at(-1), [["text", "café ok"]]);
   const probe = await backend.probe();

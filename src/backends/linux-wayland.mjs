@@ -312,7 +312,12 @@ export function createWayland({ run, need, tools, keyName, fs, inputClient }) {
       await input.request([["text", String(text)]], 10_000 + [...String(text)].length * 40);
     },
     async move(x, y) {
-      await input.request([await moveStep(x, y)]);
+      // XWayland lost a click that followed the pointer's entry into an X
+      // window with no motion inside it; a one-pixel nudge and return gives it one.
+      const to = await moveStep(x, y);
+      const nudge = [...to];
+      nudge[1] += to[1] + 1 < to[3] ? 1 : -1;
+      await input.request([to, ["sleep", 30], nudge, to]);
     },
     async click(button, clicks) {
       const code = BUTTONS[button] ?? BUTTONS[1];
@@ -333,7 +338,9 @@ export function createWayland({ run, need, tools, keyName, fs, inputClient }) {
       const n = Math.max(1, Math.min(30, Number(amount) || 3));
       const [axis, sign] = { down: [0, 1], up: [0, -1], right: [1, 1], left: [1, -1] }[direction] ?? [0, 1];
       const steps = [];
-      for (let i = 0; i < n; i++) steps.push(["axis", axis, 15 * sign, sign]);
+      // One notch per frame, paced like a wheel: Chromium registered 2 of 30
+      // notches sent in one burst.
+      for (let i = 0; i < n; i++) steps.push(...(i ? [["sleep", 16]] : []), ["axis", axis, 15 * sign, sign]);
       await input.request(steps);
     },
     displays,

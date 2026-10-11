@@ -25,6 +25,9 @@ import ctypes, ctypes.util, json, os, select, socket, struct, sys, tempfile, tim
 
 # Seconds a client gets to load a keymap before the first key that needs it.
 SETTLE = 0.06
+# A lent keymap differs from the one the client already holds; Tk under
+# XWayland read a lent key against the old map once in 5 at 60 ms.
+SETTLE_LENT = 0.15
 
 class WaylandError(Exception):
     def __init__(self, code, message):
@@ -284,7 +287,7 @@ class Devices:
             os.close(fd)
         self.keymap = keymap
 
-    def activate(self):
+    def activate(self, settle=None):
         """Make this the seat's active keyboard before any key.
 
         The compositor hands a keyboard's keymap to the focused client only
@@ -299,7 +302,7 @@ class Devices:
         self.conn.send(self.keyboard, 2, struct.pack("<IIII", mods[0] ^ shift, *mods[1:]))
         self.conn.send(self.keyboard, 2, struct.pack("<IIII", *mods))
         self.conn.roundtrip()
-        time.sleep(SETTLE)
+        time.sleep(SETTLE if settle is None else settle)
         self.activated = True
 
     def ensure_pointer(self):
@@ -354,7 +357,7 @@ class Devices:
                     self.upload(self.base.augmented(sorted(extra), seg))
                 elif self.keymap is not self.base:
                     self.upload(self.base)
-                self.activate()
+                self.activate(SETTLE_LENT if extra else SETTLE)
                 for ch in seg:
                     self.stroke(*self.keymap.char(ch))
             if self.keymap is not self.base:
