@@ -49,6 +49,10 @@ under test.
 
 ## Resolved non-green rows (2026-09-16)
 
+This run predates the consent check on the app receiving each input; the
+harness has not passed its input tasks since, so the 25/27 below is a
+historical result, not the current state. A re-run is in progress.
+
 `docker/run.sh parity --repeats 5` on 2026-09-16 (Chromium 152, Debian 12,
 node 24.21, Xvfb 1600x1200) is **25/27 demonstrated**: every row green except
 `native.modal_dialog` (fails, documented below) and the two held-input rows

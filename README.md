@@ -471,10 +471,12 @@ permission** — it never guesses and never half-acts.
   improves cursor reads.
 - **Windows** — PowerShell (built in). Recording is unavailable pending
   session-owned recorder cleanup.
-- **Linux** — X11: xdotool, wmctrl, scrot or imagemagick, xclip; Wayland:
-  grim, wtype, ydotool+ydotoold, wl-clipboard; python3-pyatspi
-  for the accessibility tree. Recording is unavailable pending session-owned
-  recorder cleanup.
+- **Linux** — X11: xdotool, wmctrl, scrot or imagemagick, xclip, and ffmpeg
+  for recording (`x11grab`); python3-pyatspi for the accessibility tree.
+  Wayland is observation only: grim screenshots, wl-clipboard and AT-SPI
+  work, but raw keyboard and pointer input is refused because Wayland does
+  not tell Codewhale which app would receive it, and recording is
+  unavailable.
 - **HarmonyOS** — `hdc` on PATH with the device connected
   (`hdc list targets`); ffmpeg on the host for snapshot-series recordings.
 - **Spawned computers** — a reachable docker daemon (`docker version`).
@@ -488,9 +490,9 @@ permission** — it never guesses and never half-acts.
 | Ability | macOS | Windows | Linux | HarmonyOS |
 |---|---|---|---|---|
 | Accessibility tree | Native Accessibility API | UIAutomation | AT-SPI (pyatspi) | `uitest dumpLayout` |
-| Raw input | Native CGEvent to the selected process | user32 SendInput/mouse_event (PowerShell) | xdotool (X11) / ydotool+wtype (Wayland) | `uitest uiInput` |
+| Raw input | Native CGEvent to the selected process | user32 SendInput/mouse_event (PowerShell) | xdotool (X11); refused on Wayland | `uitest uiInput` |
 | Screenshots | `screencapture` | .NET CopyFromScreen | scrot/import (X11), grim (Wayland) | `snapshot_display` |
-| Recording | ScreenCaptureKit → .mov (no recorder overlay) | unavailable pending owned cleanup | unavailable pending owned cleanup | snapshot-series + ffmpeg mux |
+| Recording | ScreenCaptureKit → .mov (no recorder overlay) | unavailable pending owned cleanup | ffmpeg `x11grab` → .mp4 (X11); unavailable on Wayland | snapshot-series + ffmpeg mux |
 | Clipboard | pbcopy/pbpaste | Get/Set-Clipboard | xclip/xsel, wl-clipboard | fail-closed (not exposed by hdc) |
 
 ## Remote computers (ssh)
@@ -580,13 +582,11 @@ image. OCR was verified on a generated image and the actual Codewhale app;
 it does not interpret unlabeled icons, charts or other graphical meaning.
 Screenshots and zoom remain available to models that support images.
 
-**Live-verified: Linux X11** — the isolated Xvfb route re-ran at repeats 5 on
-2026-09-16: 25/27 demonstrated, 2 held-input rows skipped with committed
-reasons, `native.modal_dialog` failing under a documented toolkit-modal
-limitation (`parity/results/linux-xvfb-isolated-2026-09-16.json`). A shared
-login-session desktop has not been re-run since the runner's split into a
-platform-neutral engine plus per-platform drivers; see
-[docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md).
+**Linux X11: not currently verified.** The committed Linux parity receipts
+predate the change that checks consent on the app receiving each input, and
+the harness has not passed its input tasks since; a re-run on the isolated
+Xvfb, shared-desktop and Docker routes is in progress. See
+[docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md) for the older rows.
 
 **Background input has a native AppKit verification harness** with an independent
 foreground/cursor observer: `node scripts/verify-background-macos.mjs`.
