@@ -257,6 +257,36 @@ test("open_application with a missing executable fails with app_not_found and th
   await assert.rejects(backend.open_application({ name: "codewhale-no-such-app" }), (err) => err.code === "app_not_found" && /not found on PATH/.test(err.message));
 });
 
+test("a Wayland session that also exports DISPLAY is treated as Wayland, so input is refused rather than sent through XWayland", async (t) => {
+  const saved = Object.fromEntries(["DISPLAY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE"].map((k) => [k, process.env[k]]));
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  Object.assign(process.env, { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-1", XDG_SESSION_TYPE: "wayland" });
+  const desk = fakeDesktop();
+  const backend = create({ exec: { run: desk.run, have } });
+  await assert.rejects(backend.input_owner({ kind: "keyboard" }), (err) => err.code === "input_owner_unknown" && /Wayland/.test(err.message));
+  assert.ok(!desk.calls.some((c) => c.cmd === "xdotool"), "no X11 tool is consulted");
+});
+
+test("list_apps on sway lists one entry per app id", async (t) => {
+  const saved = Object.fromEntries(["DISPLAY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE"].map((k) => [k, process.env[k]]));
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  delete process.env.DISPLAY;
+  Object.assign(process.env, { WAYLAND_DISPLAY: "wayland-1", XDG_SESSION_TYPE: "wayland" });
+  const tree = { type: "root", nodes: [{ type: "con", name: "Untitled - Mousepad", app_id: "mousepad", rect: { x: 0, y: 0, width: 10, height: 10 } }, { type: "con", name: "Terminal", app_id: "foot", rect: { x: 0, y: 0, width: 10, height: 10 } }] };
+  const desk = fakeDesktop({ onCommand: (cmd) => (cmd === "swaymsg" ? { code: 0, stdout: JSON.stringify(tree), stderr: "", timedOut: false, signal: null } : null) });
+  const backend = create({ exec: { run: desk.run, have } });
+  assert.deepEqual((await backend.list_apps()).apps.map((a) => a.name), ["mousepad", "foot"]);
+});
+
+test("list_displays marks the only output main when xrandr names no primary", async (t) => {
+  x11Env(t);
+  const desk = fakeDesktop({ onCommand: (cmd) => (cmd === "xrandr" ? { code: 0, stdout: "screen connected 1440x900+0+0 0mm x 0mm\n", stderr: "", timedOut: false, signal: null } : null) });
+  const backend = create({ exec: { run: desk.run, have } });
+  const displays = await backend.list_displays();
+  assert.equal(displays.length, 1);
+  assert.equal(displays[0].main, true);
+});
+
 test("kill_app refuses ambiguity and never terminates its own process chain", async (t) => {
   x11Env(t);
   const backend = create({ exec: { run: fakeDesktop().run, have } });

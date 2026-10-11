@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
-import { run as nativeRun, runOk, ExecError, tryJson, have as nativeHave, withSignal, throwIfAborted, wait } from "../exec.mjs";
+import { run as nativeRun, ExecError, tryJson, have as nativeHave, withSignal, throwIfAborted, wait } from "../exec.mjs";
 import { pngSize } from "../png-size.mjs";
 import { createBrowser } from "../browser-cdp.mjs";
 import { recordingsDir, recordingsOutputPath } from "../recordings.mjs";
@@ -104,6 +104,7 @@ export function create({ exec } = {}) {
 
   const tools = {};
   let session = null; // "x11" | "wayland"
+  let sessionReason = null;
   let probed = false;
   let lastRaster = null;
   let mouseHeld = false;
@@ -136,9 +137,19 @@ export function create({ exec } = {}) {
   async function probeSession() {
     if (probed) return session;
     throwIfAborted();
-    const wayland = !!(process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland");
+    // A Wayland session usually also exports DISPLAY for XWayland, whose X11
+    // tools see only XWayland windows. Wayland wins whenever the session says
+    // so or its socket exists.
+    const sock = process.env.WAYLAND_DISPLAY;
+    const sockPath = sock && (path.isAbsolute(sock) ? sock : process.env.XDG_RUNTIME_DIR ? path.join(process.env.XDG_RUNTIME_DIR, sock) : null);
+    let socketExists = false;
+    try { socketExists = !!sockPath && fs.statSync(sockPath).isSocket(); } catch {}
     const x11 = !!(process.env.DISPLAY || process.env.XDG_SESSION_TYPE === "x11");
-    session = wayland && !x11 ? "wayland" : x11 ? "x11" : null;
+    if (process.env.XDG_SESSION_TYPE === "wayland") { session = "wayland"; sessionReason = "XDG_SESSION_TYPE=wayland"; }
+    else if (socketExists) { session = "wayland"; sessionReason = `Wayland socket ${sock} exists`; }
+    else if (sock && !x11) { session = "wayland"; sessionReason = "WAYLAND_DISPLAY is set and DISPLAY is not"; }
+    else if (x11) { session = "x11"; sessionReason = process.env.DISPLAY ? `DISPLAY=${process.env.DISPLAY}` : "XDG_SESSION_TYPE=x11"; }
+    else session = null;
     if (session === null) {
       const e = new ExecError("no X11 ($DISPLAY) or Wayland ($WAYLAND_DISPLAY) session visible to this process — set DISPLAY or run inside the desktop session");
       e.code = "no_session";
@@ -634,7 +645,7 @@ except Exception as e:
     return ydotool(["click", "0x" + code.toString(16)]);
   }
 
-  return {
+  const api = {
     platform: "linux",
     releaseInput,
     browser_start: browser.start,
@@ -656,12 +667,12 @@ except Exception as e:
         clipboard: !!(tools.xclip || tools.xsel || (tools["wl-copy"] && tools["wl-paste"])),
         recording: session === "x11" && !!tools.ffmpeg,
         accessibility_tree: tools.pyatspi,
-        held_input: exec?.persistentInputOwner === true && !!(session === "x11" ? tools.xdotool : tools.wtype && tools.ydotool),
+        held_input: exec?.persistentInputOwner === true && session === "x11" && !!tools.xdotool,
+        raw_input: session === "x11" && !!tools.xdotool,
       };
       const missing = [];
       if (exec?.persistentInputOwner !== true) missing.push("connected Computer Use desktop helper (held keys, held buttons and drag)");
       if (session === "x11" && !tools.xdotool) missing.push("xdotool (input)");
-      if (session === "wayland" && !tools.ydotool) missing.push("ydotool+ydotoold (mouse input)");
       if (session === "wayland" && !tools.grim) missing.push("grim (screenshots)");
       if (session === "x11" && !tools.scrot && !tools.import) missing.push("scrot or imagemagick (screenshots)");
       if (!(session === "x11" && tools.ffmpeg)) missing.push("ffmpeg with x11grab (screen recording; X11 only)");
@@ -671,8 +682,10 @@ except Exception as e:
       if (session === "x11" && tools.xdotool) {
         const r = await run("xdotool", ["getdisplaygeometry"], { timeoutMs: 10_000 });
         permissions.input = r.code === 0 ? "ok" : "failed";
-      } else if (session === "wayland" && tools.ydotool) {
-        permissions.input = "unavailable"; // ydotool can't be probed without moving the pointer
+      } else if (session === "wayland") {
+        // Wayland does not say which app would receive input, so raw input is
+        // refused there (observation and AT-SPI only).
+        permissions.input = "refused";
       }
       try {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cu-probe-"));
@@ -689,23 +702,29 @@ except Exception as e:
       }
       if (permissions.screen_capture === "failed" || permissions.input === "failed") {
         const bad = [];
-        if (permissions.input === "failed") bad.push(`input (${session === "wayland" ? "ydotool" : "xdotool getdisplaygeometry"})`);
+        if (permissions.input === "failed") bad.push("input (xdotool getdisplaygeometry)");
         if (permissions.screen_capture === "failed") bad.push(`screen_capture (${session === "wayland" ? "grim" : "scrot/import"} probe shot)`);
         const e = new ExecError(`permission checks failed: ${bad.join("; ")} — permissions ${JSON.stringify(permissions)}`);
         e.code = "permissions_denied";
         throw e;
       }
-      return { platform: "linux", session: s, capabilities: caps, permissions, missing, note: "Every capability probes at call time and fails closed naming the missing tool." };
+      return { platform: "linux", session: s, session_reason: sessionReason, capabilities: caps, permissions, missing,
+        note: s === "wayland"
+          ? "Wayland session: screenshots, clipboard and the AT-SPI tree only. Keyboard and pointer input are refused because Wayland does not tell Codewhale which app would receive them."
+          : "Every capability probes at call time and fails closed naming the missing tool." };
     },
     list_displays: async () => {
       await probeSession();
       if (session === "x11" && tools.xrandr) {
-        const r = await runOk("xrandr", ["--query"], { timeoutMs: 15_000 });
+        const r = await run("xrandr", ["--query"], { timeoutMs: 15_000 });
+        if (r.code !== 0) throw new ExecError(`xrandr exited ${r.code}: ${r.stderr.trim().slice(0, 200)}`, r);
         const displays = [];
         let i = 1;
         for (const m of r.stdout.matchAll(/^(\S+) connected (?:primary )?(\d+)x(\d+)\+(\d+)\+(\d+)/gm)) {
-          displays.push({ index: i++, name: m[1], points: { x: Number(m[4]), y: Number(m[5]), w: Number(m[2]), h: Number(m[3]) }, pixels: { w: Number(m[2]), h: Number(m[3]) }, scale: 1, main: /primary/.test(m[0]) || i === 1 });
+          displays.push({ index: i++, name: m[1], points: { x: Number(m[4]), y: Number(m[5]), w: Number(m[2]), h: Number(m[3]) }, pixels: { w: Number(m[2]), h: Number(m[3]) }, scale: 1, main: /primary/.test(m[0]) });
         }
+        // Without a primary output (Xvfb has none) the first one is main.
+        if (displays.length && !displays.some((d) => d.main)) displays[0].main = true;
         if (displays.length) return displays;
       }
       if (session === "wayland" && tools.swaymsg) {
@@ -740,7 +759,7 @@ except Exception as e:
         return { apps: [...seen.values()] };
       }
       if (session === "wayland" && (tools.swaymsg || tools.hyprctl)) {
-        const w = await this.list_windows();
+        const w = await api.list_windows();
         const seen = new Map();
         for (const win of w.windows) {
           const cls = win.wm_class || win.app_id;
@@ -1231,7 +1250,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
       await probeSession();
       const cmd = session === "x11"
         ? (tools.xclip ? ["xclip", "-selection", "clipboard", "-o"] : ["xsel", "--clipboard", "--output"])
-        : ["wl-paste"];
+        : ["wl-paste", "--no-newline"];
       need(cmd[0], "clipboard read");
       const r = await run(cmd[0], cmd.slice(1), { timeoutMs: 10_000 });
       if (r.code !== 0) throw new ExecError("clipboard read failed", r);
@@ -1337,6 +1356,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
       return { dir, recordings: out, running: [...recordings.keys()] };
     },
   };
+  return api;
 
   /** Process state from /proc: state letter and parent pid, or null when the process is gone. */
   function procStat(pid) {
