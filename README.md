@@ -583,9 +583,9 @@ it does not interpret unlabeled icons, charts or other graphical meaning.
 Screenshots and zoom remain available to models that support images.
 
 **Linux X11 (experimental, from source).** Verified on 2026-10-11 on virtual
-X11 desktops (Xvfb with openbox) and in the Docker test image, at repeats 5
-over the 27-task suite. A real desktop environment (GNOME, KDE, XFCE) has not
-been tested.
+X11 desktops (Xvfb with openbox, and a full XFCE session) and in the Docker
+test image, at repeats 5 over the 27-task suite. GNOME and KDE sessions have
+not been tested.
 
 | route | demonstrated | not demonstrated |
 |---|---|---|
@@ -595,6 +595,8 @@ been tested.
 | shared display, desktop helper | 25/27 | `control.permission_denied`; `native.modal_dialog` 0/5 |
 | Docker image, direct | 23/27 | the two drag tasks; `browser.unicode_type` 2/5; `native.modal_dialog` 0/5 |
 | Docker image, desktop helper | 23/27 | `browser.unicode_type` 4/5; `browser.modifiers` 4/5; `control.permission_denied`; `native.modal_dialog` 0/5 |
+| XFCE session (xfce4-session, xfwm4, panel) on Xvfb, direct | 23/27 | the two drag tasks; `browser.unicode_type` 4/5; `native.modal_dialog` 0/5 |
+| XFCE session, desktop helper | 24/27 | `browser.unicode_type` 4/5; `control.permission_denied`; `native.modal_dialog` 0/5 |
 
 Known limits: a dialog that is modal only inside its toolkit (Tk's
 `simpledialog`) can let typed text reach the parent window, so click into the

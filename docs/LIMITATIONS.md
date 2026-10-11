@@ -204,6 +204,15 @@ Chromium 154 (2/5 direct, 4/5 helper; a 100 ms settle after each remapped key
 did not change that, 6/10), and `browser.modifiers` missed once on a cold first
 rep through the helper ("no managed application window has keyboard focus").
 
+XFCE session (xfce4-session, xfwm4, panel, xfdesktop on Xvfb `:0`, repeats 5):
+direct 23/27, desktop helper 24/27 (`linux-x11-xfce-2026-10-11.json`,
+`linux-x11-xfce-helper-2026-10-11.json`). The exceptions are the same ones
+(`native.modal_dialog` 0/5, so a real window manager does not change the Tk
+toolkit-modal result; `browser.unicode_type` 4/5). On a real session Chromium
+raises a gnome-keyring "Choose password for new keyring" dialog on first start
+that takes all input; the parity fixture launches Chromium with
+`--password-store=basic` to avoid it, and a person has to answer that prompt.
+
 None of these runs say anything about GNOME or KDE sessions, real XWayland,
 multiple monitors, HiDPI or SSH.
 
