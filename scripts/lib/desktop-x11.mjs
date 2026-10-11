@@ -447,7 +447,8 @@ async function oracleState(task, repCtx) {
     baseEnv,
     browserAppName,
     // Without --helper the server drives the backend in-process.
-    serverEnv: () => (HELPER ? { CODEWHALE_CU_APP_SOCKET: helperSocket } : { CODEWHALE_CU_APP: "off" }),
+    // (An empty CODEWHALE_CU_APP overrides an inherited "off", as the Docker image sets.)
+    serverEnv: () => (HELPER ? { CODEWHALE_CU_APP_SOCKET: helperSocket, CODEWHALE_CU_APP: "" } : { CODEWHALE_CU_APP: "off" }),
     inputOwner: HELPER,
     hostProbe,
     launchFixture,
