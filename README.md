@@ -5,7 +5,7 @@
 
 # Computer Use
 
-**By Codewhale · macOS beta (notarized app and source) · Windows experimental unsigned preview · Linux experimental source/Docker**
+**By Codewhale · macOS beta (notarized app and source) · Windows experimental unsigned preview · Linux experimental: X11 verified on a virtual desktop (Xvfb + openbox) and in the Docker test image, from source; Wayland observation only**
 
 The [0.12.0 release](https://github.com/codewhale-hq/codewhale-cu-plugin/releases/tag/v0.12.0)
 provides the notarized universal Mac app and an **unsigned Windows x64 preview**.
@@ -582,11 +582,29 @@ image. OCR was verified on a generated image and the actual Codewhale app;
 it does not interpret unlabeled icons, charts or other graphical meaning.
 Screenshots and zoom remain available to models that support images.
 
-**Linux X11: not currently verified.** The committed Linux parity receipts
-predate the change that checks consent on the app receiving each input, and
-the harness has not passed its input tasks since; a re-run on the isolated
-Xvfb, shared-desktop and Docker routes is in progress. See
-[docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md) for the older rows.
+**Linux X11 (experimental, from source).** Verified on 2026-10-11 on virtual
+X11 desktops (Xvfb with openbox) and in the Docker test image, at repeats 5
+over the 27-task suite. A real desktop environment (GNOME, KDE, XFCE) has not
+been tested.
+
+| route | demonstrated | not demonstrated |
+|---|---|---|
+| isolated Xvfb, direct | 24/27 | the two drag tasks (need the desktop helper); `native.modal_dialog` 0/5 |
+| isolated Xvfb, desktop helper | 25/27 | `control.permission_denied` (a direct-route check); `native.modal_dialog` 0/5 |
+| shared display, direct | 23/27 | the two drag tasks; `browser.unicode_type` 4/5; `native.modal_dialog` 0/5 |
+| shared display, desktop helper | 25/27 | `control.permission_denied`; `native.modal_dialog` 0/5 |
+| Docker image, direct | 23/27 | the two drag tasks; `browser.unicode_type` 2/5; `native.modal_dialog` 0/5 |
+| Docker image, desktop helper | 23/27 | `browser.unicode_type` 4/5; `browser.modifiers` 4/5; `control.permission_denied`; `native.modal_dialog` 0/5 |
+
+Known limits: a dialog that is modal only inside its toolkit (Tk's
+`simpledialog`) can let typed text reach the parent window, so click into the
+dialog first; non-ASCII text typed into Chromium can drop characters, so read it
+back with `get_value`; Wayland has screenshots, clipboard and the accessibility
+tree only, and raw input is refused. Not tested: GNOME or KDE sessions, real
+XWayland, multiple monitors, HiDPI, SSH remote. Receipts are in
+`parity/results/`; [docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md) and
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md) have the detail. Helper-route input
+consent needs a plugin release that includes the CW-7245 fix.
 
 **Background input has a native AppKit verification harness** with an independent
 foreground/cursor observer: `node scripts/verify-background-macos.mjs`.
