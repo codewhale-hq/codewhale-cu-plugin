@@ -81,6 +81,13 @@ class Server {
         if (!line) continue;
         try {
           const msg = JSON.parse(line);
+          if (msg.method === "elicitation/create" && msg.id != null) {
+            const approved = this.approveNext != null && msg.params?.message === this.approveNext;
+            this.approveNext = null;
+            process.stderr.write(`[harness] consent prompt ${approved ? "approved" : "declined"}: ${msg.params?.message}\n`);
+            this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { action: approved ? "accept" : "decline" } }) + "\n");
+            continue;
+          }
           if (msg.id != null && this.pending.has(msg.id)) { this.pending.get(msg.id)(msg); this.pending.delete(msg.id); }
         } catch {}
       }
@@ -111,7 +118,7 @@ class Server {
     this.pending.clear();
     this.buf = "";
     this.start();
-    await this.rpc("initialize", { protocolVersion: "2025-06-18" }).p;
+    await this.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: { elicitation: {} } }).p;
   }
   async stop() {
     const proc = this.proc;
@@ -466,6 +473,7 @@ async function runStep(step, { task, repCtx, server, ctx, vars, rep, counts }) {
     if (process.env.PARITY_DEBUG) console.error("  [dbg]", name, JSON.stringify(args));
     counts.calls++;
     stepInfo.call = name;
+    if (counts.index < 0 && name === "consent_allow") server.approveNext = `Computer Use asks for your decision: consent_allow ${JSON.stringify(args).slice(0, 400)}`;
 
     if (step.cancel_after_ms != null || step.expect_no_response_ms != null) {
       const { id, p } = server.rpc("tools/call", { name, arguments: args });
@@ -560,7 +568,7 @@ async function runRep(task, repIdx, ctx) {
   let afterLaunch = before;
 
   try {
-    await server.rpc("initialize", { protocolVersion: "2025-06-18" }).p;
+    await server.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: { elicitation: {} } }).p;
     server.notify("notifications/initialized", {});
     if (task.fixture) {
       proc = await desktop.launchFixture(task.fixture, repCtx);

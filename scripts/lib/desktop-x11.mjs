@@ -279,6 +279,7 @@ async function launchFixture(kind, repCtx) {
     // detached makes proc.pid a session leader; killFixture sweeps the whole
     // session because chromium children setpgid out of the group kill.
     proc.cuSessionId = proc.pid;
+    repCtx.pid = proc.pid;
     fixtureProcs.push(proc);
     try {
       const id = findWindow(fx.title_prefix, 15_000, proc.pid);
@@ -323,6 +324,7 @@ async function launchFixture(kind, repCtx) {
       throw new Error("native fixture window did not appear");
     }
     repCtx.winId = id;
+    repCtx.pid = proc.pid;
     repCtx.nativeStateFile = stateFile;
     return proc;
   }
@@ -421,7 +423,15 @@ async function oracleState(task, repCtx) {
     focusFixture,
     killFixture,
     // X11 input follows keyboard focus, so no per-task binding step is needed.
-    prelude: () => [],
+    prelude: (task, repCtx) => {
+      if (!task.fixture || !repCtx.pid) return [];
+      const steps = [{ call: "consent_allow", args: { pid: repCtx.pid } }];
+      const cls = /WM_CLASS\(STRING\) = "([^"]*)"/.exec(sh("xprop", ["-id", repCtx.winId, "WM_CLASS"], { env: { DISPLAY: workDisplay } }).stdout)?.[1];
+      if (task.fixture === "native" && cls) steps.push({ call: "consent_allow", args: { app: cls.split(".")[0] } });
+      if (task.fixture === "browser") steps.push({ call: "consent_allow", args: { app: browserAppName() } }, { call: "consent_allow", args: { app: "xdg-desktop-portal-gtk" } });
+      for (const app of (process.env.PARITY_EXTRA_CONSENT ?? "").split(",").filter(Boolean)) steps.push({ call: "consent_allow", args: { app } });
+      return steps;
+    },
     clientOrigin,
     windowGeometry,
     oracleState,
