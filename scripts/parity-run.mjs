@@ -54,7 +54,7 @@ if (!DRIVERS[process.platform]) {
   process.exit(2);
 }
 const { createDesktop } = await import(DRIVERS[process.platform]);
-const desktop = createDesktop({ parityDir: PARITY, tasksDoc: TASKS_DOC, isolated: ISOLATED });
+const desktop = createDesktop({ parityDir: PARITY, tasksDoc: TASKS_DOC, isolated: ISOLATED, helper: argv.includes("--helper") });
 
 // ---------- MCP server ----------
 class Server {
@@ -543,7 +543,7 @@ async function runRep(task, repIdx, ctx) {
 
   // A task the platform genuinely cannot express is recorded as a skip with a
   // reason, never silently dropped from the matrix.
-  if (task.skip) {
+  if (task.skip && !(task.needs_input_owner && desktop.inputOwner)) {
     return { ...rep, status: "skipped", reason: task.skip, elapsed_ms: 0,
              interference: { pointer_displacement_px: 0, active_window_changed: false },
              interference_actions: { pointer_displacement_px: 0, active_window_changed: false } };

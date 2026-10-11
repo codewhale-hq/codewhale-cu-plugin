@@ -81,9 +81,10 @@
         { "expect": { "path": "dropped", "equals": true } }
       ],
       "skip": "held-input gestures require a persistent input owner — the desktop helper or the agent --serve route; the direct in-process MCP surface refuses them (input_owner_required) by design so a disconnected client cannot leave buttons held",
+      "needs_input_owner": true,
       "known_limitations": {
-        "linux-xvfb": "no Linux desktop helper exists; the local route has no input owner and left_click_drag is refused input_owner_required. The 2026-09-07 receipt predates the input-owner guard — its 5/5 for this row is stale.",
-        "linux-x11": "no Linux desktop helper exists; the local route refuses left_click_drag (input_owner_required). Held input is possible through the ssh agent --serve route, which is a separate surface this suite does not run."
+        "linux-xvfb": "the direct route has no input owner and refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input.",
+        "linux-x11": "the direct route refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input."
       }
     },
     {
@@ -222,9 +223,10 @@
         { "expect": { "path": "in_zone", "equals": true } }
       ],
       "skip": "held-input gestures require a persistent input owner — the desktop helper or the agent --serve route; the direct in-process MCP surface refuses them (input_owner_required) by design so a disconnected client cannot leave buttons held",
+      "needs_input_owner": true,
       "known_limitations": {
-        "linux-xvfb": "no Linux desktop helper exists; the local route has no input owner and left_click_drag is refused input_owner_required. The 2026-09-07 receipt predates the input-owner guard — its 5/5 for this row is stale.",
-        "linux-x11": "no Linux desktop helper exists; the local route refuses left_click_drag (input_owner_required). Held input is possible through the ssh agent --serve route, which is a separate surface this suite does not run."
+        "linux-xvfb": "the direct route has no input owner and refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input.",
+        "linux-x11": "the direct route refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input."
       }
     },
     {

@@ -7,11 +7,17 @@ import os from "node:os";
 import path from "node:path";
 import { sh } from "./sh.mjs";
 
-export function createDesktop({ parityDir, tasksDoc, isolated }) {
+export function createDesktop({ parityDir, tasksDoc, isolated, helper = false }) {
   const TASKS_DOC = tasksDoc;
   const PARITY = parityDir;
   const HOME = os.homedir();
   const ISOLATED = isolated;
+  // --helper: the server reaches the desktop through the Linux desktop helper
+  // (app/daemon.mjs) on the work display, the route that owns held input.
+  const HELPER = helper;
+  let helperProc = null;
+  let helperSocket = null;
+  let helperStateDir = null;
 
 const HOST_DISPLAY = ":0"; // where the user's pointer/window live; interference is always measured here
 
@@ -81,7 +87,21 @@ async function startIsolated() {
     const [addr, pid] = bus.stdout.trim().split("\n");
     isoBusAddr = addr;
     isoBusPid = Number(pid);
+    // A fresh bus reports accessibility off, and Chromium then never joins
+    // AT-SPI even with --force-renderer-accessibility.
+    sh("gdbus", ["call", "--session", "--dest", "org.a11y.Bus", "--object-path", "/org/a11y/bus", "--method", "org.freedesktop.DBus.Properties.Set", "org.a11y.Status", "IsEnabled", "<true>"], { env: { DISPLAY: ":99", DBUS_SESSION_BUS_ADDRESS: addr } });
   }
+}
+
+async function startHelper() {
+  helperStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "cu-parity-helper-"));
+  helperSocket = path.join(helperStateDir, "app.sock");
+  helperProc = spawn(process.execPath, [path.join(PARITY, "..", "app", "daemon.mjs")], {
+    env: { ...process.env, ...baseEnv(), CODEWHALE_CU_STATE_DIR: helperStateDir, CODEWHALE_CU_APP_SOCKET: helperSocket },
+    stdio: ["ignore", "ignore", "inherit"],
+  });
+  for (let i = 0; i < 40 && !fs.existsSync(helperSocket); i++) await new Promise((r) => setTimeout(r, 250));
+  if (!fs.existsSync(helperSocket)) throw new Error("the desktop helper did not open its socket");
 }
 
 // ---------- env shared by fixtures and the server ----------
@@ -401,7 +421,11 @@ async function oracleState(task, repCtx) {
 
   return {
     sessionType,
-    async start() { if (ISOLATED) await startIsolated(); geometry(); },
+    async start() {
+      if (ISOLATED) await startIsolated();
+      geometry();
+      if (HELPER) await startHelper();
+    },
     stop() {
       // Backstop for any fixture family a rep failed to reap (e.g. a launch
       // error path before killFixture existed for it).
@@ -409,15 +433,17 @@ async function oracleState(task, repCtx) {
         try { process.kill(-p.pid, "SIGKILL"); } catch { try { p.kill("SIGKILL"); } catch {} }
         if (p.cuSessionId) for (const m of sessionMembers(p.cuSessionId)) { try { process.kill(m, "SIGKILL"); } catch {} }
       }
+      if (helperProc) try { helperProc.kill(); } catch {}
+      if (helperStateDir) fs.rmSync(helperStateDir, { recursive: true, force: true });
       if (wm) try { wm.kill(); } catch {}
       if (isoBusPid) try { process.kill(isoBusPid); } catch {}
       if (xvfb) try { xvfb.kill(); } catch {}
     },
     baseEnv,
     browserAppName,
-    // The Linux runner drives the backend in-process: there is no desktop app
-    // holding OS permissions on X11.
-    serverEnv: () => ({ CODEWHALE_CU_APP: "off" }),
+    // Without --helper the server drives the backend in-process.
+    serverEnv: () => (HELPER ? { CODEWHALE_CU_APP_SOCKET: helperSocket } : { CODEWHALE_CU_APP: "off" }),
+    inputOwner: HELPER,
     hostProbe,
     launchFixture,
     focusFixture,
@@ -436,6 +462,7 @@ async function oracleState(task, repCtx) {
     windowGeometry,
     oracleState,
     meta: () => ({
+      route: HELPER ? "helper" : "direct",
       display: workDisplay,
       display_geometry: geometry(),
       chrome: sh(browserBinary(), ["--version"]).stdout.trim(),
