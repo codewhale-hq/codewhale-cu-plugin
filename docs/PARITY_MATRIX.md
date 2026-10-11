@@ -150,6 +150,82 @@
 | native.select_text | #3 | 5/5 | untested | demonstrated | 16866ms | 2 | 0px | taken 5/5 | - |
 | native.unicode_type | #3 | 5/5 | untested | demonstrated | 2189ms | 4 | 0px | taken 5/5 | - |
 
+# Parity matrix — linux-xvfb (isolated, docker)
+
+- commit: `82032cdcc9a25d638391b29eaf9a775b48acf4cf`
+- node v24.21.0; linux 6.18.44-fc-v114; display `:99` geometry 1600 1200
+- suite: `parity/tasks.json`; chrome: Chromium 154.0.8037.92 built on Debian GNU/Linux 12 (bookworm); python3: Python 3.11.2; tk: 8.6
+- date: 2026-10-11T21:59:24.993Z; repeats: 5
+- Codex baseline: untested (no codex results)
+
+| task | issue | Codewhale | Codex | status | median elapsed | median tool calls | pointer displacement | foreground | notes |
+|---|---|---|---|---|---|---|---|---|---|
+| browser.download | #2 | 5/5 | untested | demonstrated | 17540ms | 2 | 0px | preserved | - |
+| browser.drag_drop | #2 | 0/5 | untested | untested | 0ms | 0 | 0px | preserved | skipped: held-input gestures require a persistent input owner — the desktop helper or the · known limitation: the direct route has no input owner and refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input. |
+| browser.dynamic_content | #2 | 5/5 | untested | demonstrated | 49617ms | 4 | 0px | preserved | known limitation: reps right after a fixture relaunch raced the oracle: the window mapped before Chromium published the CU-FIXTURE title state, so the first expect sampled nulls (observed 2026-09-16 as 1/5 then 2/5 fails across two runs). The X11 driver now waits for a readable oracle state before launchFixture returns; kept as a note on what the wait is for. |
+| browser.element_click | #2 | 5/5 | untested | demonstrated | 18446ms | 2 | 0px | preserved | optional_a11y |
+| browser.form_submit | #2 | 5/5 | untested | demonstrated | 4045ms | 9 | 0px | preserved | - |
+| browser.iframe_click | #2 | 5/5 | untested | demonstrated | 17590ms | 2 | 0px | preserved | - |
+| browser.modifiers | #3 | 5/5 | untested | demonstrated | 18041ms | 4 | 0px | preserved | - |
+| browser.outside_raster_fails | #4 | 5/5 | untested | demonstrated | 2088ms | 3 | 0px | preserved | - |
+| browser.scroll_reveal | #2 | 5/5 | untested | demonstrated | 4184ms | 3 | 0px | preserved | - |
+| browser.stale_element | #2 | 5/5 | untested | demonstrated | 19556ms | 3 | 0px | preserved | optional_a11y |
+| browser.tabs | #2 | 5/5 | untested | demonstrated | 3065ms | 4 | 0px | preserved | - |
+| browser.unicode_type | #3 | 2/5 | untested | partial | 5777ms | 3 | 0px | preserved | fail: step3 expect {"path":"uni","equals":"héllo wörld 日本 🐳"} never held; last={"name":"","agree":false,"color":"","submitted · known limitation: non-ASCII chars go through per-char `key U<hex>` (deterministic case fix), but under heavy host load XTEST can still drop a remapped char — observed 2026-09-16 as a single missing é/日 in ~1/5 reps. A delivery-layer flake on a loaded container, not a mapping defect; a starved Xvfb run is exactly where it shows. |
+| browser.upload | #2 | 5/5 | untested | demonstrated | 5205ms | 5 | 0px | preserved | known limitation: Chromium's GTK file chooser commits a typed location-entry path only via the Open button — Return in the entry closes the dialog with no selection (a stock GTK3 FileChooserDialog commits the same path on Return, so this is Chromium's wrapper). The dialog also carries no AT-SPI elements, so only a window-relative pointer click reaches it. |
+| browser.zoom_click | #4 | 5/5 | untested | demonstrated | 17622ms | 3 | 0px | preserved | - |
+| control.cancellation | #6 | 5/5 | untested | demonstrated | 3914ms | 2 | 0px | preserved | - |
+| control.permission_denied | #6 | 5/5 | untested | demonstrated | 119ms | 2 | 0px | preserved | - |
+| control.reconnect_no_replay | #6 | 5/5 | untested | demonstrated | 2270ms | 4 | 0px | preserved | - |
+| control.stop_blocks_actions | #6 | 5/5 | untested | demonstrated | 2027ms | 3 | 0px | preserved | - |
+| native.drag_square | #3 | 0/5 | untested | untested | 0ms | 0 | 0px | preserved | skipped: held-input gestures require a persistent input owner — the desktop helper or the · known limitation: the direct route has no input owner and refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input. |
+| native.entry_apply | #3 | 5/5 | untested | demonstrated | 1839ms | 4 | 0px | preserved | - |
+| native.list_scroll_select | #3 | 5/5 | untested | demonstrated | 2114ms | 3 | 0px | preserved | - |
+| native.menu_command | #3 | 5/5 | untested | demonstrated | 2165ms | 4 | 0px | preserved | - |
+| native.modal_dialog | #3 | 0/5 | untested | missing | 5969ms | 7 | 0px | preserved | fail: step10 expect {"path":"dialog","equals":"closed"} never held; last={"entry":"blocked","applied":"","menu":[],"selected": · known limitation: Tk's simpledialog is toolkit-modal only: it sets WM_TRANSIENT_FOR + grab_set but no _NET_WM_STATE_MODAL, so a stacking WM lets the parent Apply click take X input focus (verified under openbox and metacity). The grab still blocks the click (applied stays empty) but the typed answer then goes to the parent and the dialog stays open. Passes where the WM keeps focus on the transient. |
+| native.modifiers | #3 | 5/5 | untested | demonstrated | 16928ms | 3 | 0px | preserved | - |
+| native.second_window | #3 | 5/5 | untested | demonstrated | 2369ms | 4 | 0px | preserved | - |
+| native.select_text | #3 | 5/5 | untested | demonstrated | 16879ms | 2 | 0px | preserved | - |
+| native.unicode_type | #3 | 5/5 | untested | demonstrated | 3290ms | 4 | 0px | preserved | known limitation: per-char `key U<hex>` + `shift+` for cased capitals fixes the level-0 lowercase remap (Ü→ü). Residual: under heavy host load XTEST can still drop a remapped char — an X11 delivery characteristic, not a mapping defect. |
+
+# Parity matrix — linux-xvfb (isolated, docker, desktop helper)
+
+- commit: `a6a96e320553f4c13a39e38c91e8bf0d2eff771c`
+- node v24.21.0; linux 6.18.44-fc-v114; display `:99` geometry 1600 1200
+- suite: `parity/tasks.json`; chrome: Chromium 154.0.8037.92 built on Debian GNU/Linux 12 (bookworm); python3: Python 3.11.2; tk: 8.6
+- date: 2026-10-11T22:40:37.329Z; repeats: 5
+- Codex baseline: untested (no codex results)
+
+| task | issue | Codewhale | Codex | status | median elapsed | median tool calls | pointer displacement | foreground | notes |
+|---|---|---|---|---|---|---|---|---|---|
+| browser.download | #2 | 5/5 | untested | demonstrated | 17522ms | 2 | 0px | preserved | - |
+| browser.drag_drop | #2 | 5/5 | untested | demonstrated | 2486ms | 2 | 0px | preserved | known limitation: the direct route has no input owner and refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input. |
+| browser.dynamic_content | #2 | 5/5 | untested | demonstrated | 49550ms | 4 | 0px | preserved | known limitation: reps right after a fixture relaunch raced the oracle: the window mapped before Chromium published the CU-FIXTURE title state, so the first expect sampled nulls (observed 2026-09-16 as 1/5 then 2/5 fails across two runs). The X11 driver now waits for a readable oracle state before launchFixture returns; kept as a note on what the wait is for. |
+| browser.element_click | #2 | 5/5 | untested | demonstrated | 18459ms | 2 | 0px | preserved | optional_a11y |
+| browser.form_submit | #2 | 5/5 | untested | demonstrated | 4009ms | 9 | 0px | preserved | - |
+| browser.iframe_click | #2 | 5/5 | untested | demonstrated | 17507ms | 2 | 0px | preserved | - |
+| browser.modifiers | #3 | 4/5 | untested | partial | 17996ms | 4 | 0px | preserved | fail: step2 key "ctrl+shift+k" failed: input_owner_unknown input refused: no managed application window has keyboard focus; cl |
+| browser.outside_raster_fails | #4 | 5/5 | untested | demonstrated | 2121ms | 3 | 0px | preserved | - |
+| browser.scroll_reveal | #2 | 5/5 | untested | demonstrated | 4129ms | 3 | 0px | preserved | - |
+| browser.stale_element | #2 | 5/5 | untested | demonstrated | 19605ms | 3 | 0px | preserved | optional_a11y |
+| browser.tabs | #2 | 5/5 | untested | demonstrated | 3103ms | 4 | 0px | preserved | - |
+| browser.unicode_type | #3 | 4/5 | untested | partial | 2964ms | 3 | 0px | preserved | fail: step3 expect {"path":"uni","equals":"héllo wörld 日本 🐳"} never held; last={"name":"","agree":false,"color":"","submitted · known limitation: non-ASCII chars go through per-char `key U<hex>` (deterministic case fix), but under heavy host load XTEST can still drop a remapped char — observed 2026-09-16 as a single missing é/日 in ~1/5 reps. A delivery-layer flake on a loaded container, not a mapping defect; a starved Xvfb run is exactly where it shows. |
+| browser.upload | #2 | 5/5 | untested | demonstrated | 5179ms | 5 | 0px | preserved | known limitation: Chromium's GTK file chooser commits a typed location-entry path only via the Open button — Return in the entry closes the dialog with no selection (a stock GTK3 FileChooserDialog commits the same path on Return, so this is Chromium's wrapper). The dialog also carries no AT-SPI elements, so only a window-relative pointer click reaches it. |
+| browser.zoom_click | #4 | 5/5 | untested | demonstrated | 17650ms | 3 | 0px | preserved | - |
+| control.cancellation | #6 | 5/5 | untested | demonstrated | 3926ms | 2 | 0px | preserved | - |
+| control.permission_denied | #6 | 0/5 | untested | untested | 0ms | 0 | 0px | preserved | skipped: on the helper route the desktop helper owns the display session, so emptying the |
+| control.reconnect_no_replay | #6 | 5/5 | untested | demonstrated | 2207ms | 4 | 0px | preserved | - |
+| control.stop_blocks_actions | #6 | 5/5 | untested | demonstrated | 1996ms | 3 | 0px | preserved | - |
+| native.drag_square | #3 | 5/5 | untested | demonstrated | 1692ms | 2 | 0px | preserved | known limitation: the direct route has no input owner and refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input. |
+| native.entry_apply | #3 | 5/5 | untested | demonstrated | 1821ms | 4 | 0px | preserved | - |
+| native.list_scroll_select | #3 | 5/5 | untested | demonstrated | 2108ms | 3 | 0px | preserved | - |
+| native.menu_command | #3 | 5/5 | untested | demonstrated | 2145ms | 4 | 0px | preserved | - |
+| native.modal_dialog | #3 | 0/5 | untested | missing | 6031ms | 7 | 0px | preserved | fail: step10 expect {"path":"dialog","equals":"closed"} never held; last={"entry":"blocked","applied":"","menu":[],"selected": · known limitation: Tk's simpledialog is toolkit-modal only: it sets WM_TRANSIENT_FOR + grab_set but no _NET_WM_STATE_MODAL, so a stacking WM lets the parent Apply click take X input focus (verified under openbox and metacity). The grab still blocks the click (applied stays empty) but the typed answer then goes to the parent and the dialog stays open. Passes where the WM keeps focus on the transient. |
+| native.modifiers | #3 | 5/5 | untested | demonstrated | 16944ms | 3 | 0px | preserved | - |
+| native.second_window | #3 | 5/5 | untested | demonstrated | 2428ms | 4 | 0px | preserved | - |
+| native.select_text | #3 | 5/5 | untested | demonstrated | 16874ms | 2 | 0px | preserved | - |
+| native.unicode_type | #3 | 5/5 | untested | demonstrated | 3535ms | 4 | 0px | preserved | known limitation: per-char `key U<hex>` + `shift+` for cased capitals fixes the level-0 lowercase remap (Ü→ü). Residual: under heavy host load XTEST can still drop a remapped char — an X11 delivery characteristic, not a mapping defect. |
+
 # Parity matrix — darwin-aqua
 
 - commit: `f1cceb105177d8eb67bc191878de7885e10cd06f`; date: 2026-09-15T15:53:38.719Z
@@ -192,7 +268,7 @@
 | macOS Retina | untested — see docs/LIMITATIONS.md |
 | macOS non-Retina | untested — see docs/LIMITATIONS.md |
 | macOS mixed | untested — see docs/LIMITATIONS.md |
-| Linux X11 | 24/27 tasks demonstrated at 5 repeats (linux-xvfb (isolated), 2026-10-11); separate run: 25/27 tasks demonstrated at 5 repeats (linux-xvfb (isolated, desktop helper), 2026-10-11); separate run: 23/27 tasks demonstrated at 5 repeats (linux-x11, 2026-10-11); separate run: 25/27 tasks demonstrated at 5 repeats (linux-x11 (desktop helper), 2026-10-11) |
+| Linux X11 | 24/27 tasks demonstrated at 5 repeats (linux-xvfb (isolated), 2026-10-11); separate run: 25/27 tasks demonstrated at 5 repeats (linux-xvfb (isolated, desktop helper), 2026-10-11); separate run: 23/27 tasks demonstrated at 5 repeats (linux-x11, 2026-10-11); separate run: 25/27 tasks demonstrated at 5 repeats (linux-x11 (desktop helper), 2026-10-11); separate run: 23/27 tasks demonstrated at 5 repeats (linux-xvfb (isolated, docker), 2026-10-11); separate run: 23/27 tasks demonstrated at 5 repeats (linux-xvfb (isolated, docker, desktop helper), 2026-10-11) |
 | Wayland | untested — see docs/LIMITATIONS.md |
 | Windows | untested — see docs/LIMITATIONS.md |
 | HarmonyOS (hdc) | untested — see docs/LIMITATIONS.md |

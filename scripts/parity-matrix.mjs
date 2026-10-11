@@ -18,6 +18,10 @@ function opts(name) {
   return out;
 }
 const runDirs = opts("--run");
+// Runs recorded inside the Docker test image: same run.json, labelled so their
+// summaries do not collide with a host run of the same session type.
+const containerDirs = new Set(opts("--docker-run").map((d) => path.resolve(d)));
+runDirs.push(...containerDirs);
 const codexFiles = opts("--codex");
 // Surfaces recorded on another machine: their run.json never reaches this
 // repo (receipts/ is ignored), but the committed summary is enough to render
@@ -85,7 +89,9 @@ for (const dir of runDirs) {
   }
   if (typeof meta.date !== "string" || !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)?$/.test(meta.date) || !Number.isFinite(Date.parse(meta.date)) || new Date(meta.date).toISOString().slice(0, 10) !== meta.date.slice(0, 10)) throw new Error("invalid date in run metadata");
   const helperRoute = meta.route === "helper";
-  const surface = `${meta.platform}-${meta.session_type}${meta.isolated || helperRoute ? ` (${[meta.isolated && "isolated", helperRoute && "desktop helper"].filter(Boolean).join(", ")})` : ""}`;
+  const container = containerDirs.has(path.resolve(dir));
+  const flags = [meta.isolated && "isolated", container && "docker", helperRoute && "desktop helper"].filter(Boolean);
+  const surface = `${meta.platform}-${meta.session_type}${flags.length ? ` (${flags.join(", ")})` : ""}`;
   const repsByTask = new Map();
   for (const r of run.reps) {
     if (!repsByTask.has(r.task)) repsByTask.set(r.task, []);
@@ -158,7 +164,7 @@ for (const dir of runDirs) {
   }
 
   const day = meta.date.slice(0, 10);
-  const stem = `${meta.platform}-${meta.session_type}${meta.isolated ? "-isolated" : ""}${helperRoute ? "-helper" : ""}-${day}`;
+  const stem = `${meta.platform}-${meta.session_type}${meta.isolated ? "-isolated" : ""}${container ? "-docker" : ""}${helperRoute ? "-helper" : ""}-${day}`;
   const count = (summaryCounts.get(stem) ?? 0) + 1;
   summaryCounts.set(stem, count);
   // Preserve every run supplied, including failed attempts and focused retries.

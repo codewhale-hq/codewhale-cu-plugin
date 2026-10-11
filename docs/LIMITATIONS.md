@@ -192,9 +192,20 @@ one route except `native.modal_dialog` (0/5 everywhere, the Tk toolkit-modal
 limitation below). The drag rows need the helper and are untested on the
 direct route; `control.permission_denied` is a direct-route check and is
 untested on the helper route; shared direct `browser.unicode_type` was 4/5
-(one dropped non-ASCII character, the XTEST limitation below). All four runs
-used Xvfb, openbox and Chromium 141; they say nothing about GNOME or KDE
-sessions, real XWayland, multiple monitors or HiDPI.
+(one dropped non-ASCII character, the XTEST limitation below). Those four runs
+used Xvfb, openbox and Chromium 141.
+
+Docker route (the plugin's test image, Debian 12, Chromium 154, Xvfb +
+openbox, `docker/run.sh parity`, repeats 5): direct 23/27, desktop helper
+23/27 — summaries `linux-xvfb-isolated-docker-2026-10-11.json` and
+`linux-xvfb-isolated-docker-helper-2026-10-11.json`. Beyond the shared
+exceptions above, `browser.unicode_type` dropped non-ASCII characters in
+Chromium 154 (2/5 direct, 4/5 helper; a 100 ms settle after each remapped key
+did not change that, 6/10), and `browser.modifiers` missed once on a cold first
+rep through the helper ("no managed application window has keyboard focus").
+
+None of these runs say anything about GNOME or KDE sessions, real XWayland,
+multiple monitors, HiDPI or SSH.
 
 Since 0.5.0 the SSH agent can run a persistent session (`agent.mjs --serve`)
 that retains the macOS `open_application` binding and session-owned input
