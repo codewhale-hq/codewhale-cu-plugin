@@ -22,6 +22,9 @@ const runDirs = opts("--run");
 // summaries do not collide with a host run of the same session type.
 const containerDirs = new Set(opts("--docker-run").map((d) => path.resolve(d)));
 runDirs.push(...containerDirs);
+// Runs on a real desktop environment: --desktop <label>=<run-dir> (for example xfce=receipts/...).
+const desktopDirs = new Map(opts("--desktop").map((v) => { const i = v.indexOf("="); return [path.resolve(v.slice(i + 1)), v.slice(0, i)]; }));
+runDirs.push(...desktopDirs.keys());
 const codexFiles = opts("--codex");
 // Surfaces recorded on another machine: their run.json never reaches this
 // repo (receipts/ is ignored), but the committed summary is enough to render
@@ -90,7 +93,9 @@ for (const dir of runDirs) {
   if (typeof meta.date !== "string" || !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)?$/.test(meta.date) || !Number.isFinite(Date.parse(meta.date)) || new Date(meta.date).toISOString().slice(0, 10) !== meta.date.slice(0, 10)) throw new Error("invalid date in run metadata");
   const helperRoute = meta.route === "helper";
   const container = containerDirs.has(path.resolve(dir));
-  const flags = [meta.isolated && "isolated", container && "docker", helperRoute && "desktop helper"].filter(Boolean);
+  const desktop = desktopDirs.get(path.resolve(dir));
+  if (desktop !== undefined && !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(desktop)) throw new Error("invalid --desktop label");
+  const flags = [meta.isolated && "isolated", container && "docker", desktop, helperRoute && "desktop helper"].filter(Boolean);
   const surface = `${meta.platform}-${meta.session_type}${flags.length ? ` (${flags.join(", ")})` : ""}`;
   const repsByTask = new Map();
   for (const r of run.reps) {
@@ -164,7 +169,7 @@ for (const dir of runDirs) {
   }
 
   const day = meta.date.slice(0, 10);
-  const stem = `${meta.platform}-${meta.session_type}${meta.isolated ? "-isolated" : ""}${container ? "-docker" : ""}${helperRoute ? "-helper" : ""}-${day}`;
+  const stem = `${meta.platform}-${meta.session_type}${meta.isolated ? "-isolated" : ""}${container ? "-docker" : ""}${desktop ? `-${desktop}` : ""}${helperRoute ? "-helper" : ""}-${day}`;
   const count = (summaryCounts.get(stem) ?? 0) + 1;
   summaryCounts.set(stem, count);
   // Preserve every run supplied, including failed attempts and focused retries.
