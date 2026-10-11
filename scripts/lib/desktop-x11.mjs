@@ -299,7 +299,10 @@ async function launchFixture(kind, repCtx) {
     const proc = spawn(chrome, [
       `--user-data-dir=${udd}`, `--app=${file}`,
       `--window-size=${fx.size[0]},${fx.size[1]}`, "--window-position=0,0",
-      "--no-first-run", "--disable-features=Translate", "--force-renderer-accessibility",
+      // A desktop session's keyring daemon answers Chromium's first password
+      // store use with a "choose a password" dialog that takes all input;
+      // that prompt is not part of what this fixture measures.
+      "--no-first-run", "--disable-features=Translate", "--force-renderer-accessibility", "--password-store=basic",
     ], { env: { ...process.env, ...baseEnv() }, stdio: "ignore", detached: true });
     // detached makes proc.pid a session leader; killFixture sweeps the whole
     // session because chromium children setpgid out of the group kill.
