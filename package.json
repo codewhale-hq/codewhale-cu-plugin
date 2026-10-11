@@ -19,7 +19,7 @@
     "smoke": "node scripts/smoke.mjs",
     "parity": "node scripts/parity-run.mjs",
     "parity:matrix": "node scripts/parity-matrix.mjs",
-    "check:receipts": "node scripts/check-receipts.mjs",
+    "check:receipts": "node scripts/check-receipts.mjs docs parity/results",
     "app": "node app/daemon.mjs",
     "build:icons": "node scripts/build-icons.mjs",
     "build:app": "node scripts/build-app.mjs",

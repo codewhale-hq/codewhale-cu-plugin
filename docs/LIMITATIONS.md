@@ -460,6 +460,9 @@ recording-file listing remain available on every platform.
   every stacking WM tested (verified under openbox and metacity on the isolated
   route, 2026-09-16); the 2026-09-07 isolated receipt's 5/5 predates a window
   manager on `:99` or ran under different WM conditions — that receipt is stale.
+  Re-run 2026-10-11: 0/5 on the direct and the desktop-helper route. Codewhale
+  does not move focus to a transient window on its own (that would misdirect
+  input for non-modal tool windows): click into the dialog before typing.
 - **Tk posted menus do not receive synthetic key events.** `native.menu_command`
   was reworked to click the menu item with the pointer; keyboard traversal of
   a posted Tk menu is not achievable with XTEST input on this platform.
