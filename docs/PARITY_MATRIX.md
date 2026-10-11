@@ -74,6 +74,82 @@
 | native.select_text | #3 | 5/5 | untested | demonstrated | 16847ms | 2 | 0px | preserved | - |
 | native.unicode_type | #3 | 5/5 | untested | demonstrated | 2232ms | 4 | 0px | preserved | known limitation: per-char `key U<hex>` + `shift+` for cased capitals fixes the level-0 lowercase remap (Ü→ü). Residual: under heavy host load XTEST can still drop a remapped char — an X11 delivery characteristic, not a mapping defect. |
 
+# Parity matrix — linux-x11
+
+- commit: `da7dfb53449de4777ff18ddf2df3f65738f6333f`
+- node v22.22.0; linux 6.18.44-fc-v114; display `:0` geometry 1440 900
+- suite: `parity/tasks.json`; chrome: Chromium 141.0.7390.37; python3: Python 3.12.3; tk: 8.6
+- date: 2026-10-11T21:16:45.908Z; repeats: 5
+- Codex baseline: untested (no codex results)
+
+| task | issue | Codewhale | Codex | status | median elapsed | median tool calls | pointer displacement | foreground | notes |
+|---|---|---|---|---|---|---|---|---|---|
+| browser.download | #2 | 5/5 | untested | demonstrated | 17518ms | 2 | 0px | taken 5/5 | - |
+| browser.drag_drop | #2 | 0/5 | untested | untested | 0ms | 0 | 0px | preserved | skipped: held-input gestures require a persistent input owner — the desktop helper or the · known limitation: the direct route refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input. |
+| browser.dynamic_content | #2 | 5/5 | untested | demonstrated | 49612ms | 4 | 0px | taken 5/5 | - |
+| browser.element_click | #2 | 5/5 | untested | demonstrated | 18219ms | 2 | 0px | taken 5/5 | optional_a11y |
+| browser.form_submit | #2 | 5/5 | untested | demonstrated | 3911ms | 9 | 0px | taken 5/5 | - |
+| browser.iframe_click | #2 | 5/5 | untested | demonstrated | 17508ms | 2 | 0px | taken 5/5 | - |
+| browser.modifiers | #3 | 5/5 | untested | demonstrated | 18061ms | 4 | 0px | taken 5/5 | - |
+| browser.outside_raster_fails | #4 | 5/5 | untested | demonstrated | 2100ms | 3 | 0px | preserved | - |
+| browser.scroll_reveal | #2 | 5/5 | untested | demonstrated | 4168ms | 3 | 0px | taken 5/5 | - |
+| browser.stale_element | #2 | 5/5 | untested | demonstrated | 19351ms | 3 | 0px | taken 5/5 | optional_a11y |
+| browser.tabs | #2 | 5/5 | untested | demonstrated | 2999ms | 4 | 0px | taken 5/5 | - |
+| browser.unicode_type | #3 | 4/5 | untested | partial | 18149ms | 3 | 0px | taken 5/5 | fail: step3 expect {"path":"uni","equals":"héllo wörld 日本 🐳"} never held; last={"name":"","agree":false,"color":"","submitted |
+| browser.upload | #2 | 5/5 | untested | demonstrated | 5768ms | 5 | 0px | taken 5/5 | known limitation: same Chromium chooser behavior: type the path, then click Open; Return in the location entry discards it. On desktops where xdg-desktop-portal supplies the chooser instead, the dialog is a different application entirely and this window_title target will not resolve — record that honestly if it shows. |
+| browser.zoom_click | #4 | 5/5 | untested | demonstrated | 17670ms | 3 | 0px | taken 5/5 | - |
+| control.cancellation | #6 | 5/5 | untested | demonstrated | 3938ms | 2 | 0px | preserved | - |
+| control.permission_denied | #6 | 5/5 | untested | demonstrated | 151ms | 2 | 0px | preserved | - |
+| control.reconnect_no_replay | #6 | 5/5 | untested | demonstrated | 2350ms | 4 | 0px | preserved | - |
+| control.stop_blocks_actions | #6 | 5/5 | untested | demonstrated | 2023ms | 3 | 0px | preserved | - |
+| native.drag_square | #3 | 0/5 | untested | untested | 0ms | 0 | 0px | preserved | skipped: held-input gestures require a persistent input owner — the desktop helper or the · known limitation: the direct route refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input. |
+| native.entry_apply | #3 | 5/5 | untested | demonstrated | 1859ms | 4 | 0px | taken 5/5 | - |
+| native.list_scroll_select | #3 | 5/5 | untested | demonstrated | 2182ms | 3 | 0px | taken 5/5 | - |
+| native.menu_command | #3 | 5/5 | untested | demonstrated | 2125ms | 4 | 0px | taken 5/5 | - |
+| native.modal_dialog | #3 | 0/5 | untested | missing | 5999ms | 7 | 0px | taken 5/5 | fail: step10 expect {"path":"dialog","equals":"closed"} never held; last={"entry":"blocked","applied":"","menu":[],"selected": · known limitation: KWin does not give the transient Tk dialog X input focus, so typed text does not reach it; passes on the isolated Xvfb route |
+| native.modifiers | #3 | 5/5 | untested | demonstrated | 17057ms | 3 | 0px | taken 5/5 | - |
+| native.second_window | #3 | 5/5 | untested | demonstrated | 2413ms | 4 | 0px | taken 5/5 | - |
+| native.select_text | #3 | 5/5 | untested | demonstrated | 16857ms | 2 | 0px | taken 5/5 | - |
+| native.unicode_type | #3 | 5/5 | untested | demonstrated | 2119ms | 4 | 0px | taken 5/5 | - |
+
+# Parity matrix — linux-x11 (desktop helper)
+
+- commit: `da7dfb53449de4777ff18ddf2df3f65738f6333f`
+- node v22.22.0; linux 6.18.44-fc-v114; display `:0` geometry 1440 900
+- suite: `parity/tasks.json`; chrome: Chromium 141.0.7390.37; python3: Python 3.12.3; tk: 8.6
+- date: 2026-10-11T21:36:13.520Z; repeats: 5
+- Codex baseline: untested (no codex results)
+
+| task | issue | Codewhale | Codex | status | median elapsed | median tool calls | pointer displacement | foreground | notes |
+|---|---|---|---|---|---|---|---|---|---|
+| browser.download | #2 | 5/5 | untested | demonstrated | 17554ms | 2 | 0px | taken 5/5 | - |
+| browser.drag_drop | #2 | 5/5 | untested | demonstrated | 2568ms | 2 | 0px | taken 5/5 | known limitation: the direct route refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input. |
+| browser.dynamic_content | #2 | 5/5 | untested | demonstrated | 49583ms | 4 | 0px | taken 5/5 | - |
+| browser.element_click | #2 | 5/5 | untested | demonstrated | 18367ms | 2 | 0px | taken 5/5 | optional_a11y |
+| browser.form_submit | #2 | 5/5 | untested | demonstrated | 3889ms | 9 | 0px | taken 5/5 | - |
+| browser.iframe_click | #2 | 5/5 | untested | demonstrated | 17525ms | 2 | 0px | taken 5/5 | - |
+| browser.modifiers | #3 | 5/5 | untested | demonstrated | 18119ms | 4 | 0px | taken 5/5 | - |
+| browser.outside_raster_fails | #4 | 5/5 | untested | demonstrated | 2118ms | 3 | 0px | preserved | - |
+| browser.scroll_reveal | #2 | 5/5 | untested | demonstrated | 4206ms | 3 | 0px | taken 5/5 | - |
+| browser.stale_element | #2 | 5/5 | untested | demonstrated | 19420ms | 3 | 0px | taken 5/5 | optional_a11y |
+| browser.tabs | #2 | 5/5 | untested | demonstrated | 3027ms | 4 | 0px | taken 5/5 | - |
+| browser.unicode_type | #3 | 5/5 | untested | demonstrated | 18122ms | 3 | 0px | taken 5/5 | - |
+| browser.upload | #2 | 5/5 | untested | demonstrated | 5761ms | 5 | 0px | taken 5/5 | known limitation: same Chromium chooser behavior: type the path, then click Open; Return in the location entry discards it. On desktops where xdg-desktop-portal supplies the chooser instead, the dialog is a different application entirely and this window_title target will not resolve — record that honestly if it shows. |
+| browser.zoom_click | #4 | 5/5 | untested | demonstrated | 17711ms | 3 | 0px | taken 5/5 | - |
+| control.cancellation | #6 | 5/5 | untested | demonstrated | 3936ms | 2 | 0px | preserved | - |
+| control.permission_denied | #6 | 0/5 | untested | untested | 0ms | 0 | 0px | preserved | skipped: on the helper route the desktop helper owns the display session, so emptying the |
+| control.reconnect_no_replay | #6 | 5/5 | untested | demonstrated | 2356ms | 4 | 0px | preserved | - |
+| control.stop_blocks_actions | #6 | 5/5 | untested | demonstrated | 2009ms | 3 | 0px | preserved | - |
+| native.drag_square | #3 | 5/5 | untested | demonstrated | 1766ms | 2 | 0px | taken 5/5 | known limitation: the direct route refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input. |
+| native.entry_apply | #3 | 5/5 | untested | demonstrated | 1827ms | 4 | 0px | taken 5/5 | - |
+| native.list_scroll_select | #3 | 5/5 | untested | demonstrated | 2177ms | 3 | 0px | taken 5/5 | - |
+| native.menu_command | #3 | 5/5 | untested | demonstrated | 2132ms | 4 | 0px | taken 5/5 | - |
+| native.modal_dialog | #3 | 0/5 | untested | missing | 6077ms | 7 | 0px | taken 5/5 | fail: step10 expect {"path":"dialog","equals":"closed"} never held; last={"entry":"blocked","applied":"","menu":[],"selected": · known limitation: KWin does not give the transient Tk dialog X input focus, so typed text does not reach it; passes on the isolated Xvfb route |
+| native.modifiers | #3 | 5/5 | untested | demonstrated | 16997ms | 3 | 0px | taken 5/5 | - |
+| native.second_window | #3 | 5/5 | untested | demonstrated | 2392ms | 4 | 0px | taken 5/5 | - |
+| native.select_text | #3 | 5/5 | untested | demonstrated | 16866ms | 2 | 0px | taken 5/5 | - |
+| native.unicode_type | #3 | 5/5 | untested | demonstrated | 2189ms | 4 | 0px | taken 5/5 | - |
+
 # Parity matrix — darwin-aqua
 
 - commit: `f1cceb105177d8eb67bc191878de7885e10cd06f`; date: 2026-09-15T15:53:38.719Z
@@ -116,7 +192,7 @@
 | macOS Retina | untested — see docs/LIMITATIONS.md |
 | macOS non-Retina | untested — see docs/LIMITATIONS.md |
 | macOS mixed | untested — see docs/LIMITATIONS.md |
-| Linux X11 | 24/27 tasks demonstrated at 5 repeats (linux-xvfb (isolated), 2026-10-11); separate run: 25/27 tasks demonstrated at 5 repeats (linux-xvfb (isolated, desktop helper), 2026-10-11) |
+| Linux X11 | 24/27 tasks demonstrated at 5 repeats (linux-xvfb (isolated), 2026-10-11); separate run: 25/27 tasks demonstrated at 5 repeats (linux-xvfb (isolated, desktop helper), 2026-10-11); separate run: 23/27 tasks demonstrated at 5 repeats (linux-x11, 2026-10-11); separate run: 25/27 tasks demonstrated at 5 repeats (linux-x11 (desktop helper), 2026-10-11) |
 | Wayland | untested — see docs/LIMITATIONS.md |
 | Windows | untested — see docs/LIMITATIONS.md |
 | HarmonyOS (hdc) | untested — see docs/LIMITATIONS.md |

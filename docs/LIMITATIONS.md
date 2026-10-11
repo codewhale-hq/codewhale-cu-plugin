@@ -181,16 +181,20 @@ Every row marked **untested** in the matrix's "Platforms" table appears here:
 | Codex / Claude Desktop host registration | full registration/restart flow untested; one native Codex editing baseline is recorded below |
 | signed-update permission persistence | untested in the matrix (no parity run covers it). Grant retention was demonstrated once for a Developer ID reinstall over a granted install (2026-09-06, below); the notarized 0.3.0 → 0.3.1 updater apply on the same Mac ran with no recorded grant check and is described in [the release checklist](RELEASE_CHECKLIST.md); a clean-machine install with fresh grants is still open |
 
-**Linux X11 parity (2026-10-11, isolated Xvfb + openbox, repeats 5).** The
-direct route demonstrated 24/27 tasks and the desktop-helper route 25/27
-(`parity/results/linux-xvfb-isolated-2026-10-11.json`,
-`linux-xvfb-isolated-helper-2026-10-11.json`). Every task is demonstrated on at
-least one route except `native.modal_dialog` (0/5, the Tk toolkit-modal
+**Linux X11 parity (2026-10-11, repeats 5).** Isolated route (Xvfb `:99`):
+direct 24/27, desktop helper 25/27. Shared route (the fixtures on the
+desktop the user's pointer lives on, here Xvfb `:0` with openbox standing in
+for a login session): direct 23/27, desktop helper 25/27. Summaries:
+`parity/results/linux-xvfb-isolated-2026-10-11.json`,
+`linux-xvfb-isolated-helper-2026-10-11.json`, `linux-x11-2026-10-11.json`,
+`linux-x11-helper-2026-10-11.json`. Every task is demonstrated on at least
+one route except `native.modal_dialog` (0/5 everywhere, the Tk toolkit-modal
 limitation below). The drag rows need the helper and are untested on the
 direct route; `control.permission_denied` is a direct-route check and is
-untested on the helper route. These runs are an Xvfb session with openbox and
-Chromium 141; they say nothing about GNOME or KDE sessions, real XWayland,
-multiple monitors or HiDPI.
+untested on the helper route; shared direct `browser.unicode_type` was 4/5
+(one dropped non-ASCII character, the XTEST limitation below). All four runs
+used Xvfb, openbox and Chromium 141; they say nothing about GNOME or KDE
+sessions, real XWayland, multiple monitors or HiDPI.
 
 Since 0.5.0 the SSH agent can run a persistent session (`agent.mjs --serve`)
 that retains the macOS `open_application` binding and session-owned input
