@@ -869,10 +869,10 @@ async function consentCheck(computer, name, args) {
 const KEYBOARD_INPUT_TOOLS = new Set(["type", "key", "hold_key"]);
 const POINTER_INPUT_TOOLS = new Set(["left_click", "double_click", "triple_click", "right_click", "middle_click", "mouse_move", "scroll", "left_mouse_down"]);
 
-/** Every ledger key that identifies this owner: its window class, its process name and its pid. */
+/** Every ledger key that identifies this owner: its window class, its process's other window classes, its process name and its pid. */
 function ownerKeys(owner) {
   const keys = new Set();
-  for (const name of [owner.name, owner.comm]) for (const key of consent.appKeys({ name })) keys.add(key);
+  for (const name of [owner.name, owner.comm, ...(Array.isArray(owner.aliases) ? owner.aliases : [])]) for (const key of consent.appKeys({ name })) keys.add(key);
   for (const key of consent.appKeys({ pid: owner.pid })) keys.add(key);
   return [...keys];
 }
@@ -980,9 +980,8 @@ function activatedControl(computer, name, args) {
   return best ? { label: best.label, last: best.label, app: st.app_ref ?? null } : null;
 }
 
-function confirmationCheck(computer, name, args) {
+function confirmationCheck(computer, name, args, control = activatedControl(computer, name, args)) {
   if (!CONFIRM_TOOLS.has(name) || computer.owned === true) return;
-  const control = activatedControl(computer, name, args);
   if (!control || !IRREVERSIBLE_LABEL.test(control.last)) return;
   const { computer: _computer, ...callArgs } = args;
   const hash = crypto.createHash("sha256").update(stableJson([computer.id, name, callArgs, control.label])).digest("hex");
@@ -997,6 +996,31 @@ function confirmationCheck(computer, name, args) {
   const entry = { hash, tool: name, label: control.label, app: control.app, expires: now + CONFIRM_TTL_MS, confirmed: false };
   confirmations.set(token, entry);
   throw confirmationRequired(token, entry);
+}
+
+// An untargeted Return, Enter or space presses whatever holds keyboard focus.
+// Backends that can read the focused control (focused_control) have it judged
+// like a click on that control; others keep the observation-based check.
+const ACTIVATING_KEY = /^(return|enter|kp_enter|space)$/i;
+
+async function focusedControlCheck(computer, name, args, focusedOf) {
+  if (name !== "key" || args.target != null || computer.owned === true || typeof focusedOf !== "function") return;
+  if (!ACTIVATING_KEY.test(String(args.text ?? "return").split("+").pop().trim())) return;
+  const ctl = await focusedOf();
+  const label = [ctl?.label, ctl?.description].find((v) => typeof v === "string" && v.trim());
+  if (!label || TEXT_ROLE.test(String(ctl.role ?? ""))) return;
+  confirmationCheck(computer, name, args, { label, last: label, app: ctl.app ?? null });
+}
+
+/** focused_control over the wire; a runner without it (macOS, older helpers) keeps the observation-based check. */
+function remoteFocusedControl(remoteCall) {
+  return async () => {
+    const r = await remoteCall({ tool: "focused_control", args: {} }, { timeoutMs: 30_000 });
+    if (r?.ok) return r.data ?? null;
+    const code = r?.error?.code ?? "remote_error";
+    if (code === "unsupported_on_platform" || code === "tool_not_allowed") return null;
+    throw new ServerError(code, `key refused: ${r?.error?.message ?? "the focused control could not be read"}`);
+  };
 }
 
 function confirmationRequired(token, entry) {
@@ -1409,6 +1433,7 @@ async function callTool(params, bindWhen = null) {
       };
       const wireArgs = await prepareArgs(computer, name, args, resolve, sink);
       if (computer.transport === "local" || computer.transport === "ssh") await inputOwnerCheck(computer, name, wireArgs, remoteInputOwner(computer, remoteCall));
+      await focusedControlCheck(computer, name, wireArgs, remoteFocusedControl(remoteCall));
       throwIfAborted();
       await assertCurrentRoute(computer, binding);
       // Re-check the kill switch: a stop that arrived while the executor was
@@ -1467,6 +1492,7 @@ async function callTool(params, bindWhen = null) {
       const resolve = typeof backend.resolve_element === "function" ? (req) => backend.resolve_element(req) : null;
       const prepared = await prepareArgs(computer, name, args, resolve, sink);
       if (computer.transport === "local" && typeof backend.input_owner === "function") await inputOwnerCheck(computer, name, prepared, (query) => backend.input_owner(query));
+      if (typeof backend.focused_control === "function") await focusedControlCheck(computer, name, prepared, () => backend.focused_control());
       throwIfAborted();
       await assertCurrentRoute(computer, binding);
       if (controlStopped && !READ_ONLY_TOOLS.has(name)) throw new ServerError("control_stopped", "stop_computer_control is active; no further actions are permitted this session");

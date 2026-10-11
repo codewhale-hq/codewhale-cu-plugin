@@ -123,6 +123,11 @@ export function create() {
       if (raw === "unknown") throw Object.assign(new Error("no managed application window has keyboard focus"), { code: "input_owner_unknown" });
       return raw && raw !== "null" ? JSON.parse(raw) : null;
     },
+    // The control holding keyboard focus: the control file's "focused" entry, else none.
+    async focused_control() {
+      record("focused_control", {});
+      try { return JSON.parse(fs.readFileSync(controlFile, "utf8")).focused ?? null; } catch { return null; }
+    },
     async app_script(args) { record("app_script", args); return { result: "fake", language: args.language ?? "applescript" }; },
   };
 }

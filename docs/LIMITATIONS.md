@@ -486,14 +486,31 @@ recording-file listing remain available on every platform.
   app the user has not approved is refused before any event is sent. Without a
   window manager that publishes its stacking order, or on Wayland, the owner is
   unknown and input is refused (`input_owner_unknown`) rather than sent.
+- **What an app identity is.** A window's app is its WM_CLASS instance name,
+  its process name and its pid. The pid comes from `_NET_WM_PID` or, for
+  toolkits that do not set it (Tk), from the X server's X-Resource extension;
+  every window of one process is the same app. A decision recorded by name
+  covers every process with that name: Tk names every Tkinter program's main
+  window `tk`, so allowing `tk` allows all of them. A decision by pid covers
+  one process and lasts for the session.
+- **AT-SPI and X11 names can differ.** Chromium is `Chromium` in AT-SPI,
+  `chromium-browser` or its `--app` profile in WM_CLASS and `chrome` as a
+  process. Element targets are matched to their window by pid when the names
+  disagree.
+- **A bare Return, Enter or space presses the focused control.** It is judged
+  like a click on that control (read through AT-SPI), so a focused Delete or
+  Send button needs the user's confirmation. An app without AT-SPI has no
+  control to recognize.
 - **Menus take keys.** While a menu or popup item is showing in the target app,
   keystrokes are refused with `popup_open`; send Escape first, which is always
   allowed. Menus are seen through AT-SPI, so an app without accessibility
-  support gets no such guard.
-- **Element focus does not raise windows.** `focus` moves keyboard focus inside
-  an app and reports `window_active`. Keys aimed at an element whose window is
-  not active are refused (`window_not_active`) until the app is brought forward
-  with foreground consent.
+  support gets no such guard. A menu check that does not answer refuses the
+  keystroke (`popup_unknown`).
+- **Element focus does not activate windows by itself.** `focus` moves keyboard
+  focus inside an app and reports `window_active`. Keys aimed at an element
+  whose window is not active are refused (`window_not_active`) until the app is
+  brought forward with foreground consent. GTK 3 has been seen raising its own
+  window and selecting an entry's text when an entry takes focus.
 - **`app_ref` is an exact app name.** Screenshots and window listings crop to an
   app's frame. Windows stacked above it are named in `occluded_by`, and their
   pixels appear in the crop, so read that list before trusting the image.
@@ -507,8 +524,12 @@ recording-file listing remain available on every platform.
   result rather than assuming it.
 - **Keystroke loss is not ruled out.** Thirty controlled click-then-type pairs
   with exact read-back lost nothing, but two earlier mixed runs dropped a
-  character that could not be reproduced. For element targets, confirm the text
-  with `get_value`.
+  character that could not be reproduced. Non-ASCII text typed into Chromium
+  through XTEST drops a character in some strings (30/40 exact under load,
+  35-37/40 idle); GTK and Tk read back exact. For element targets, confirm the
+  text with `get_value`.
+- **AT-SPI needs a `python3` on PATH that imports pyatspi.** The tree walk stops
+  at depth 10 and 500 elements.
 - **`get_value` reads at most 4000 characters.** `select_text` with no
   selection present adds one (AT-SPI `addSelection`), so a second call replaces
   it.

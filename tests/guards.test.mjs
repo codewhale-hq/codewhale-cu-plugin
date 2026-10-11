@@ -249,6 +249,19 @@ test("E5: delete through perform_action, a coordinate click or a menu is gated; 
   fs.rmSync(controlFile, { force: true });
 });
 
+test("an untargeted Return or space presses the focused control, so a focused Delete button is gated; a focused text field is not", async () => {
+  fs.writeFileSync(controlFile, JSON.stringify({ focused: { role: "push button", label: "Delete all files" } }));
+  for (const text of ["Return", "space", "ctrl+Return"]) {
+    const keyed = await tool("key", { text });
+    assert.equal(keyed.error?.code, "confirmation_required", JSON.stringify(keyed));
+    assert.equal(keyed.confirm.label, "Delete all files");
+  }
+  assert.notEqual((await tool("key", { text: "Tab" })).error?.code, "confirmation_required");
+  fs.writeFileSync(controlFile, JSON.stringify({ focused: { role: "text", label: "Send to" } }));
+  assert.notEqual((await tool("key", { text: "Return" })).error?.code, "confirmation_required");
+  fs.rmSync(controlFile, { force: true });
+});
+
 // ---- helper staleness (K6) ----
 
 test("a consent decision is never a run_actions step or a replayed trajectory step", async () => {

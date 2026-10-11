@@ -11,6 +11,7 @@ import { run as nativeRun, runOk, ExecError, tryJson, have as nativeHave, withSi
 import { pngSize } from "../png-size.mjs";
 import { createBrowser } from "../browser-cdp.mjs";
 import { recordingsDir, recordingsOutputPath } from "../recordings.mjs";
+import { windowClientPid } from "../x11-res.mjs";
 
 const XKEYS = {
   return: "Return", enter: "Return", tab: "Tab", escape: "Escape", esc: "Escape",
@@ -202,7 +203,10 @@ export function create({ exec } = {}) {
       const m = /^(0x[0-9a-f]+)\s+(-?\d+)\s+(\d+)\s+(\S+)\s+\S+\s+(.*)$/i.exec(line.trim());
       if (!m) continue;
       const wm_class = m[4];
-      out.push({ id: normWindowId(m[1]), pid: Number(m[3]), wm_class, name: wm_class.split(".")[0] || wm_class, title: m[5] });
+      const id = normWindowId(m[1]);
+      // Tk and other toolkits set no _NET_WM_PID; the X server knows the client.
+      const pid = Number(m[3]) > 0 ? Number(m[3]) : (session === "x11" ? await windowClientPid(id) : null) ?? 0;
+      out.push({ id, pid, wm_class, name: wm_class.split(".")[0] || wm_class, title: m[5] });
     }
     return out;
   }
@@ -231,8 +235,10 @@ export function create({ exec } = {}) {
     return windows;
   }
 
-  function identityOf(win) {
-    return { name: win.name, comm: win.comm, pid: win.pid, wm_class: win.wm_class, title: win.title, window: win.id };
+  /** The window's app. Its process's other windows (Tk names each toplevel separately) are aliases of the same app. */
+  function identityOf(win, windows = []) {
+    const aliases = win.pid > 0 ? [...new Set(windows.filter((w) => w.pid === win.pid && w.name !== win.name).map((w) => w.name))] : [];
+    return { name: win.name, comm: win.comm, pid: win.pid, wm_class: win.wm_class, title: win.title, window: win.id, ...(aliases.length ? { aliases } : {}) };
   }
 
   const ownerUnknown = (message) => Object.assign(new ExecError(message), { code: "input_owner_unknown" });
@@ -246,7 +252,7 @@ export function create({ exec } = {}) {
     const active = normWindowId((await softRun("xdotool", ["getactivewindow"])).trim());
     const win = active ? windows.find((w) => w.id === active) : null;
     if (!win) throw ownerUnknown("no managed application window has keyboard focus; click the target app's window first, then retry");
-    return identityOf(win);
+    return identityOf(win, windows);
   }
 
   /** The app whose window is topmost under a screen point, or null when the point is on the desktop. */
@@ -260,7 +266,7 @@ export function create({ exec } = {}) {
       if (!win.viewable) continue;
       if (!win.frame) throw ownerUnknown(`the geometry of window "${win.title}" could not be read, so this pointer target cannot be attributed`);
       const f = win.frame;
-      if (x >= f.x && y >= f.y && x < f.x + f.w && y < f.y + f.h) return identityOf(win);
+      if (x >= f.x && y >= f.y && x < f.x + f.w && y < f.y + f.h) return identityOf(win, windows);
     }
     return null;
   }
@@ -289,12 +295,27 @@ export function create({ exec } = {}) {
     return { win, rect: [f.x, f.y, f.w, f.h], occludedBy };
   }
 
+  /**
+   * Whether the window owner is the AT-SPI app named `name`. Names differ
+   * between the two (Chromium is "Chromium" in AT-SPI, chromium-browser or
+   * its --app profile in WM_CLASS, chrome as a process), so the AT-SPI
+   * app's pid decides when the names do not match.
+   */
+  async function ownerIsApp(owner, name) {
+    if (!owner || !name) return false;
+    if (sameName(owner.name, name) || sameName(owner.comm, name)) return true;
+    if (!(owner.pid > 0) || !tools.pyatspi) return false;
+    const r = await run("python3", ["-c", PYATSPI_APP_PID, name], { timeoutMs: 10_000 });
+    throwIfAborted();
+    return tryJson(r.stdout.trim().split("\n").pop() ?? "", null)?.pid === owner.pid;
+  }
+
   /** Refuse keystrokes when an open menu would take them, or when the element's window is not the active one. */
   async function assertKeyboardReady({ target, allowEscape = false } = {}) {
     if (session !== "x11") return;
     if (target?.app_ref?.name) {
       const owner = await keyboardOwner();
-      if (!sameName(owner.name, target.app_ref.name) && !sameName(owner.comm, target.app_ref.name)) {
+      if (!(await ownerIsApp(owner, target.app_ref.name))) {
         throw Object.assign(new ExecError(`the keystrokes would go to "${owner.name}", not "${target.app_ref.name}" — the element is focused but its window is not the active one. Bring the app forward (open_application activate:true needs foreground consent) or ask the user to focus it, then retry.`), { code: "window_not_active" });
       }
     }
@@ -303,10 +324,13 @@ export function create({ exec } = {}) {
     // is no menu to probe for.
     const owner = await keyboardOwner().catch(() => null);
     if (!owner) return;
-    const r = await run("python3", ["-c", PYATSPI_POPUP, owner.name], { timeoutMs: 10_000 });
+    const r = await run("python3", ["-c", PYATSPI_POPUP, owner.name, String(owner.pid > 0 ? owner.pid : 0)], { timeoutMs: 10_000 });
     throwIfAborted();
     const out = tryJson(r.stdout.trim().split("\n").pop() ?? "", null);
-    if (out?.popup) {
+    // An app with no AT-SPI presence has no menus to see (found:false); a
+    // probe that did not answer cannot vouch that no menu is open.
+    if (!out) throw Object.assign(new ExecError(`could not check ${owner.name} for an open menu (the AT-SPI probe did not answer), so keystrokes are refused; retry, or send Escape first`), { code: "popup_unknown" });
+    if (out.popup) {
       throw Object.assign(new ExecError(`a ${out.popup.role}${out.popup.label ? ` "${out.popup.label}"` : ""} is open in ${owner.name}, and keystrokes would go into it. Send key Escape (allowed while a menu is open), observe the app, then retry.`), { code: "popup_open" });
     }
   }
@@ -407,13 +431,25 @@ export function create({ exec } = {}) {
         matches = [app for app in apps if app and app_name.casefold() == (app.name or "").casefold()]
         return matches[0] if len(matches) == 1 else None
     return next((app for app in apps if app and app.childCount), None)
+
+def resolve_app_pid(desktop, pid):
+    matches = []
+    for i in range(desktop.childCount):
+        app = desktop.getChildAtIndex(i)
+        try:
+            if app and app.get_process_id() == pid:
+                matches.append(app)
+        except Exception:
+            pass
+    return matches[0] if len(matches) == 1 else None
 `;
   // The popup probe looks for menu items and popup menus that are showing.
   // Menu-bar entries stay "showing" while closed, so only items count.
   const PYATSPI_POPUP = `import json, sys, pyatspi
 ${PYATSPI_APP}
 desktop = pyatspi.Registry.getDesktop(0)
-root = resolve_app(desktop, sys.argv[1] if len(sys.argv) > 1 else None)
+pid = int(sys.argv[2]) if len(sys.argv) > 2 else 0
+root = (resolve_app_pid(desktop, pid) if pid > 0 else None) or resolve_app(desktop, sys.argv[1] if len(sys.argv) > 1 else None)
 if root is None:
     print(json.dumps({"found": False, "popup": None}))
     sys.exit(0)
@@ -447,6 +483,52 @@ while queue and popup is None and seen < 1000:
                 break
         queue.append((child, depth + 1))
 print(json.dumps({"found": True, "popup": popup, "visited": seen}))`;
+
+  const PYATSPI_APP_PID = `import json, sys, pyatspi
+${PYATSPI_APP}
+app = resolve_app(pyatspi.Registry.getDesktop(0), sys.argv[1])
+pid = None
+try:
+    pid = app.get_process_id() if app else None
+except Exception:
+    pass
+print(json.dumps({"pid": pid}))`;
+
+  // The control holding keyboard focus inside the app, so a bare Return or
+  // space is judged by what it would press.
+  const PYATSPI_FOCUSED = `import json, sys, pyatspi
+${PYATSPI_APP}
+desktop = pyatspi.Registry.getDesktop(0)
+pid = int(sys.argv[2]) if len(sys.argv) > 2 else 0
+root = (resolve_app_pid(desktop, pid) if pid > 0 else None) or resolve_app(desktop, sys.argv[1] if len(sys.argv) > 1 else None)
+if root is None:
+    print(json.dumps({"found": False, "control": None}))
+    sys.exit(0)
+control = None
+seen = 0
+queue = [(root, 0)]
+while queue and control is None and seen < 2000:
+    node, depth = queue.pop(0)
+    if depth > 12:
+        continue
+    try:
+        count = node.childCount
+    except Exception:
+        continue
+    for i in range(count):
+        try:
+            child = node.getChildAtIndex(i)
+            state = child.getState()
+        except Exception:
+            continue
+        seen += 1
+        if not state.contains(pyatspi.STATE_SHOWING):
+            continue
+        if state.contains(pyatspi.STATE_FOCUSED):
+            control = {"role": child.getRoleName() or "", "label": (child.name or "").strip() or None, "description": (child.description or "").strip() or None}
+            break
+        queue.append((child, depth + 1))
+print(json.dumps({"found": True, "control": control, "visited": seen}))`;
 
   const PYATSPI_WALK = `import json, sys, pyatspi
 ${PYATSPI_APP}
@@ -1010,7 +1092,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
       // active window, so type and key refuse with this target until it is.
       const owner = await keyboardOwner().catch(() => null);
       const appName = target.app_ref?.name ?? "";
-      const windowActive = !!owner && (sameName(owner.name, appName) || sameName(owner.comm, appName));
+      const windowActive = await ownerIsApp(owner, appName);
       return { action_sent: true, strategy: "a11y", focused: true, window_active: windowActive,
         ...(windowActive ? {} : { note: `the element is focused inside ${appName || "its app"}, but that window is not the active one, so keystrokes would go elsewhere` }) };
     },
@@ -1058,6 +1140,16 @@ print(json.dumps({"found": True, "reason": None, "element": {
         print(json.dumps({"ok": True, "selected": {"start": begin, "end": end}, "text": text.getText(begin, end)[:500]}))`, range ? JSON.stringify(range) : "null");
       if (!out.ok) throw Object.assign(new ExecError(`select_text failed: ${out.code}`), { code: "select_text_failed", reason: out.code });
       return { action_sent: true, strategy: "a11y", ...(range ? { selected: out.selected, text: out.text } : { caret: out.caret, characters: out.characters }) };
+    },
+    /** The focused control of the app with keyboard focus, or null when it has none or no AT-SPI presence. */
+    focused_control: async () => {
+      const owner = await keyboardOwner();
+      if (!tools.pyatspi) return null; // without AT-SPI no control is recognized, as with an app that has none
+      const r = await run("python3", ["-c", PYATSPI_FOCUSED, owner.name, String(owner.pid > 0 ? owner.pid : 0)], { timeoutMs: 10_000 });
+      throwIfAborted();
+      const out = tryJson(r.stdout.trim().split("\n").pop() ?? "", null);
+      if (!out) throw Object.assign(new ExecError(`could not read the focused control in ${owner.name} (the AT-SPI probe did not answer)`), { code: "focused_control_unknown" });
+      return out.control ? { ...out.control, app: { name: owner.name, pid: owner.pid } } : null;
     },
     input_owner: async ({ kind, point } = {}) => {
       if (kind === "keyboard") return keyboardOwner();

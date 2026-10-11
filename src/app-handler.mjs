@@ -15,7 +15,7 @@ export const ALLOWED = new Set([
   "left_click", "double_click", "triple_click", "right_click", "middle_click",
   "mouse_move", "left_click_drag", "left_mouse_down", "left_mouse_up", "scroll",
   "type", "key", "hold_key", "set_value", "focus", "get_value", "select_text", "perform_action", "invoke_menu",
-  "read_clipboard", "write_clipboard", "cursor_position", "input_owner",
+  "read_clipboard", "write_clipboard", "cursor_position", "input_owner", "focused_control",
   "recordingStart", "recordingStop", "recordingStatus", "recordingList",
   "app_script",
 ]);

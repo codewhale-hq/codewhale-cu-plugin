@@ -436,7 +436,7 @@ const dispatchFailureSSH = `
   const reply = value => process.stdout.write(JSON.stringify(value) + '\\n');
   (async () => {
     if (request.tool === 'platform') return reply({ok:true,platform:'linux'});
-    if (request.tool === 'input_owner') return reply({ok:true,data:null});
+    if (request.tool === 'input_owner' || request.tool === 'focused_control') return reply({ok:true,data:null});
     if (request.tool === 'get_app_state') return reply({ok:true,data:{found:true,elements:[]}});
     if (request.tool !== 'key') throw new Error('unexpected fixture tool');
     fs.appendFileSync(process.env.ROUTE_LOG, JSON.stringify({method:'dispatched',host:process.argv.find(arg => arg.startsWith('fixture-'))}) + '\\n');
