@@ -19,14 +19,23 @@ const XKEYS = {
   down: "Down", capslock: "Caps_Lock", menu: "Menu", print: "Print",
 };
 
+/** Resolves once the process has started; a missing or unrunnable executable rejects instead of crashing the server. */
 function spawnDetached(cmd, args, stdinText = "", quiet = true) {
-  const child = spawn(cmd, args, {
-    stdio: stdinText ? ["pipe", "ignore", quiet ? "ignore" : "pipe"] : ["ignore", "ignore", quiet ? "ignore" : "pipe"],
-    detached: true,
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, {
+      stdio: stdinText ? ["pipe", "ignore", quiet ? "ignore" : "pipe"] : ["ignore", "ignore", quiet ? "ignore" : "pipe"],
+      detached: true,
+    });
+    child.once("error", (err) => reject(Object.assign(
+      new ExecError(err.code === "ENOENT" ? `"${cmd}" was not found on PATH` : `could not start "${cmd}": ${err.message}`),
+      { code: err.code === "ENOENT" ? "app_not_found" : "launch_failed" })));
+    child.once("spawn", () => {
+      child.stdin?.on("error", () => {});
+      if (stdinText) child.stdin.end(stdinText);
+      child.unref();
+      resolve(child);
+    });
   });
-  if (stdinText) child.stdin.end(stdinText);
-  child.unref();
-  return child;
 }
 
 /** Coordinate clicks on this backend are always raw pointer events; strategy="a11y" must fail closed rather than silently degrade. */
@@ -708,7 +717,7 @@ except Exception as e:
           }
         } catch { /* no session/tools — the launch itself is still fine */ }
       }
-      spawnDetached(target, urlArg ? [urlArg] : [], "", true);
+      await spawnDetached(target, urlArg ? [urlArg] : [], "", true);
       await new Promise((r) => setTimeout(r, 500));
       let focusRestored = false;
       if (prevWindow) {
@@ -1142,7 +1151,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
         ? (tools.xclip ? ["xclip", "-selection", "clipboard"] : ["xsel", "--clipboard", "--input"])
         : ["wl-copy"];
       need(cmd[0], "clipboard write");
-      spawnDetached(cmd[0], cmd.slice(1), String(text ?? ""), true);
+      await spawnDetached(cmd[0], cmd.slice(1), String(text ?? ""), true);
       return { written: String(text ?? "").length };
     },
     cursor_position: async () => {

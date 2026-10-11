@@ -251,6 +251,12 @@ test("list_sessions names the app with keyboard focus and reports no held input"
   assert.equal(sessions[0].inputHeld, false);
 });
 
+test("open_application with a missing executable fails with app_not_found and the server keeps running", async (t) => {
+  x11Env(t);
+  const backend = create({ exec: { run: fakeDesktop().run, have } });
+  await assert.rejects(backend.open_application({ name: "codewhale-no-such-app" }), (err) => err.code === "app_not_found" && /not found on PATH/.test(err.message));
+});
+
 test("kill_app refuses ambiguity and never terminates its own process chain", async (t) => {
   x11Env(t);
   const backend = create({ exec: { run: fakeDesktop().run, have } });
