@@ -1465,7 +1465,7 @@ async function callTool(params, bindWhen = null) {
         else {
           // Raster lives on the remote machine; bind geometry for coordinate mapping.
           bindRaster(computer, { ...data, file: null, path: null }, data.file ?? data.path);
-          data.note = "file lives on the remote computer; pull it with scp if you need the bytes locally";
+          if (typeof ex.readImage !== "function") data.note = "file lives on the remote computer; pull it with scp if you need the bytes locally";
         }
       }
       if (backendMethod === "zoom") bindZoomRaster(computer, zoomParent, args.region, ex.filesLocal ? data?.file ?? data?.path : null, data?.file ?? data?.path);
@@ -1573,20 +1573,30 @@ async function callTool(params, bindWhen = null) {
     // disk and still bound, so zoom or a narrower capture returns a viewable
     // image. Never trade the session for one screenshot.
     let imageBlock = null;
+    const omitted = (size) => ({
+      reason: "raster_too_large",
+      bytes: size,
+      encoded_bytes: encodedSize(size),
+      limit_bytes: INLINE_IMAGE_MAX_BYTES,
+      note: "The capture is on disk at the returned path, but inlining it would exceed this host's single-message budget and drop the connection. Capture one display, a region, or an app window, or call zoom on this raster to get a viewable image.",
+    });
+    const imageMime = (bytes) => (bytes[0] === 0xff ? "image/jpeg" : "image/png");
+    // A spawned container's captures are read back over docker exec, under
+    // the same budget as a local file.
+    if ((name === "screenshot" || name === "zoom" || name === "browser_screenshot") && typeof ex?.readImage === "function" && (data.file || data.path)) {
+      const maxBytes = Math.floor(INLINE_IMAGE_MAX_BYTES / 4) * 3;
+      const image = await ex.readImage(data.file || data.path, { maxBytes });
+      if (!image.data) data.image_omitted = omitted(image.bytes);
+      else imageBlock = { type: "image", mimeType: imageMime(image.data), data: image.data.toString("base64") };
+    }
     if ((name === "screenshot" || name === "zoom" || name === "browser_screenshot") && computer.transport === "local" && (data.file || data.path)) {
       const file = data.file || data.path;
       const size = fs.statSync(file).size;
       if (encodedSize(size) > INLINE_IMAGE_MAX_BYTES) {
-        data.image_omitted = {
-          reason: "raster_too_large",
-          bytes: size,
-          encoded_bytes: encodedSize(size),
-          limit_bytes: INLINE_IMAGE_MAX_BYTES,
-          note: "The capture is on disk at the returned path, but inlining it would exceed this host's single-message budget and drop the connection. Capture one display, a region, or an app window, or call zoom on this raster to get a viewable image.",
-        };
+        data.image_omitted = omitted(size);
       } else {
         const bytes = fs.readFileSync(file);
-        imageBlock = { type: "image", mimeType: bytes[0] === 0xff ? "image/jpeg" : "image/png", data: bytes.toString("base64") };
+        imageBlock = { type: "image", mimeType: imageMime(bytes), data: bytes.toString("base64") };
       }
     }
     if (name === "request_access") {

@@ -1,5 +1,5 @@
-# The image installs its own dependencies for linux/arm64 or linux/amd64; a
-# node_modules built on the host would ship the wrong sharp binary.
+# The image needs no npm dependencies; a host node_modules would only add a
+# platform-specific sharp binary.
 node_modules
 dist
 receipts

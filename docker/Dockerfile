@@ -47,11 +47,8 @@ WORKDIR /app
 RUN chown node:node /app
 USER node
 
-# Dependencies first so source edits do not re-resolve the tree. There are no
-# runtime dependencies; this installs sharp for the icon scripts only.
-COPY --chown=node:node package.json package-lock.json ./
-RUN npm ci --ignore-scripts
-
+# The server and the tests have no npm dependencies (sharp is only for the
+# branding script), so the image installs none.
 COPY --chown=node:node . .
 
 ENTRYPOINT ["/bin/sh", "/app/docker/entrypoint.sh"]

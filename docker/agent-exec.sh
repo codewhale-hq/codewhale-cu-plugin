@@ -9,15 +9,18 @@
 set -eu
 
 ENV_FILE=/tmp/cu-session.env
-if [ -f "$ENV_FILE" ]; then
-  # Sourced assignments are not exported by default; allexport marks them so
-  # the agent process (and the backend tools it runs) inherit display and bus.
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE"
-  set +a
-else
-  export DISPLAY="${DISPLAY:-:0}"
+# Until the entrypoint has written the session env, an agent would run off
+# the session bus and never see the accessibility tree: refuse, so spawn's
+# readiness probe keeps waiting instead of reporting a half-started desktop.
+if [ ! -s "$ENV_FILE" ]; then
+  echo "agent-exec: session not ready ($ENV_FILE missing)" >&2
+  exit 75
 fi
+# Sourced assignments are not exported by default; allexport marks them so
+# the agent process (and the backend tools it runs) inherit display and bus.
+set -a
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+set +a
 
 exec node /app/agent.mjs "$@"

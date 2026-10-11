@@ -264,6 +264,19 @@ export function dockerExec(computer, binding) {
       if (!reply) throw new ExecError(`docker exec ${container}: agent returned no JSON receipt`, r);
       return reply;
     },
+    /** Bytes of a capture the agent wrote inside the container (absolute .png/.jpg path), or null over maxBytes. */
+    async readImage(file, { maxBytes } = {}) {
+      if (typeof file !== "string" || !path.posix.isAbsolute(file) || /[\0\n]/.test(file) || !/\.(png|jpe?g)$/i.test(file)) {
+        throw Object.assign(new ExecError("capture path from the container is not an absolute image path"), { code: "bad_capture_path" });
+      }
+      const size = await run("docker", ["exec", container, "stat", "-c", "%s", "--", file], { timeoutMs: 10_000 });
+      if (size.code !== 0) throw new ExecError(`docker exec ${container}: cannot stat ${file}: ${size.stderr.trim().slice(0, 200)}`, size);
+      const bytes = Number(size.stdout.trim());
+      if (maxBytes != null && bytes > maxBytes) return { bytes, data: null };
+      const r = await run("docker", ["exec", container, "base64", "-w0", "--", file], { timeoutMs: 20_000 });
+      if (r.code !== 0) throw new ExecError(`docker exec ${container}: cannot read ${file}: ${r.stderr.trim().slice(0, 200)}`, r);
+      return { bytes, data: Buffer.from(r.stdout.trim(), "base64") };
+    },
   };
   attachPersistentChannel(ex, binding, ["docker", "exec", "-i", container, "/bin/sh", remoteAgent, "--serve"]);
   return ex;
