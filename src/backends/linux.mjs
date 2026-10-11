@@ -11,6 +11,7 @@ import { run as nativeRun, ExecError, tryJson, have as nativeHave, withSignal, t
 import { pngSize } from "../png-size.mjs";
 import { createBrowser } from "../browser-cdp.mjs";
 import { recordingsDir, recordingsOutputPath } from "../recordings.mjs";
+import { createWayland } from "./linux-wayland.mjs";
 import { windowClientPid } from "../x11-res.mjs";
 
 const XKEYS = {
@@ -111,6 +112,7 @@ export function create({ exec } = {}) {
   const heldKeys = new Set();
   let lastTypedAt = 0;
   const recordings = new Map(); // id -> { child, file, rect, fps, startedAt, stderr }
+  const wl = createWayland({ run, need, tools, keyName: (k) => xdotoolKey(k) });
 
   async function settleAfterTyping() {
     const since = Date.now() - lastTypedAt;
@@ -119,7 +121,7 @@ export function create({ exec } = {}) {
 
   async function releaseMouse() {
     if (!mouseHeld) return;
-    await withSignal(null, () => session === "x11" ? xdotool(["mouseup", "1"], { timeoutMs: 2_000 }) : ydotool(["click", "0x80"], { timeoutMs: 2_000 }));
+    await withSignal(null, () => session === "x11" ? xdotool(["mouseup", "1"], { timeoutMs: 2_000 }) : wl.mouseUp({ timeoutMs: 2_000 }));
     mouseHeld = false;
   }
 
@@ -257,7 +259,7 @@ export function create({ exec } = {}) {
   /** The app whose window has keyboard focus. Fails closed: never guesses. */
   async function keyboardOwner() {
     await probeSession();
-    if (session !== "x11") throw ownerUnknown("Linux Wayland does not expose the focused window to Codewhale, so keyboard input is refused rather than sent to an unknown window; use an X11 session");
+    if (session !== "x11") return wl.keyboardOwner();
     const windows = await x11Windows();
     if (!windows) throw ownerUnknown("the window manager does not publish its stacking order, so Codewhale cannot tell which app would receive keys");
     const active = normWindowId((await softRun("xdotool", ["getactivewindow"])).trim());
@@ -269,7 +271,7 @@ export function create({ exec } = {}) {
   /** The app whose window is topmost under a screen point, or null when the point is on the desktop. */
   async function pointOwner(x, y) {
     await probeSession();
-    if (session !== "x11") throw ownerUnknown("Linux Wayland does not expose pointer ownership to Codewhale, so pointer input is refused; use an X11 session");
+    if (session !== "x11") return wl.pointOwner(x, y);
     const windows = await x11Windows();
     if (!windows) throw ownerUnknown("the window manager does not publish its stacking order, so Codewhale cannot tell which app a pointer target belongs to");
     for (let i = windows.length - 1; i >= 0; i--) {
@@ -347,7 +349,7 @@ export function create({ exec } = {}) {
   }
 
   async function shotTool() {
-    if (session === "wayland") { need("grim", "screenshots on Wayland"); return { cmd: "grim", base: [] }; }
+    if (session === "wayland") return wl.shotTool();
     if (session === "x11") {
       if (tools.scrot) return { cmd: "scrot", base: ["-z"] };
       need("import", "screenshots on X11 (imagemagick)");
@@ -362,8 +364,7 @@ export function create({ exec } = {}) {
     const { cmd, base } = await shotTool();
     let args = [...base];
     if (cmd === "grim") {
-      if (region) args.push("-g", `${Math.round(region[0])},${Math.round(region[1])} ${Math.round(region[2])}x${Math.round(region[3])}`);
-      args.push(file);
+      args.push(...wl.shotArgs(region, file));
     } else if (cmd === "scrot") {
       if (region) args.push("-a", `${Math.round(region[0])},${Math.round(region[1])},${Math.round(region[2])},${Math.round(region[3])}`);
       args.push(file);
@@ -384,15 +385,6 @@ export function create({ exec } = {}) {
     return r.stdout.trim();
   }
 
-  async function ydotool(args, opts = {}) {
-    need("ydotool", "input on Wayland (ydotool needs its daemon running: sudo ydotoold)");
-    throwIfAborted();
-    const r = await run("ydotool", args, opts);
-    throwIfAborted();
-    if (r.code !== 0) throw new ExecError(`ydotool exited ${r.code}: ${r.stderr.trim().slice(0, 200)}`, r);
-    return r.stdout.trim();
-  }
-
   function xdotoolKey(text) {
     return String(text).split("+").map((p) => {
       const k = p.trim().toLowerCase();
@@ -400,33 +392,6 @@ export function create({ exec } = {}) {
       if (/^f\d{1,2}$/.test(k)) return k.toUpperCase();
       return p.trim(); // pass through names already in xdotool form
     }).join("+");
-  }
-
-  async function waylandKey(text, { repeat = 1, holdMs = 0 } = {}) {
-    need("wtype", "key presses on Wayland");
-    const parts = String(text).split("+").map((part) => part.trim().toLowerCase());
-    const aliases = { control: "ctrl", meta: "logo", cmd: "logo", super: "logo" };
-    const modifiers = new Set(["ctrl", "alt", "shift", "logo", "win", "altgr", "capslock"]);
-    const rawKey = parts.pop();
-    const key = xdotoolKey(rawKey);
-    const mods = parts.map((part) => aliases[part] ?? part);
-    if (!key || mods.some((mod) => !modifiers.has(mod))) throw new ExecError(`unknown key combination "${text}"`);
-    const modKey = aliases[rawKey] ?? rawKey;
-    const onlyModifier = modifiers.has(modKey);
-    const args = mods.flatMap((mod) => ["-M", mod]);
-    for (let i = 0; i < repeat; i++) {
-      args.push(onlyModifier ? "-M" : "-P", onlyModifier ? modKey : key);
-      if (holdMs) args.push("-s", String(holdMs));
-      args.push(onlyModifier ? "-m" : "-p", onlyModifier ? modKey : key);
-    }
-    args.push(...mods.reverse().flatMap((mod) => ["-m", mod]));
-    // wtype owns a temporary Wayland keyboard; the compositor releases its
-    // keys on process exit, including cancellation. Keep the complete gesture
-    // in one process (https://github.com/atx/wtype#usage).
-    throwIfAborted();
-    const result = await run("wtype", args, { timeoutMs: Math.max(10_000, holdMs + 8_000) });
-    throwIfAborted();
-    if (result.code !== 0) throw new ExecError(`wtype exited ${result.code}: ${result.stderr.trim().slice(0, 200)}`, result);
   }
 
   function assertNum(v, name) {
@@ -638,11 +603,7 @@ except Exception as e:
       args.push(String(button));
       return xdotool(args);
     }
-    // ydotool click mask: down|up|count nibble (0xC0 = left click once, +1 per extra click;
-    // 0x04 bit selects right button, 0x02 middle).
-    const count = Math.max(1, Math.min(3, clicks));
-    const code = button === 3 ? 0xc0 + count + 0x04 : button === 2 ? 0xc0 + count + 0x02 : 0xc0 + count - 1;
-    return ydotool(["click", "0x" + code.toString(16)]);
+    return wl.click(button, clicks);
   }
 
   const api = {
@@ -727,19 +688,9 @@ except Exception as e:
         if (displays.length && !displays.some((d) => d.main)) displays[0].main = true;
         if (displays.length) return displays;
       }
-      if (session === "wayland" && tools.swaymsg) {
-        const r = await run("swaymsg", ["-t", "get_outputs", "-r"], { timeoutMs: 15_000 });
-        const outs = tryJson(r.stdout, []);
-        if (Array.isArray(outs) && outs.length) {
-          return outs.map((o, i) => ({ index: i + 1, name: o.name, points: { x: o.rect?.x, y: o.rect?.y, w: o.rect?.width, h: o.rect?.height }, pixels: { w: o.current_mode?.width, h: o.current_mode?.height }, scale: o.scale ?? 1, main: i === 0 }));
-        }
-      }
-      if (session === "wayland" && tools.hyprctl) {
-        const r = await run("hyprctl", ["-j", "monitors"], { timeoutMs: 15_000 });
-        const ms = tryJson(r.stdout, []);
-        if (Array.isArray(ms) && ms.length) {
-          return ms.map((o, i) => ({ index: i + 1, name: o.name, points: { x: o.x, y: o.y, w: o.width, h: o.height }, pixels: { w: o.width, h: o.height }, scale: o.scale ?? 1, main: !!o.main || i === 0 }));
-        }
+      if (session === "wayland") {
+        const displays = await wl.displays();
+        if (displays) return displays;
       }
       throw new ExecError("display enumeration needs xrandr (X11) or swaymsg/hyprctl (Wayland) — install one and retry");
     },
@@ -759,9 +710,8 @@ except Exception as e:
         return { apps: [...seen.values()] };
       }
       if (session === "wayland" && (tools.swaymsg || tools.hyprctl)) {
-        const w = await api.list_windows();
         const seen = new Map();
-        for (const win of w.windows) {
+        for (const win of await wl.windows()) {
           const cls = win.wm_class || win.app_id;
           if (cls) seen.set(cls, { name: cls, wm_class: cls });
         }
@@ -785,21 +735,9 @@ except Exception as e:
         }));
         return { windows };
       }
-      if (session === "wayland" && tools.swaymsg) {
-        const r = await run("swaymsg", ["-t", "get_tree", "-r"], { timeoutMs: 15_000 });
-        const windows = [];
-        const walk = (n) => {
-          if (n.type === "con" && n.name) windows.push({ id: String(n.id), title: n.name, wm_class: n.app_id ?? null, position: { x: n.rect?.x, y: n.rect?.y }, size: { w: n.rect?.width, h: n.rect?.height }, focused: !!n.focused });
-          (n.nodes ?? []).forEach(walk);
-          (n.floating_nodes ?? []).forEach(walk);
-        };
-        walk(tryJson(r.stdout, {}));
-        return { windows };
-      }
-      if (session === "wayland" && tools.hyprctl) {
-        const r = await run("hyprctl", ["-j", "clients"], { timeoutMs: 15_000 });
-        const clients = tryJson(r.stdout, []);
-        return { windows: clients.map((c) => ({ id: String(c.address), title: c.title, wm_class: c.class, position: { x: c.at?.[0], y: c.at?.[1] }, size: { w: c.size?.[0], h: c.size?.[1] }, focused: !!c.focused })) };
+      if (session === "wayland") {
+        const windows = await wl.windows();
+        if (windows) return { windows };
       }
       throw new ExecError("list_windows needs wmctrl (X11), swaymsg (sway) or hyprctl (hyprland)");
     },
@@ -948,7 +886,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
       mouseHeld = true;
       try {
         if (session === "x11") await xdotool(["mousedown", "1"]);
-        else await ydotool(["click", "0x40"]);
+        else await wl.mouseDown();
         for (let i = 1; i <= 10; i++) {
           await wait(20);
           await inputMove(from.x + ((to.x - from.x) * i) / 10, from.y + ((to.y - from.y) * i) / 10);
@@ -964,7 +902,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
       mouseHeld = true;
       try {
         if (session === "x11") await xdotool(["mousedown", "1"]);
-        else await ydotool(["click", "0x40"]);
+        else await wl.mouseDown();
       } catch (err) { await releaseMouse(); throw err; }
       return { action_sent: true };
     },
@@ -980,8 +918,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
         await xdotool(["click", "--repeat", String(Math.max(1, Math.min(30, amount))), "--delay", "60", String(buttons[direction] ?? 5)]);
         return { action_sent: true, direction, amount };
       }
-      // Wayland: synthesize wheel via ydotool is not wired in this build — honest refusal.
-      throw new ExecError('scroll on Wayland is not available in this build; use swipe-style drags or run an X11/XWayland window. (Roadmap: ydotool wheel events.)');
+      return wl.scroll({ direction, amount });
     },
     type: async ({ text, target }) => {
       if (!text) return { action_sent: false, note: "empty text" };
@@ -1026,9 +963,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
         lastTypedAt = Date.now();
         return { action_sent: true, chars: text.length };
       }
-      need("wtype", "typing on Wayland");
-      const r = await run("wtype", ["--", String(text)], { timeoutMs: 15_000 });
-      if (r.code !== 0) throw new ExecError(`wtype failed: ${r.stderr.slice(0, 200)}`, r);
+      await wl.type(text);
       return { action_sent: true, chars: text.length };
     },
     key: async ({ text, repeat = 1, target }) => {
@@ -1047,7 +982,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
           await xdotool(["key", "--repeat", String(n), "--delay", "60", k]);
           heldKeys.delete(k);
         } finally { await releaseKey(k); }
-      } else await waylandKey(text, { repeat: n });
+      } else await wl.key(text, { repeat: n });
       return { action_sent: true, key: k };
     },
     hold_key: async ({ text, duration }) => {
@@ -1063,7 +998,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
           await xdotool(["keydown", k]);
           await wait(d * 1000);
         } finally { await releaseKey(k); }
-      } else await waylandKey(text, { holdMs: Math.round(d * 1000) });
+      } else await wl.key(text, { holdMs: Math.round(d * 1000) });
       return { action_sent: true, key: k, heldSec: d };
     },
     set_value: async ({ target, value }) => {
@@ -1250,7 +1185,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
       await probeSession();
       const cmd = session === "x11"
         ? (tools.xclip ? ["xclip", "-selection", "clipboard", "-o"] : ["xsel", "--clipboard", "--output"])
-        : ["wl-paste", "--no-newline"];
+        : wl.clipboardRead();
       need(cmd[0], "clipboard read");
       const r = await run(cmd[0], cmd.slice(1), { timeoutMs: 10_000 });
       if (r.code !== 0) throw new ExecError("clipboard read failed", r);
@@ -1260,7 +1195,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
       await probeSession();
       const cmd = session === "x11"
         ? (tools.xclip ? ["xclip", "-selection", "clipboard"] : ["xsel", "--clipboard", "--input"])
-        : ["wl-copy"];
+        : wl.clipboardWrite();
       need(cmd[0], "clipboard write");
       await spawnDetached(cmd[0], cmd.slice(1), String(text ?? ""), true);
       return { written: String(text ?? "").length };
@@ -1434,7 +1369,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
     const nx = Math.round(assertNum(x, "x"));
     const ny = Math.round(assertNum(y, "y"));
     if (session === "x11") await xdotool(["mousemove", "--sync", String(nx), String(ny)]);
-    else await ydotool(["moveto", String(nx), String(ny)]);
+    else await wl.move(nx, ny);
   }
 }
 
