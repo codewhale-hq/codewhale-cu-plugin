@@ -1184,9 +1184,13 @@ async function callTool(params, bindWhen = null) {
   }
 
   if (name === "computer_register") {
+    let existed = false;
+    let created = false;
     try {
       assertNotOwnedElsewhere(args.computer);
+      try { registry.get(args.computer); existed = true; } catch {}
       const entry = registry.register({ id: args.computer, transport: args.transport, label: args.label, host: args.host, port: args.port, user: args.user, knownHosts: args.knownHosts, target: args.target });
+      created = !existed;
       await bindComputer(entry);
       let installed = null;
       if (entry.transport === "ssh" && args.installAgent !== false) {
@@ -1206,7 +1210,13 @@ async function callTool(params, bindWhen = null) {
       return { content: [{ type: "text", text: JSON.stringify(receipt(null, { ok: true, registered: { ...fresh, platform: fresh.platform ?? fresh.platformHint ?? null }, agentInstall: installed })) }] };
     } catch (err) {
       // Registration problems (unreachable host, agent push failed) are
-      // receipts, not protocol errors.
+      // receipts, not protocol errors. A computer this call just added must
+      // not stay listed (and selectable) after its registration failed.
+      if (created) {
+        try { registry.remove(args.computer); } catch {}
+        await retireBinding(args.computer).catch(() => {});
+        if (activeComputerId === args.computer) activeComputerId = "local";
+      }
       return { content: [{ type: "text", text: JSON.stringify(fail(null, err.code ?? "register_failed", err.message ?? String(err))) }], isError: true };
     }
   }

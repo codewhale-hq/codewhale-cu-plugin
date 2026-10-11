@@ -108,6 +108,7 @@ export function create({ exec } = {}) {
   let sessionReason = null;
   let probed = false;
   let lastRaster = null;
+  let activeDisplay = null;
   let mouseHeld = false;
   const heldKeys = new Set();
   let lastTypedAt = 0;
@@ -606,6 +607,15 @@ except Exception as e:
     return wl.click(button, clicks);
   }
 
+  /** The display with this 1-based index from list_displays, or a bad_args error naming the indexes that exist. */
+  async function displayByIndex(index) {
+    if (!Number.isInteger(index) || index < 1) throw Object.assign(new ExecError("display must be a whole number from list_displays, starting at 1"), { code: "bad_args" });
+    const displays = await api.list_displays();
+    const d = displays.find((x) => x.index === index);
+    if (!d) throw Object.assign(new ExecError(`no display ${index}; have [${displays.map((x) => x.index).join(", ")}]`), { code: "bad_args" });
+    return d;
+  }
+
   const api = {
     platform: "linux",
     releaseInput,
@@ -694,7 +704,11 @@ except Exception as e:
       }
       throw new ExecError("display enumeration needs xrandr (X11) or swaymsg/hyprctl (Wayland) — install one and retry");
     },
-    switch_display: async ({ index }) => ({ activeDisplay: index ?? 1, note: "linux screenshots grab the compositor's virtual screen; per-display selection applies only where the shot tool supports it" }),
+    switch_display: async ({ index } = {}) => {
+      const d = await displayByIndex(index ?? 1);
+      activeDisplay = d.index;
+      return { activeDisplay, display: d, note: "later screenshots without display, region or app_ref capture this display; the default stays the whole virtual screen until a display is chosen" };
+    },
     list_apps: async () => {
       await probeSession();
       if (session === "x11" && tools.wmctrl) {
@@ -778,7 +792,7 @@ except Exception as e:
     screenshot: async (args = {}) => {
       rejectWindowSelectors(args);
       const appRef = Object.hasOwn(args, "app_ref") ? appName(args.app_ref) : null;
-      const { display, region } = args;
+      const { region } = args;
       const outPath = recordingsOutputPath(args.path);
       await probeSession();
       const dir = recordingsDir();
@@ -790,6 +804,12 @@ except Exception as e:
       let shotRegion = region;
       let windowInfo = null;
       let occludedBy = null;
+      const wantedDisplay = args.display ?? (appRef === null && !region ? activeDisplay : null);
+      if (wantedDisplay != null) {
+        if (region || appRef !== null) throw Object.assign(new ExecError("choose display, region or app_ref, not a combination"), { code: "bad_args" });
+        const d = await displayByIndex(wantedDisplay);
+        shotRegion = [d.points.x, d.points.y, d.points.w, d.points.h];
+      }
       if (appRef !== null) {
         if (region) throw Object.assign(new ExecError("choose app_ref or region, not both"), { code: "bad_args" });
         const frame = await appFrame(appRef);

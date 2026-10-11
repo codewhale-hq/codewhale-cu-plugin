@@ -521,6 +521,19 @@ test("register and spawn never replace a desktop another session spawned", async
   }
 });
 
+test("a failed SSH registration does not leave the computer listed or active", async t => {
+  const f = fixture(t, null, `
+    process.stderr.write('ssh: connect to host: Connection refused');
+    process.exit(255);
+  `);
+  const result = await f.tool("computer_register", { computer: "pad", transport: "ssh", host: "fixture.test" });
+  assert.equal(result.ok, false, JSON.stringify(result));
+  const listed = await f.tool("computer_list", {});
+  assert.deepEqual(listed.computers.map(c => c.id), ["local"], JSON.stringify(listed));
+  assert.equal(listed.active, "local");
+  assert.ok(!(JSON.parse(fs.readFileSync(path.join(f.dir, "computers.json"))).computers ?? {}).pad, "the catalog keeps no pad entry");
+});
+
 test("SSH registration retains its trusted host-key file after platform discovery", async t => {
   const f = fixture(t, null, `
     const fs = require('node:fs');

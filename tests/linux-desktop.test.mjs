@@ -287,6 +287,19 @@ test("list_displays marks the only output main when xrandr names no primary", as
   assert.equal(displays[0].main, true);
 });
 
+test("switch_display and screenshot accept only displays that exist, and screenshot crops to the chosen one", async (t) => {
+  x11Env(t);
+  const xrandr = "left connected primary 800x600+0+0 0mm x 0mm\nright connected 640x480+800+0 0mm x 0mm\n";
+  const desk = fakeDesktop({ onCommand: (cmd) => (cmd === "xrandr" ? { code: 0, stdout: xrandr, stderr: "", timedOut: false, signal: null } : null) });
+  const backend = create({ exec: { run: desk.run, have } });
+  await assert.rejects(backend.switch_display({ index: 3 }), (err) => err.code === "bad_args" && /have \[1, 2\]/.test(err.message));
+  await assert.rejects(backend.switch_display({ index: 0 }), (err) => err.code === "bad_args");
+  await assert.rejects(backend.screenshot({ display: 9 }), (err) => err.code === "bad_args");
+  await assert.rejects(backend.screenshot({ display: 2, region: [0, 0, 10, 10] }), (err) => err.code === "bad_args");
+  assert.equal((await backend.switch_display({ index: 2 })).activeDisplay, 2);
+  assert.ok(!desk.calls.some((c) => c.cmd === "scrot"), "nothing was captured for a refused display");
+});
+
 test("kill_app refuses ambiguity and never terminates its own process chain", async (t) => {
   x11Env(t);
   const backend = create({ exec: { run: fakeDesktop().run, have } });
