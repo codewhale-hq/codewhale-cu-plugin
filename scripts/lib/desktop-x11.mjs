@@ -133,7 +133,12 @@ function findWindow(nameRe, timeoutMs = 12_000, pid = null) {
     // windows from earlier reps/debugging share the title prefix.
     if (pid) {
       const pr = xd(workDisplay, ["search", "--pid", String(pid), "--name", nameRe]);
-      const pids = pr.stdout.trim().split("\n").filter(Boolean);
+      // xdotool can also return Chromium's unmanaged leader window (titled
+      // "chrome"); take only a window whose title is the fixture's.
+      const pids = pr.stdout.trim().split("\n").filter(Boolean).filter((id) => {
+        const t = xd(workDisplay, ["getwindowname", id]).stdout.trim();
+        return nameRe instanceof RegExp ? nameRe.test(t) : t.includes(nameRe);
+      });
       if (pids.length) return pids[pids.length - 1];
     }
     const r = xd(workDisplay, ["search", "--name", nameRe]);

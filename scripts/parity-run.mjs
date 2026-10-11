@@ -543,8 +543,9 @@ async function runRep(task, repIdx, ctx) {
 
   // A task the platform genuinely cannot express is recorded as a skip with a
   // reason, never silently dropped from the matrix.
-  if (task.skip && !(task.needs_input_owner && desktop.inputOwner)) {
-    return { ...rep, status: "skipped", reason: task.skip, elapsed_ms: 0,
+  const skip = task.skip && !(task.needs_input_owner && desktop.inputOwner) ? task.skip : desktop.inputOwner ? task.skip_with_input_owner : null;
+  if (skip) {
+    return { ...rep, status: "skipped", reason: skip, elapsed_ms: 0,
              interference: { pointer_displacement_px: 0, active_window_changed: false },
              interference_actions: { pointer_displacement_px: 0, active_window_changed: false } };
   }

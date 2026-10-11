@@ -300,6 +300,7 @@
     {
       "id": "control.permission_denied", "issue": 6, "fixture": null, "server_env": { "DISPLAY": "", "WAYLAND_DISPLAY": "", "XDG_SESSION_TYPE": "" },
       "goal": "With no display session the probe reports an actionable failure and screenshot fails closed (no silent success).",
+      "skip_with_input_owner": "on the helper route the desktop helper owns the display session, so emptying the server's DISPLAY removes nothing; the no-session failure is a direct-route property",
       "steps": [
         { "call": "request_access", "expect_error_any": true, "expect_message_contains": "DISPLAY" },
         { "call": "screenshot", "expect_error_any": true }
