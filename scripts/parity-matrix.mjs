@@ -84,7 +84,8 @@ for (const dir of runDirs) {
     if (typeof meta?.[field] !== "string" || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(meta[field])) throw new Error(`invalid ${field} in run metadata`);
   }
   if (typeof meta.date !== "string" || !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)?$/.test(meta.date) || !Number.isFinite(Date.parse(meta.date)) || new Date(meta.date).toISOString().slice(0, 10) !== meta.date.slice(0, 10)) throw new Error("invalid date in run metadata");
-  const surface = `${meta.platform}-${meta.session_type}${meta.isolated ? " (isolated)" : ""}`;
+  const helperRoute = meta.route === "helper";
+  const surface = `${meta.platform}-${meta.session_type}${meta.isolated || helperRoute ? ` (${[meta.isolated && "isolated", helperRoute && "desktop helper"].filter(Boolean).join(", ")})` : ""}`;
   const repsByTask = new Map();
   for (const r of run.reps) {
     if (!repsByTask.has(r.task)) repsByTask.set(r.task, []);
@@ -147,8 +148,9 @@ for (const dir of runDirs) {
     surfaces.set(key, surfaces.has(key) ? `${surfaces.get(key)}; separate run: ${evidence}` : evidence);
   }
   if (meta.platform === "linux") {
-    surfaces.set(meta.session_type === "wayland" ? "Wayland" : "Linux X11",
-      `${demonstrated}/${repsByTask.size} tasks demonstrated at ${meta.repeats} repeats (${surface}, ${meta.date.slice(0, 10)})`);
+    const key = meta.session_type === "wayland" ? "Wayland" : "Linux X11";
+    const evidence = `${demonstrated}/${repsByTask.size} tasks demonstrated at ${meta.repeats} repeats (${surface}, ${meta.date.slice(0, 10)})`;
+    surfaces.set(key, surfaces.has(key) ? `${surfaces.get(key)}; separate run: ${evidence}` : evidence);
   }
   if (meta.platform === "win32") {
     surfaces.set("Windows",
@@ -156,7 +158,7 @@ for (const dir of runDirs) {
   }
 
   const day = meta.date.slice(0, 10);
-  const stem = `${meta.platform}-${meta.session_type}${meta.isolated ? "-isolated" : ""}-${day}`;
+  const stem = `${meta.platform}-${meta.session_type}${meta.isolated ? "-isolated" : ""}${helperRoute ? "-helper" : ""}-${day}`;
   const count = (summaryCounts.get(stem) ?? 0) + 1;
   summaryCounts.set(stem, count);
   // Preserve every run supplied, including failed attempts and focused retries.
