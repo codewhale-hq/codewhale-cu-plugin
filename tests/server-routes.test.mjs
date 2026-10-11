@@ -134,6 +134,7 @@ const captureSSH = String.raw`
   const reply = (request, value) => process.stdout.write(JSON.stringify({...value, id:request.id}) + '\n');
   function handle(request) {
     if (request.tool === 'platform') return reply(request, {ok:true,platform:'linux'});
+    if (request.tool === 'input_owner') return reply(request, {ok:true,data:null});
     const args = request.args ?? {};
     fs.appendFileSync(process.env.ROUTE_LOG, JSON.stringify({method:request.tool,host,args}) + '\n');
     if (request.tool === 'screenshot') return reply(request, {ok:true,data:{
@@ -435,6 +436,7 @@ const dispatchFailureSSH = `
   const reply = value => process.stdout.write(JSON.stringify(value) + '\\n');
   (async () => {
     if (request.tool === 'platform') return reply({ok:true,platform:'linux'});
+    if (request.tool === 'input_owner') return reply({ok:true,data:null});
     if (request.tool === 'get_app_state') return reply({ok:true,data:{found:true,elements:[]}});
     if (request.tool !== 'key') throw new Error('unexpected fixture tool');
     fs.appendFileSync(process.env.ROUTE_LOG, JSON.stringify({method:'dispatched',host:process.argv.find(arg => arg.startsWith('fixture-'))}) + '\\n');

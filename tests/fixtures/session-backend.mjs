@@ -11,6 +11,7 @@ export function create() {
   const record = (method, extra = {}) => fs.appendFileSync(log, JSON.stringify({ instance, method, appName, at: Date.now(), ...extra }) + "\n");
   return {
     async probe() { return { ready: true }; },
+    async input_owner() { return null; },
     async get_app_state({ app_ref }) {
       appName = app_ref?.name;
       record("get_app_state");

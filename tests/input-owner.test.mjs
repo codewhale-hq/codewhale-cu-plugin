@@ -13,7 +13,7 @@ import url from "node:url";
 const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
 const XTERM = { name: "xterm", comm: "xterm", pid: 4242, wm_class: "xterm.XTerm", title: "root", window: "0x00e0000c" };
 
-function startServer(t, owner) {
+function startServer(t, owner, route = "direct") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cu-owner-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const calls = path.join(dir, "calls.jsonl");
@@ -24,7 +24,9 @@ function startServer(t, owner) {
       CODEWHALE_CU_RECORDINGS_DIR: path.join(dir, "rec"),
       CODEWHALE_CU_TEST_BACKEND: path.join(ROOT, "tests/fixtures/fake-backend.mjs"),
       FAKE_BACKEND_CALLS: calls,
-      FAKE_BACKEND_OWNER: owner === null ? "null" : JSON.stringify(owner),
+      FAKE_BACKEND_OWNER: owner === null ? "null" : typeof owner === "string" ? owner : JSON.stringify(owner),
+      // "helper" sends every call over the desktop helper's wire handler.
+      CODEWHALE_CU_TEST_REMOTE: route === "helper" ? "1" : "",
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -72,56 +74,67 @@ function startServer(t, owner) {
   };
 }
 
-test("keystrokes are refused when the app that owns the active window has no decision, before the backend sees them", async (t) => {
-  const s = startServer(t, XTERM);
-  await s.init();
-  const r = await s.tool("type", { text: "hello" });
-  assert.equal(r.ok, false);
-  assert.equal(r.error.code, "consent_required");
-  assert.match(r.error.message, /xterm/);
-  assert.ok(!s.methods().includes("type"), "the backend must not receive the keystrokes");
-  assert.ok(s.methods().includes("input_owner"), "the owner is resolved before input");
-});
+for (const route of ["direct", "helper"]) {
+  test(`${route}: keystrokes are refused when the app that owns the active window has no decision, before the backend sees them`, async (t) => {
+    const s = startServer(t, XTERM, route);
+    await s.init();
+    const r = await s.tool("type", { text: "hello" });
+    assert.equal(r.ok, false);
+    assert.equal(r.error.code, "consent_required");
+    assert.match(r.error.message, /xterm/);
+    assert.ok(!s.methods().includes("type"), "the backend must not receive the keystrokes");
+    assert.ok(s.methods().includes("input_owner"), "the owner is resolved before input");
+  });
 
-test("pointer input is judged against the window under the point, after a screenshot pins the frame", async (t) => {
-  const s = startServer(t, XTERM);
-  await s.init();
-  assert.equal((await s.tool("screenshot", {})).ok, true);
-  const r = await s.tool("left_click", { target: { type: "coordinate", x: 10, y: 20 } });
-  assert.equal(r.error.code, "consent_required");
-  assert.match(r.error.message, /xterm/);
-  assert.ok(!s.methods().includes("left_click"));
-  const owner = s.backendCalls().find((c) => c.method === "input_owner");
-  assert.equal(owner.args.kind, "pointer");
-  // The raster pixel (10,20) is converted to screen points before ownership
-  // is judged; the fake screenshot is at scale 2, so the point is (5,10).
-  assert.deepEqual(owner.args.point, { x: 5, y: 10 });
-});
+  test(`${route}: pointer input is judged against the window under the point, after a screenshot pins the frame`, async (t) => {
+    const s = startServer(t, XTERM, route);
+    await s.init();
+    assert.equal((await s.tool("screenshot", {})).ok, true);
+    const r = await s.tool("left_click", { target: { type: "coordinate", x: 10, y: 20 } });
+    assert.equal(r.error.code, "consent_required");
+    assert.match(r.error.message, /xterm/);
+    assert.ok(!s.methods().includes("left_click"));
+    const owner = s.backendCalls().find((c) => c.method === "input_owner");
+    assert.equal(owner.args.kind, "pointer");
+    // The raster pixel (10,20) is converted to screen points before ownership
+    // is judged; the fake screenshot is at scale 2, so the point is (5,10).
+    assert.deepEqual(owner.args.point, { x: 5, y: 10 });
+  });
 
-test("an app the user approved receives input; the approval is recorded through the host, not by the model", async (t) => {
-  const s = startServer(t, XTERM);
-  await s.init();
-  const refused = await s.tool("consent", { action: "allow", app: "xterm" });
-  assert.equal(refused.ok, true, "the user approves through elicitation, which this test answers");
-  assert.deepEqual(s.prompts, ['Computer Use asks for your decision: consent_allow {"app":"xterm"}']);
-  const typed = await s.tool("type", { text: "hi" });
-  assert.equal(typed.ok, true);
-  assert.ok(s.methods().includes("type"));
-});
+  test(`${route}: an app the user approved receives input; the approval is recorded through the host, not by the model`, async (t) => {
+    const s = startServer(t, XTERM, route);
+    await s.init();
+    const refused = await s.tool("consent", { action: "allow", app: "xterm" });
+    assert.equal(refused.ok, true, "the user approves through elicitation, which this test answers");
+    assert.deepEqual(s.prompts, ['Computer Use asks for your decision: consent_allow {"app":"xterm"}']);
+    const typed = await s.tool("type", { text: "hi" });
+    assert.equal(typed.ok, true);
+    assert.ok(s.methods().includes("type"));
+  });
 
-test("a denied app is refused with app_denied even when it is the only window", async (t) => {
-  const s = startServer(t, XTERM);
-  await s.init();
-  assert.equal((await s.tool("consent", { action: "deny", app: "xterm" })).ok, true);
-  const r = await s.tool("key", { text: "Return" });
-  assert.equal(r.error.code, "app_denied");
-  assert.ok(!s.methods().includes("key"));
-});
+  test(`${route}: a denied app is refused with app_denied even when it is the only window`, async (t) => {
+    const s = startServer(t, XTERM, route);
+    await s.init();
+    assert.equal((await s.tool("consent", { action: "deny", app: "xterm" })).ok, true);
+    const r = await s.tool("key", { text: "Return" });
+    assert.equal(r.error.code, "app_denied");
+    assert.ok(!s.methods().includes("key"));
+  });
 
-test("with the desktop as owner there is no application to consent to", async (t) => {
-  const s = startServer(t, null);
-  await s.init();
-  const r = await s.tool("type", { text: "desktop" });
-  assert.equal(r.ok, true);
-  assert.ok(s.methods().includes("type"));
-});
+  test(`${route}: with the desktop as owner there is no application to consent to`, async (t) => {
+    const s = startServer(t, null, route);
+    await s.init();
+    const r = await s.tool("type", { text: "desktop" });
+    assert.equal(r.ok, true);
+    assert.ok(s.methods().includes("type"));
+  });
+
+  test(`${route}: an owner that cannot be determined refuses the input`, async (t) => {
+    const s = startServer(t, "unknown", route);
+    await s.init();
+    const r = await s.tool("type", { text: "hello" });
+    assert.equal(r.ok, false);
+    assert.equal(r.error.code, "input_owner_unknown");
+    assert.ok(!s.methods().includes("type"));
+  });
+}

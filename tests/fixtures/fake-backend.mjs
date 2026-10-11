@@ -115,10 +115,12 @@ export function create() {
     async get_value(args) { record("get_value", args); return { value: "Fixture text", strategy: "a11y" }; },
     async invoke_menu(args) { record("invoke_menu", args); return { action_sent: true, strategy: "a11y" }; },
     // Who would receive input: FAKE_BACKEND_OWNER is the owning app as JSON, or
-    // "null" for the desktop. The server must consult this before any input.
+    // "null" for the desktop, or "unknown" when the owner cannot be read. The
+    // server must consult this before any input.
     async input_owner({ kind, point } = {}) {
       record("input_owner", { kind, point });
       const raw = process.env.FAKE_BACKEND_OWNER;
+      if (raw === "unknown") throw Object.assign(new Error("no managed application window has keyboard focus"), { code: "input_owner_unknown" });
       return raw && raw !== "null" ? JSON.parse(raw) : null;
     },
     async app_script(args) { record("app_script", args); return { result: "fake", language: args.language ?? "applescript" }; },

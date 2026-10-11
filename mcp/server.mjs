@@ -877,8 +877,28 @@ function ownerKeys(owner) {
   return [...keys];
 }
 
-async function inputOwnerCheck(computer, name, prepared, backend) {
-  if (computer.transport !== "local" || computer.owned === true || typeof backend.input_owner !== "function") return;
+/**
+ * Over the wire (desktop helper, ssh agent) the owner query is one more
+ * allow-listed request. Only a macOS runner may lack it, because the macOS
+ * backend gates input on the bound app instead; any other failure to name the
+ * owner refuses the input.
+ */
+function remoteInputOwner(computer, remoteCall) {
+  const platform = computer.platform ?? computer.platformHint ?? (computer.transport === "local" ? process.platform : "linux");
+  return async (query) => {
+    const r = await remoteCall({ tool: "input_owner", args: query }, { timeoutMs: 30_000 });
+    if (r?.ok) return r.data ?? null;
+    const code = r?.error?.code ?? "remote_error";
+    if (platform === "darwin" && (code === "unsupported_on_platform" || code === "tool_not_allowed")) return undefined;
+    throw new ServerError(code === "tool_not_allowed" ? "app_upgrade_required" : code,
+      code === "tool_not_allowed"
+        ? "this computer's runner cannot report which app would receive input, so input is refused; update the desktop helper or the remote agent and retry"
+        : `input refused: ${r?.error?.message ?? "the app that would receive this input could not be determined"}`);
+  };
+}
+
+async function inputOwnerCheck(computer, name, prepared, ownerOf) {
+  if (computer.owned === true || typeof ownerOf !== "function") return;
   const checks = [];
   if (KEYBOARD_INPUT_TOOLS.has(name)) checks.push({ kind: "keyboard" });
   else if (name === "left_click_drag") checks.push({ kind: "pointer", at: prepared.from_target }, { kind: "pointer", at: prepared.to });
@@ -886,7 +906,8 @@ async function inputOwnerCheck(computer, name, prepared, backend) {
   else return;
   for (const check of checks) {
     const at = check.at && Number.isFinite(check.at.x) && Number.isFinite(check.at.y) ? { x: check.at.x, y: check.at.y } : undefined;
-    const owner = await backend.input_owner({ kind: check.kind, ...(at ? { point: at } : {}) });
+    const owner = await ownerOf({ kind: check.kind, ...(at ? { point: at } : {}) });
+    if (owner === undefined) return; // the runner gates input on the bound app instead
     if (!owner) continue; // the desktop itself: no application receives this input
     const verdict = consent.decisionFor(computer.id, ownerKeys(owner));
     const desc = owner.name ?? (owner.pid ? `pid ${owner.pid}` : "the application");
@@ -1387,6 +1408,7 @@ async function callTool(params, bindWhen = null) {
         return rep.data;
       };
       const wireArgs = await prepareArgs(computer, name, args, resolve, sink);
+      if (computer.transport === "local" || computer.transport === "ssh") await inputOwnerCheck(computer, name, wireArgs, remoteInputOwner(computer, remoteCall));
       throwIfAborted();
       await assertCurrentRoute(computer, binding);
       // Re-check the kill switch: a stop that arrived while the executor was
@@ -1444,7 +1466,7 @@ async function callTool(params, bindWhen = null) {
       }
       const resolve = typeof backend.resolve_element === "function" ? (req) => backend.resolve_element(req) : null;
       const prepared = await prepareArgs(computer, name, args, resolve, sink);
-      await inputOwnerCheck(computer, name, prepared, backend);
+      if (computer.transport === "local" && typeof backend.input_owner === "function") await inputOwnerCheck(computer, name, prepared, (query) => backend.input_owner(query));
       throwIfAborted();
       await assertCurrentRoute(computer, binding);
       if (controlStopped && !READ_ONLY_TOOLS.has(name)) throw new ServerError("control_stopped", "stop_computer_control is active; no further actions are permitted this session");
