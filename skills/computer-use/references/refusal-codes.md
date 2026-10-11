@@ -58,7 +58,7 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 | `frame_refused` | the app refused both the position and the size write | the window is fullscreen, tiled or otherwise not movable by the app |
 | `trajectory_not_found` | no trajectory file matches the id (or none exist) | `trajectory {action:"status"}` lists recent files |
 | `replay_too_large` | the trajectory exceeds the 200-turn replay cap | split it, or replay a pruned copy |
-| `input_owner_unknown` | Linux cannot tell which app would receive this input: no window manager publishes its stacking order, no managed window has keyboard focus, or the session is Wayland | bring the target app's window to the front (observe it or click it), then retry; on Wayland use an X11 session |
+| `input_owner_unknown` | Linux cannot tell which app would receive this input: no window manager publishes its stacking order, no managed window has keyboard focus, windows of two apps overlap where the compositor cannot order them, or the Wayland compositor is not sway or Hyprland | bring the target app's window to the front (observe it or click it), give pointer input explicit coordinates, then retry; on GNOME or KDE Wayland use an X11 session |
 | `popup_open` | a menu or popup item is open in the app that would receive the keys | send `key escape` (allowed while a menu is open), observe the app, then retry |
 | `window_not_active` | the element is focused, but its window is not the active one, so keys would go to another window | bring the app forward (`open_application activate:true`, which needs foreground consent) or ask the user to focus it |
 | `no_window` | the app has no visible window to capture (minimized or unmapped) | restore it, or ask the user; capture the display instead |

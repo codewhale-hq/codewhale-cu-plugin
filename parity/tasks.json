@@ -279,7 +279,8 @@
         { "expect": { "path": "applied", "equals": "Ünïcödé ✓" } }
       ],
       "known_limitations": {
-        "linux-xvfb": "per-char `key U<hex>` + `shift+` for cased capitals fixes the level-0 lowercase remap (Ü→ü). Residual: under heavy host load XTEST can still drop a remapped char — an X11 delivery characteristic, not a mapping defect."
+        "linux-xvfb": "per-char `key U<hex>` + `shift+` for cased capitals fixes the level-0 lowercase remap (Ü→ü). Residual: under heavy host load XTEST can still drop a remapped char — an X11 delivery characteristic, not a mapping defect.",
+        "linux-wayland": "characters outside the layout go through a temporary keymap that lends them unused character keys. In 1 of 5 reps (the 4th rep in both repeats-5 runs, 2026-10-11) Tk under XWayland read the lent ✓ key against the base keymap and typed \"5\"; the other lent characters (Ü ï ö é) arrived. Raising the settle before lent keys from 60 to 150 ms did not change it, so the cause is not identified."
       }
     },
     {

@@ -10,7 +10,7 @@ true so they do not re-derive it.
 | macOS (Aqua) | `src/backends/darwin.mjs` + `darwin-accessibility.m` | `scripts/lib/desktop-darwin.mjs` | 27 tasks × 5 repeats, 24 demonstrated — `parity/results/darwin-aqua-2026-09-07.json` |
 | Linux (X11) | `src/backends/linux.mjs` | `scripts/lib/desktop-x11.mjs` | 27 tasks × 5 repeats, 25 demonstrated + 2 documented skips on the isolated surface — `parity/results/linux-xvfb-isolated-2026-09-16.json`; the 2026-09-07 receipts predate the engine/driver split and are stale |
 | Windows | `src/backends/win32.mjs` | `scripts/lib/desktop-win32.mjs` | none yet — driver exists but needs a real Windows desktop run (see below) |
-| Wayland | `src/backends/linux.mjs` (wayland paths) | none (the X11 driver is X11-only) | none |
+| Wayland (sway) | `src/backends/linux-wayland.mjs` + `wayland-input.py` | `scripts/lib/desktop-wayland.mjs` (`--wayland`, `--isolated` starts a headless sway) | 27 tasks × 5 repeats on headless sway, 21 demonstrated — `parity/results/linux-wayland-isolated-sway-2026-10-11.json` |
 
 **You do not need an Ubuntu machine to start.** `docker/run.sh parity` builds
 a headless Linux desktop — Xvfb, a window manager, the X11 tools, an AT-SPI bus,
