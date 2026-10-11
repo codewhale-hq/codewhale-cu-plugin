@@ -5,7 +5,7 @@
 
 # Computer Use
 
-**By Codewhale · macOS beta (notarized app and source) · Windows experimental unsigned preview · Linux experimental: X11 verified on a virtual desktop (Xvfb + openbox) and in the Docker test image, from source; Wayland observation only**
+**By Codewhale · macOS beta (notarized app and source) · Windows experimental unsigned preview · Linux experimental: X11 verified on a virtual desktop (Xvfb + openbox) and in the Docker test image, from source; Wayland input on sway (verified on headless sway), other Wayland desktops observation only**
 
 The [0.12.0 release](https://github.com/codewhale-hq/codewhale-cu-plugin/releases/tag/v0.12.0)
 provides the notarized universal Mac app and an **unsigned Windows x64 preview**.
@@ -473,10 +473,11 @@ permission** — it never guesses and never half-acts.
   session-owned recorder cleanup.
 - **Linux** — X11: xdotool, wmctrl, scrot or imagemagick, xclip, and ffmpeg
   for recording (`x11grab`); python3-pyatspi for the accessibility tree.
-  Wayland is observation only: grim screenshots, wl-clipboard and AT-SPI
-  work, but raw keyboard and pointer input is refused because Wayland does
-  not tell Codewhale which app would receive it, and recording is
-  unavailable.
+  Wayland: grim screenshots, wl-clipboard and AT-SPI. Keyboard and pointer
+  input work on sway and Hyprland (python3 and libxkbcommon, both present
+  on those desktops), where the compositor names the app that would
+  receive the input. GNOME, KDE and other compositors do not, so input is
+  refused there. Recording is unavailable on Wayland.
 - **HarmonyOS** — `hdc` on PATH with the device connected
   (`hdc list targets`); ffmpeg on the host for snapshot-series recordings.
 - **Spawned computers** — a reachable docker daemon (`docker version`).
@@ -490,7 +491,7 @@ permission** — it never guesses and never half-acts.
 | Ability | macOS | Windows | Linux | HarmonyOS |
 |---|---|---|---|---|
 | Accessibility tree | Native Accessibility API | UIAutomation | AT-SPI (pyatspi) | `uitest dumpLayout` |
-| Raw input | Native CGEvent to the selected process | user32 SendInput/mouse_event (PowerShell) | xdotool (X11); refused on Wayland | `uitest uiInput` |
+| Raw input | Native CGEvent to the selected process | user32 SendInput/mouse_event (PowerShell) | xdotool (X11); virtual keyboard and pointer on sway/Hyprland; refused on other Wayland compositors | `uitest uiInput` |
 | Screenshots | `screencapture` | .NET CopyFromScreen | scrot/import (X11), grim (Wayland) | `snapshot_display` |
 | Recording | ScreenCaptureKit → .mov (no recorder overlay) | unavailable pending owned cleanup | ffmpeg `x11grab` → .mp4 (X11); unavailable on Wayland | snapshot-series + ffmpeg mux |
 | Clipboard | pbcopy/pbpaste | Get/Set-Clipboard | xclip/xsel, wl-clipboard | fail-closed (not exposed by hdc) |
@@ -597,13 +598,21 @@ not been tested.
 | Docker image, desktop helper | 23/27 | `browser.unicode_type` 4/5; `browser.modifiers` 4/5; `control.permission_denied`; `native.modal_dialog` 0/5 |
 | XFCE session (xfce4-session, xfwm4, panel) on Xvfb, direct | 23/27 | the two drag tasks; `browser.unicode_type` 4/5; `native.modal_dialog` 0/5 |
 | XFCE session, desktop helper | 24/27 | `browser.unicode_type` 4/5; `control.permission_denied`; `native.modal_dialog` 0/5 |
+| Wayland: headless sway 1.9 (XWayland for Tk), direct | 21/27 | the two drag tasks; `browser.upload` 0/5 (GTK's header-bar file chooser puts Open where the task's X11-layout click does not reach); `browser.unicode_type` 0/5 (Chromium on Wayland drops 🐳); `native.unicode_type` 4/5; `native.modal_dialog` 0/5 |
 
 Known limits: a dialog that is modal only inside its toolkit (Tk's
 `simpledialog`) can let typed text reach the parent window, so click into the
 dialog first; non-ASCII text typed into Chromium can drop characters, so read it
-back with `get_value`; Wayland has screenshots, clipboard and the accessibility
-tree only, and raw input is refused. Not tested: GNOME or KDE sessions, real
-XWayland, multiple monitors, HiDPI, SSH remote. Receipts are in
+back with `get_value`. On Wayland, input goes only to the app that sway or
+Hyprland names as its receiver: the focused window's process for keys, and the
+window under the point for the pointer. It is refused where that cannot be
+told: overlapping floating windows of different apps, overlapping XWayland
+windows of different apps, and pointer input at the current pointer position
+on sway, which does not report it. GNOME, KDE and other Wayland compositors
+name no receiver, so input there is refused, leaving screenshots (wlroots
+only), the clipboard and the accessibility tree. Hyprland is unit-tested only.
+Not tested: GNOME or KDE sessions, a real sway login session, real XWayland
+on a desktop, multiple monitors, HiDPI, SSH remote. Receipts are in
 `parity/results/`; [docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md) and
 [docs/LIMITATIONS.md](docs/LIMITATIONS.md) have the detail. Helper-route input
 consent needs a plugin release that includes the CW-7245 fix.
@@ -613,7 +622,7 @@ foreground/cursor observer: `node scripts/verify-background-macos.mjs`.
 Older per-family receipts do not establish background isolation — details in
 [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
-**Not live-verified:** macOS non-Retina and mixed-DPI, Windows, Wayland,
+**Not live-verified:** macOS non-Retina and mixed-DPI, Windows, Wayland beyond headless sway,
 HarmonyOS, SSH remote — implemented, no device receipts. A
 [same-document native editing comparison](parity/results/native-text-comparison-darwin-2026-09-07.json)
 completed 5/5 trials with each of Codewhale and Codex; it covers one workflow,
