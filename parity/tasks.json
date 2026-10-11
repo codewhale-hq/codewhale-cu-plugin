@@ -84,7 +84,8 @@
       "needs_input_owner": true,
       "known_limitations": {
         "linux-xvfb": "the direct route has no input owner and refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input.",
-        "linux-x11": "the direct route refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input."
+        "linux-x11": "the direct route refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input.",
+        "linux-wayland": "the direct route refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input."
       }
     },
     {
@@ -101,7 +102,8 @@
       ],
       "known_limitations": {
         "linux-xvfb": "Chromium's GTK file chooser commits a typed location-entry path only via the Open button — Return in the entry closes the dialog with no selection (a stock GTK3 FileChooserDialog commits the same path on Return, so this is Chromium's wrapper). The dialog also carries no AT-SPI elements, so only a window-relative pointer click reaches it.",
-        "linux-x11": "same Chromium chooser behavior: type the path, then click Open; Return in the location entry discards it. On desktops where xdg-desktop-portal supplies the chooser instead, the dialog is a different application entirely and this window_title target will not resolve — record that honestly if it shows."
+        "linux-x11": "same Chromium chooser behavior: type the path, then click Open; Return in the location entry discards it. On desktops where xdg-desktop-portal supplies the chooser instead, the dialog is a different application entirely and this window_title target will not resolve — record that honestly if it shows.",
+        "linux-wayland": "GTK3 on Wayland draws the chooser with a header bar, so Open is at the top right; this task's window-relative click at [-60, -30] targets the X11 layout's bottom-right Open button and lands on the file list. The dialog is found (sway names it \"Open File\", owned by Chromium's pid); the step's target, not the input path, is X11-specific."
       }
     },
     {
@@ -124,7 +126,8 @@
         { "expect": { "path": "uni", "equals": "héllo wörld 日本 🐳" } }
       ],
       "known_limitations": {
-        "linux-xvfb": "non-ASCII chars go through per-char `key U<hex>` (deterministic case fix), but under heavy host load XTEST can still drop a remapped char — observed 2026-09-16 as a single missing é/日 in ~1/5 reps. A delivery-layer flake on a loaded container, not a mapping defect; a starved Xvfb run is exactly where it shows."
+        "linux-xvfb": "non-ASCII chars go through per-char `key U<hex>` (deterministic case fix), but under heavy host load XTEST can still drop a remapped char — observed 2026-09-16 as a single missing é/日 in ~1/5 reps. A delivery-layer flake on a loaded container, not a mapping defect; a starved Xvfb run is exactly where it shows.",
+        "linux-wayland": "Chromium's Wayland backend drops key events whose character is outside the Basic Multilingual Plane: héllo wörld 日本 arrives exactly, 🐳 does not. The same virtual-keyboard keystroke types 🐳 into a GTK3 entry (checked 2026-10-11), so the character reaches the client; Chromium discards it."
       }
     },
     {
@@ -226,7 +229,8 @@
       "needs_input_owner": true,
       "known_limitations": {
         "linux-xvfb": "the direct route has no input owner and refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input.",
-        "linux-x11": "the direct route refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input."
+        "linux-x11": "the direct route refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input.",
+        "linux-wayland": "the direct route refuses left_click_drag (input_owner_required) by design; run with --helper to drive the Linux desktop helper, which owns held input."
       }
     },
     {
@@ -248,7 +252,8 @@
       ],
       "known_limitations": {
         "linux-x11": "KWin does not give the transient Tk dialog X input focus, so typed text does not reach it; passes on the isolated Xvfb route",
-        "linux-xvfb": "Tk's simpledialog is toolkit-modal only: it sets WM_TRANSIENT_FOR + grab_set but no _NET_WM_STATE_MODAL, so a stacking WM lets the parent Apply click take X input focus (verified under openbox and metacity). The grab still blocks the click (applied stays empty) but the typed answer then goes to the parent and the dialog stays open. Passes where the WM keeps focus on the transient."
+        "linux-xvfb": "Tk's simpledialog is toolkit-modal only: it sets WM_TRANSIENT_FOR + grab_set but no _NET_WM_STATE_MODAL, so a stacking WM lets the parent Apply click take X input focus (verified under openbox and metacity). The grab still blocks the click (applied stays empty) but the typed answer then goes to the parent and the dialog stays open. Passes where the WM keeps focus on the transient.",
+        "linux-wayland": "the same toolkit-modal gap under sway: the Apply click focuses the parent window (sway focuses on click), Tk's grab still blocks the click (applied stays empty), and the typed answer then goes to the parent, so the dialog stays open."
       }
     },
     {

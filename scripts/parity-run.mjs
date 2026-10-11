@@ -48,7 +48,8 @@ const REPEATS = Number(opt("--repeats", TASKS_DOC.repeats ?? 5));
 // Named explicitly rather than defaulted: falling back to the X11 driver on a
 // platform that has none would fail deep inside xdotool instead of saying what
 // is missing. See docs/PORTING.md to add one.
-const DRIVERS = { darwin: "./lib/desktop-darwin.mjs", linux: "./lib/desktop-x11.mjs", win32: "./lib/desktop-win32.mjs" };
+// --wayland selects the sway driver (with --isolated it starts a headless sway).
+const DRIVERS = { darwin: "./lib/desktop-darwin.mjs", linux: argv.includes("--wayland") ? "./lib/desktop-wayland.mjs" : "./lib/desktop-x11.mjs", win32: "./lib/desktop-win32.mjs" };
 if (!DRIVERS[process.platform]) {
   console.error(`parity-run: no desktop driver for ${process.platform}. Implement scripts/lib/desktop-${process.platform}.mjs (see docs/PORTING.md) and register it here.`);
   process.exit(2);

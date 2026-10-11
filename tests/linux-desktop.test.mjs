@@ -261,7 +261,7 @@ test("a Wayland session that also exports DISPLAY is treated as Wayland, so inpu
   const saved = Object.fromEntries(["DISPLAY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE"].map((k) => [k, process.env[k]]));
   t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
   Object.assign(process.env, { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-1", XDG_SESSION_TYPE: "wayland" });
-  const desk = fakeDesktop();
+  const desk = fakeDesktop({ onCommand: (cmd) => (cmd === "swaymsg" || cmd === "hyprctl" ? { code: 1, stdout: "", stderr: "", timedOut: false, signal: null } : null) });
   const backend = create({ exec: { run: desk.run, have } });
   await assert.rejects(backend.input_owner({ kind: "keyboard" }), (err) => err.code === "input_owner_unknown" && /Wayland/.test(err.message));
   assert.ok(!desk.calls.some((c) => c.cmd === "xdotool"), "no X11 tool is consulted");
@@ -272,7 +272,7 @@ test("list_apps on sway lists one entry per app id", async (t) => {
   t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
   delete process.env.DISPLAY;
   Object.assign(process.env, { WAYLAND_DISPLAY: "wayland-1", XDG_SESSION_TYPE: "wayland" });
-  const tree = { type: "root", nodes: [{ type: "con", name: "Untitled - Mousepad", app_id: "mousepad", rect: { x: 0, y: 0, width: 10, height: 10 } }, { type: "con", name: "Terminal", app_id: "foot", rect: { x: 0, y: 0, width: 10, height: 10 } }] };
+  const tree = { type: "root", nodes: [{ type: "con", name: "Untitled - Mousepad", app_id: "mousepad", pid: 11, rect: { x: 0, y: 0, width: 10, height: 10 } }, { type: "con", name: "Terminal", app_id: "foot", pid: 12, rect: { x: 0, y: 0, width: 10, height: 10 } }] };
   const desk = fakeDesktop({ onCommand: (cmd) => (cmd === "swaymsg" ? { code: 0, stdout: JSON.stringify(tree), stderr: "", timedOut: false, signal: null } : null) });
   const backend = create({ exec: { run: desk.run, have } });
   assert.deepEqual((await backend.list_apps()).apps.map((a) => a.name), ["mousepad", "foot"]);
@@ -361,4 +361,137 @@ test("a browser that exits at start is reported with its stderr; the root sandbo
   assert.match(other.message, /cannot open profile/);
   const silent = browserStartFailure(undefined, "/state/profile");
   assert.match(silent.message, /never came up/);
+});
+
+// sway: two outputs side by side. Workspace 1 on DP-1 is visible and holds a
+// tiled Mousepad, a tiled foot and a floating Firefox dialog over Mousepad;
+// workspace 2 on DP-1 is hidden.
+const SWAY_TREE = { type: "root", nodes: [
+  { type: "output", name: "DP-1", current_workspace: "1", rect: { x: 0, y: 0, width: 1280, height: 800 }, nodes: [
+    { type: "workspace", name: "1", nodes: [
+      { type: "con", id: 4, pid: 10165, app_id: "mousepad", name: "Untitled - Mousepad", visible: true, focused: true, rect: { x: 0, y: 0, width: 640, height: 800 } },
+      { type: "con", id: 5, pid: 10400, app_id: "foot", name: "Terminal", visible: true, focused: false, rect: { x: 640, y: 0, width: 640, height: 800 } },
+    ], floating_nodes: [
+      { type: "floating_con", id: 6, pid: 20000, app_id: "firefox", name: "Save", visible: true, focused: false, rect: { x: 100, y: 100, width: 300, height: 200 } },
+    ] },
+    { type: "workspace", name: "2", nodes: [
+      { type: "con", id: 7, pid: 30000, app_id: "gimp", name: "GIMP", visible: false, focused: false, rect: { x: 0, y: 0, width: 1280, height: 800 } },
+    ], floating_nodes: [] },
+  ] },
+  { type: "output", name: "DP-2", current_workspace: "3", rect: { x: 1280, y: 0, width: 1280, height: 800 }, nodes: [
+    { type: "workspace", name: "3", nodes: [], floating_nodes: [] },
+  ] },
+] };
+
+function swayEnv(t, tree = SWAY_TREE) {
+  const saved = Object.fromEntries(["DISPLAY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE"].map((k) => [k, process.env[k]]));
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  delete process.env.DISPLAY;
+  Object.assign(process.env, { WAYLAND_DISPLAY: "wayland-1", XDG_SESSION_TYPE: "wayland" });
+  const ok = (v) => ({ code: 0, stdout: JSON.stringify(v), stderr: "", timedOut: false, signal: null });
+  return fakeDesktop({ onCommand: (cmd, args) => {
+    if (cmd === "hyprctl") return { code: 1, stdout: "", stderr: "", timedOut: false, signal: null };
+    if (cmd === "python3") return ok({ found: false, popup: null });
+    if (cmd !== "swaymsg") return null;
+    if (args.includes("get_tree")) return ok(typeof tree === "function" ? tree() : tree);
+    if (args.includes("get_outputs")) return ok([{ name: "DP-1", active: true, rect: { x: 0, y: 0, width: 1280, height: 800 } }, { name: "DP-2", active: true, rect: { x: 1280, y: 0, width: 1280, height: 800 } }]);
+    return ok({ human_readable: "1.9" });
+  } });
+}
+
+test("sway names the focused window's app as the keyboard owner, by pid", async (t) => {
+  const desk = swayEnv(t);
+  const backend = create({ exec: { run: desk.run, have } });
+  const owner = await backend.input_owner({ kind: "keyboard" });
+  assert.equal(owner.name, "mousepad");
+  assert.equal(owner.pid, 10165);
+  assert.ok(!desk.calls.some((c) => c.cmd === "xdotool"));
+});
+
+test("sway pointer owner: floating windows above tiled, hidden workspaces ignored, empty space is the desktop", async (t) => {
+  const backend = create({ exec: { run: swayEnv(t).run, have } });
+  assert.equal((await backend.input_owner({ kind: "pointer", point: { x: 200, y: 150 } })).name, "firefox");
+  assert.equal((await backend.input_owner({ kind: "pointer", point: { x: 20, y: 700 } })).name, "mousepad");
+  assert.equal((await backend.input_owner({ kind: "pointer", point: { x: 900, y: 10 } })).name, "foot");
+  assert.equal(await backend.input_owner({ kind: "pointer", point: { x: 1500, y: 10 } }), null);
+});
+
+test("sway refuses a point where floating windows of two apps overlap, and pointer input without coordinates", async (t) => {
+  const tree = structuredClone(SWAY_TREE);
+  tree.nodes[0].nodes[0].floating_nodes.push({ type: "floating_con", id: 8, pid: 20100, app_id: "foot", name: "Other", visible: true, focused: false, rect: { x: 300, y: 250, width: 200, height: 200 } });
+  const backend = create({ exec: { run: swayEnv(t, tree).run, have } });
+  await assert.rejects(backend.input_owner({ kind: "pointer", point: { x: 350, y: 280 } }), (err) => err.code === "input_owner_unknown" && /overlap/.test(err.message));
+  assert.equal((await backend.input_owner({ kind: "pointer", point: { x: 450, y: 420 } })).name, "foot");
+  await assert.rejects(backend.input_owner({ kind: "pointer" }), (err) => err.code === "input_owner_unknown");
+});
+
+test("sway refuses a point where XWayland windows of two apps overlap, whatever sway's stacking", async (t) => {
+  const tree = structuredClone(SWAY_TREE);
+  Object.assign(tree.nodes[0].nodes[0].nodes[0], { shell: "xwayland" });
+  Object.assign(tree.nodes[0].nodes[0].floating_nodes[0], { shell: "xwayland" });
+  const backend = create({ exec: { run: swayEnv(t, tree).run, have } });
+  await assert.rejects(backend.input_owner({ kind: "pointer", point: { x: 200, y: 150 } }), (err) => err.code === "input_owner_unknown" && /XWayland/.test(err.message));
+  assert.equal((await backend.input_owner({ kind: "pointer", point: { x: 20, y: 700 } })).name, "mousepad");
+});
+
+test("sway with no window focused refuses keyboard input", async (t) => {
+  const tree = structuredClone(SWAY_TREE);
+  tree.nodes[0].nodes[0].nodes[0].focused = false;
+  const backend = create({ exec: { run: swayEnv(t, tree).run, have } });
+  await assert.rejects(backend.input_owner({ kind: "keyboard" }), (err) => err.code === "input_owner_unknown");
+});
+
+test("Hyprland names the active window's app as the keyboard owner", async (t) => {
+  const saved = Object.fromEntries(["DISPLAY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE"].map((k) => [k, process.env[k]]));
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  delete process.env.DISPLAY;
+  Object.assign(process.env, { WAYLAND_DISPLAY: "wayland-1", XDG_SESSION_TYPE: "wayland" });
+  const ok = (v) => ({ code: 0, stdout: JSON.stringify(v), stderr: "", timedOut: false, signal: null });
+  const win = { address: "0x55d1", pid: 4242, class: "kitty", title: "kitty", at: [0, 0], size: [800, 600], workspace: { id: 1, name: "1" }, floating: false, focusHistoryID: 0, mapped: true };
+  const desk = fakeDesktop({ onCommand: (cmd, args) => {
+    if (cmd === "swaymsg") return { code: 1, stdout: "", stderr: "", timedOut: false, signal: null };
+    if (cmd !== "hyprctl") return null;
+    if (args.includes("activewindow")) return ok(win);
+    if (args.includes("clients")) return ok([win]);
+    if (args.includes("monitors")) return ok([{ name: "eDP-1", x: 0, y: 0, width: 1600, height: 1000, scale: 1, activeWorkspace: { id: 1 }, specialWorkspace: { id: 0 } }]);
+    return ok({ tag: "v0.41" });
+  } });
+  const backend = create({ exec: { run: desk.run, have } });
+  assert.deepEqual(await backend.input_owner({ kind: "keyboard" }), { name: "kitty", comm: null, pid: 4242, wm_class: "kitty", title: "kitty", window: "0x55d1" });
+  assert.equal((await backend.input_owner({ kind: "pointer", point: { x: 10, y: 10 } })).pid, 4242);
+});
+
+test("Wayland input maps keys, clicks and scrolls onto virtual-device steps in layout coordinates", async (t) => {
+  const desk = swayEnv(t);
+  const sent = [];
+  const inputClient = { request: async (steps) => { sent.push(steps); return { ok: true }; }, info: async () => ({ ok: true, virtual_keyboard: true, virtual_pointer: true }), close() {} };
+  const backend = create({ exec: { run: desk.run, have, waylandInput: inputClient } });
+  await backend.key({ text: "ctrl+shift+Left" });
+  assert.deepEqual(sent.at(-1), [["key", "Control_L", 1], ["key", "Shift_L", 1], ["key", "Left", 1], ["key", "Left", 0], ["key", "Shift_L", 0], ["key", "Control_L", 0]]);
+  await backend.right_click({ target: { x: 1300, y: 20 } });
+  assert.deepEqual(sent.slice(-2), [[["move", 1300, 20, 2560, 800]], [["button", 0x111, 1], ["button", 0x111, 0]]]);
+  await backend.scroll({ target: { x: 10, y: 10 }, direction: "up", amount: 2 });
+  assert.deepEqual(sent.at(-1), [["axis", 0, -15, -1], ["axis", 0, -15, -1]]);
+  await backend.type({ text: "café ok" });
+  assert.deepEqual(sent.at(-1), [["text", "café ok"]]);
+  const probe = await backend.probe();
+  assert.equal(probe.permissions.input, "ok");
+  assert.equal(probe.capabilities.raw_input, true);
+});
+
+test("Wayland without sway or Hyprland reports input refused and never starts the input helper", async (t) => {
+  const saved = Object.fromEntries(["DISPLAY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP"].map((k) => [k, process.env[k]]));
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  delete process.env.DISPLAY;
+  Object.assign(process.env, { WAYLAND_DISPLAY: "wayland-0", XDG_SESSION_TYPE: "wayland", XDG_CURRENT_DESKTOP: "GNOME" });
+  const fail = { code: 1, stdout: "", stderr: "", timedOut: false, signal: null };
+  const desk = fakeDesktop({ onCommand: (cmd) => (cmd === "swaymsg" || cmd === "hyprctl" ? fail : null) });
+  let started = 0;
+  const inputClient = { request: async () => { started++; return { ok: true }; }, info: async () => { started++; return { ok: true }; }, close() {} };
+  const backend = create({ exec: { run: desk.run, have, waylandInput: inputClient } });
+  const probe = await backend.probe();
+  assert.equal(probe.permissions.input, "refused");
+  assert.match(probe.input_reason, /GNOME on Wayland/);
+  await assert.rejects(backend.input_owner({ kind: "keyboard" }), (err) => err.code === "input_owner_unknown");
+  assert.equal(started, 0);
 });

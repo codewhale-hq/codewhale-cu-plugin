@@ -47,7 +47,7 @@ test("Windows session cleanup releases a completed mouse-down without releasing 
   assert.match(calls.at(-1), /mouse_event\(\[User32\]::LEFTUP/);
 });
 
-function fakeLinux(t, kind, onRun) {
+function fakeLinux(t, kind, onRun, waylandInput) {
   const saved = Object.fromEntries(["DISPLAY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE"].map((key) => [key, process.env[key]]));
   delete process.env.DISPLAY;
   delete process.env.WAYLAND_DISPLAY;
@@ -57,6 +57,7 @@ function fakeLinux(t, kind, onRun) {
   const calls = [];
   const backend = linux.create({ exec: {
     persistentInputOwner: true,
+    waylandInput,
     have: async () => true,
     run: async (cmd, args) => {
       const call = { cmd, args, signal: currentSignal() };
@@ -92,22 +93,31 @@ test("X11 targeted mouse-down initializes input, aims, and retains release owner
   assert.equal(calls.length, count);
 });
 
-test("Wayland hold and repeated shortcuts use one complete temporary keyboard gesture", async (t) => {
-  const { backend, calls } = fakeLinux(t, "wayland");
-  await backend.hold_key({ text: "ctrl+left", duration: 2 });
-  assert.deepEqual(calls.at(-1).args, ["-M", "ctrl", "-P", "Left", "-s", "2000", "-p", "Left", "-m", "ctrl"]);
+function waylandInput(onRequest) {
+  const sent = [];
+  return { sent, client: {
+    request: async (steps) => { sent.push({ steps, signal: currentSignal() }); return (await onRequest?.(steps)) ?? { ok: true }; },
+    info: async () => ({ ok: true, virtual_keyboard: true, virtual_pointer: true }),
+    close() {},
+  } };
+}
+
+test("Wayland repeated shortcuts are one helper request, and a hold releases what it pressed", async (t) => {
+  const { sent, client } = waylandInput();
+  const { backend } = fakeLinux(t, "wayland", null, client);
   await backend.key({ text: "alt+tab", repeat: 2 });
-  assert.deepEqual(calls.at(-1).args, ["-M", "alt", "-P", "Tab", "-p", "Tab", "-P", "Tab", "-p", "Tab", "-m", "alt"]);
-  assert.equal(calls.filter((call) => call.cmd === "wtype").length, 2);
-  assert.ok(!calls.some((call) => call.cmd === "ydotool"));
+  assert.deepEqual(sent.at(-1).steps, [["key", "Alt_L", 1], ["key", "Tab", 1], ["key", "Tab", 0], ["key", "Alt_L", 0], ["key", "Alt_L", 1], ["key", "Tab", 1], ["key", "Tab", 0], ["key", "Alt_L", 0]]);
+  await backend.hold_key({ text: "ctrl+left", duration: 0.05 });
+  assert.deepEqual(sent.slice(-2).map((r) => r.steps), [[["key", "Control_L", 1], ["key", "Left", 1]], [["key", "Left", 0], ["key", "Control_L", 0]]]);
 });
 
-test("Wayland child cancellation is reported as cancelled instead of success", async (t) => {
+test("Wayland hold cancellation is reported as cancelled and releases the keys outside the cancelled request", async (t) => {
   const controller = new AbortController();
-  const { backend } = fakeLinux(t, "wayland", ({ cmd }) => {
-    if (cmd === "wtype") { controller.abort(); return { ...success, code: null, aborted: true }; }
-  });
+  const { sent, client } = waylandInput((steps) => { if (steps[0][2] === 1) controller.abort(); });
+  const { backend } = fakeLinux(t, "wayland", null, client);
   await assert.rejects(withSignal(controller.signal, () => backend.hold_key({ text: "shift", duration: 30 })), (err) => err.code === "cancelled");
+  assert.deepEqual(sent.at(-1).steps, [["key", "Shift_L", 0]]);
+  assert.equal(sent.at(-1).signal, null);
 });
 
 test("Windows refuses recording before spawning an unowned recorder", async () => {

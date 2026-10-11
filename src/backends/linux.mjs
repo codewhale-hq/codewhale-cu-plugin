@@ -113,7 +113,7 @@ export function create({ exec } = {}) {
   const heldKeys = new Set();
   let lastTypedAt = 0;
   const recordings = new Map(); // id -> { child, file, rect, fps, startedAt, stderr }
-  const wl = createWayland({ run, need, tools, keyName: (k) => xdotoolKey(k) });
+  const wl = createWayland({ run, need, tools, fs, keyName: (k) => xdotoolKey(k), inputClient: exec?.waylandInput });
 
   async function settleAfterTyping() {
     const since = Date.now() - lastTypedAt;
@@ -122,7 +122,7 @@ export function create({ exec } = {}) {
 
   async function releaseMouse() {
     if (!mouseHeld) return;
-    await withSignal(null, () => session === "x11" ? xdotool(["mouseup", "1"], { timeoutMs: 2_000 }) : wl.mouseUp({ timeoutMs: 2_000 }));
+    await withSignal(null, () => session === "x11" ? xdotool(["mouseup", "1"], { timeoutMs: 2_000 }) : wl.mouseUp());
     mouseHeld = false;
   }
 
@@ -287,6 +287,7 @@ export function create({ exec } = {}) {
 
   async function cursorPoint() {
     await probeSession();
+    if (session !== "x11") return wl.cursorPoint();
     const out = await xdotool(["getmouselocation"]);
     const m = /x:(-?\d+)\s+y:(-?\d+)/.exec(out);
     if (!m) throw ownerUnknown(`could not read the pointer location (${out.slice(0, 80)})`);
@@ -295,6 +296,7 @@ export function create({ exec } = {}) {
 
   /** Geometry of an app's topmost viewable window, plus the windows stacked above it that overlap it. */
   async function appFrame(name) {
+    if (session !== "x11") return wl.appFrame(name, sameName);
     const windows = await x11Windows();
     if (!windows) throw Object.assign(new ExecError("the window manager does not publish window geometry; start one, or capture the whole display"), { code: "no_window_manager" });
     const owned = windows.filter((w) => sameName(w.name, name) || sameName(w.comm, name));
@@ -326,7 +328,6 @@ export function create({ exec } = {}) {
 
   /** Refuse keystrokes when an open menu would take them, or when the element's window is not the active one. */
   async function assertKeyboardReady({ target, allowEscape = false } = {}) {
-    if (session !== "x11") return;
     if (target?.app_ref?.name) {
       const owner = await keyboardOwner();
       if (!(await ownerIsApp(owner, target.app_ref.name))) {
@@ -630,16 +631,18 @@ except Exception as e:
       await Promise.all([...recordings.values()].map((entry) => stopRecording(entry, 3_000)));
       recordings.clear();
       await browser.close().catch(() => {});
+      wl.close();
     },
     probe: async () => {
       const s = await probeSession();
+      const wlInput = s === "wayland" ? await wl.inputStatus() : null;
       const caps = {
         screenshot: !!((session === "wayland" && tools.grim) || (session === "x11" && (tools.scrot || tools.import))),
         clipboard: !!(tools.xclip || tools.xsel || (tools["wl-copy"] && tools["wl-paste"])),
         recording: session === "x11" && !!tools.ffmpeg,
         accessibility_tree: tools.pyatspi,
-        held_input: exec?.persistentInputOwner === true && session === "x11" && !!tools.xdotool,
-        raw_input: session === "x11" && !!tools.xdotool,
+        held_input: exec?.persistentInputOwner === true && (session === "x11" ? !!tools.xdotool : !!wlInput?.ok),
+        raw_input: session === "x11" ? !!tools.xdotool : !!wlInput?.ok,
       };
       const missing = [];
       if (exec?.persistentInputOwner !== true) missing.push("connected Computer Use desktop helper (held keys, held buttons and drag)");
@@ -654,9 +657,9 @@ except Exception as e:
         const r = await run("xdotool", ["getdisplaygeometry"], { timeoutMs: 10_000 });
         permissions.input = r.code === 0 ? "ok" : "failed";
       } else if (session === "wayland") {
-        // Wayland does not say which app would receive input, so raw input is
-        // refused there (observation and AT-SPI only).
-        permissions.input = "refused";
+        // Input needs a compositor that names the receiving app and offers
+        // the virtual keyboard and pointer protocols; otherwise it is refused.
+        permissions.input = wlInput.ok ? "ok" : "refused";
       }
       try {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cu-probe-"));
@@ -680,9 +683,10 @@ except Exception as e:
         throw e;
       }
       return { platform: "linux", session: s, session_reason: sessionReason, capabilities: caps, permissions, missing,
-        note: s === "wayland"
-          ? "Wayland session: screenshots, clipboard and the AT-SPI tree only. Keyboard and pointer input are refused because Wayland does not tell Codewhale which app would receive them."
-          : "Every capability probes at call time and fails closed naming the missing tool." };
+        ...(wlInput && !wlInput.ok ? { input_reason: wlInput.reason } : {}),
+        note: s !== "wayland" ? "Every capability probes at call time and fails closed naming the missing tool."
+          : wlInput.ok ? "Wayland session: input goes through virtual keyboard and pointer devices, and the compositor names the app that receives it."
+          : "Wayland session: screenshots, clipboard and the AT-SPI tree only. Keyboard and pointer input are refused because this compositor does not tell Codewhale which app would receive them." };
     },
     list_displays: async () => {
       await probeSession();
@@ -725,9 +729,11 @@ except Exception as e:
       }
       if (session === "wayland" && (tools.swaymsg || tools.hyprctl)) {
         const seen = new Map();
-        for (const win of await wl.windows()) {
-          const cls = win.wm_class || win.app_id;
-          if (cls) seen.set(cls, { name: cls, wm_class: cls });
+        for (const w of (await wl.windows()) ?? []) {
+          const key = `${w.pid}|${w.wm_class}`;
+          const entry = seen.get(key) ?? { name: w.wm_class, wm_class: w.wm_class, pid: w.pid, process: w.process, windows: 0 };
+          entry.windows++;
+          seen.set(key, entry);
         }
         return { apps: [...seen.values()] };
       }
@@ -767,7 +773,7 @@ except Exception as e:
           if (session === "x11" && tools.xdotool) {
             const active = await run("xdotool", ["getactivewindow"], { timeoutMs: 3_000 });
             if (active.code === 0 && /^\d+$/.test(active.stdout.trim())) prevWindow = active.stdout.trim();
-          }
+          } else if (session === "wayland") prevWindow = await wl.focusedWindow();
         } catch { /* no session/tools — the launch itself is still fine */ }
       }
       await spawnDetached(target, urlArg ? [urlArg] : [], "", true);
@@ -775,7 +781,9 @@ except Exception as e:
       let focusRestored = false;
       if (prevWindow) {
         try {
-          focusRestored = (await run("xdotool", ["windowactivate", prevWindow], { timeoutMs: 3_000 })).code === 0;
+          focusRestored = session === "wayland"
+            ? await wl.focusWindow(prevWindow)
+            : (await run("xdotool", ["windowactivate", prevWindow], { timeoutMs: 3_000 })).code === 0;
         } catch { /* best-effort */ }
       }
       return { launched: true, name: target, url: urlArg ?? null, activate: activate === true, ...(activate === true ? {} : { focus_restored: focusRestored }) };
@@ -1018,7 +1026,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
           await xdotool(["keydown", k]);
           await wait(d * 1000);
         } finally { await releaseKey(k); }
-      } else await wl.key(text, { holdMs: Math.round(d * 1000) });
+      } else await wl.key(text, { holdMs: Math.round(d * 1000), hold: wait });
       return { action_sent: true, key: k, heldSec: d };
     },
     set_value: async ({ target, value }) => {
