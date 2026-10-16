@@ -93,7 +93,7 @@ before(async () => {
 
 after(() => {
   server?.kill("SIGTERM");
-  for (const d of [stateDir, recDir, fakeHome]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} }
+  for (const d of [stateDir, recDir, fakeHome, binDir]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} }
 });
 
 test("tools/list advertises the merged surface with valid schemas; wire names stay aliases", async () => {

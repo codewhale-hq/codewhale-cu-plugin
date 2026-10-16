@@ -30,6 +30,7 @@ async function rmContainer(name) {
 
 after(async () => {
   for (const name of [...containers]) await rmContainer(name);
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 // ---------- registry ----------

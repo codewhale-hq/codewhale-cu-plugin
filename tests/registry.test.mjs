@@ -1,5 +1,5 @@
 // Registry tests: registration validation, switching, removal, persistence.
-import { test, beforeEach } from "node:test";
+import { test, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -14,6 +14,7 @@ beforeEach(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
   fs.mkdirSync(tmp, { recursive: true });
 });
+after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 test("local computer is always registered and active by default", () => {
   const reg = registry.list();
@@ -83,5 +84,6 @@ test("ssh hosts or users that read as options are refused at registration and ig
   } finally {
     if (previous === undefined) delete process.env.CODEWHALE_CU_STATE_DIR;
     else process.env.CODEWHALE_CU_STATE_DIR = previous;
+    fsMod.rmSync(dir, { recursive: true, force: true });
   }
 });

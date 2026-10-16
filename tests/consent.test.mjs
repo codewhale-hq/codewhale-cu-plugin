@@ -3,7 +3,7 @@
 // before backend dispatch, cannot be sidestepped by re-spelling the app, and
 // that foreground control is a separate consent from app access.
 import { hostKeysLine, attest, attestParams, TEST_LEDGER_KEY, ledgerMac } from "./fixtures/host-decision.mjs";
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -17,9 +17,11 @@ const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), ".."
 const DOCKER = await dockerAvailable();
 const NEED_DOCKER = { skip: !DOCKER && "docker daemon not available" };
 
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cu-consent-"));
+after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
 let tmpSeq = 0;
 function freshDir() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `cu-consent-${tmpSeq++}-`));
+  const dir = fs.mkdtempSync(path.join(tmpRoot, `${tmpSeq++}-`));
   process.env.CODEWHALE_CU_STATE_DIR = dir;
   return dir;
 }

@@ -29,8 +29,13 @@ const ELEMENTS = [
   ...JSON.parse(process.env.FAKE_BACKEND_EXTRA_ELEMENTS || "[]"),
 ];
 
+let rasterRoot;
 function tmpPng(prefix) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  if (!rasterRoot) {
+    rasterRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cu-fake-backend-"));
+    process.once("exit", () => fs.rmSync(rasterRoot, { recursive: true, force: true }));
+  }
+  const dir = fs.mkdtempSync(path.join(rasterRoot, prefix));
   const file = path.join(dir, `${crypto.randomBytes(3).toString("hex")}.png`);
   fs.writeFileSync(file, PNG_1X1);
   return file;

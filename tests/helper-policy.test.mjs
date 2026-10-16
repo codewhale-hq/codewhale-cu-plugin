@@ -1,6 +1,6 @@
 // The desktop helper applies its own policy to every request that reaches its
 // socket, and never runs a launch command read from its state files.
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -10,6 +10,7 @@ import url from "node:url";
 const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "cu-helper-policy-"));
 process.env.CODEWHALE_CU_STATE_DIR = stateDir;
+after(() => fs.rmSync(stateDir, { recursive: true, force: true }));
 process.env.CODEWHALE_CU_TEST_BACKEND = path.join(ROOT, "tests", "fixtures", "fake-backend.mjs");
 
 const { handle } = await import("../src/app-handler.mjs");

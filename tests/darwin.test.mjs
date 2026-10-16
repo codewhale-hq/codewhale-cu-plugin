@@ -811,9 +811,11 @@ test('open_application on an unknown name, bundle or pid fails as app_not_found'
 });
 
 test('preview goes live after a real capture; mute and session close tear it down', async (t) => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cu-preview-state-'));
+  t.after(() => fs.rmSync(stateDir, { recursive: true, force: true }));
   withEnv(t, {
     CODEWHALE_CU_APP_BUNDLE: fakeBundle(t),
-    CODEWHALE_CU_STATE_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'cu-preview-state-')),
+    CODEWHALE_CU_STATE_DIR: stateDir,
     CODEWHALE_CU_PREVIEW_REFRESH_MS: '60',
   });
   const calls = [];
@@ -861,9 +863,11 @@ test('preview goes live after a real capture; mute and session close tear it dow
 });
 
 test('CODEWHALE_CU_PREVIEW_REFRESH_MS=0 keeps the panel a single frame', async (t) => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cu-preview-off-'));
+  t.after(() => fs.rmSync(stateDir, { recursive: true, force: true }));
   withEnv(t, {
     CODEWHALE_CU_APP_BUNDLE: fakeBundle(t),
-    CODEWHALE_CU_STATE_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'cu-preview-off-')),
+    CODEWHALE_CU_STATE_DIR: stateDir,
     CODEWHALE_CU_PREVIEW_REFRESH_MS: '0',
   });
   const calls = [];

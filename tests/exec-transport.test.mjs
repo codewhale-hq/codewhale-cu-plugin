@@ -156,12 +156,13 @@ test("b64 round-trips JSON payloads", () => {
   assert.deepEqual(JSON.parse(Buffer.from(b64(obj), "base64").toString("utf8")), obj);
 });
 
-test("localExec provides run/runOk/tmpFile", async () => {
+test("localExec provides run/runOk/tmpFile", async (t) => {
   const ex = localExec();
   const r = await ex.run(process.execPath, ["-e", "process.stdout.write(process.argv[1])", "hi"]);
   assert.equal(r.code, 0);
   assert.equal(r.stdout, "hi");
   const f = ex.tmpFile("cu-test-");
+  t.after(() => fs.rmSync(path.dirname(f), { recursive: true, force: true }));
   assert.ok(typeof f === "string");
 });
 

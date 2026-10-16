@@ -161,7 +161,7 @@ before(() => {
   });
 });
 
-after(() => { try { server.stdin.end(); } catch {} server?.kill("SIGTERM"); });
+after(() => { try { server.stdin.end(); } catch {} server?.kill("SIGTERM"); fs.rmSync(stateDir, { recursive: true, force: true }); });
 
 test("tools/list serves exactly the advertised union, validated shapes included", async () => {
   const res = await rpc("tools/list", {});

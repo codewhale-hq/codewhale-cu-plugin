@@ -129,7 +129,7 @@ before(() => {
   });
 });
 
-after(() => { try { server.stdin.end(); } catch {} server?.kill("SIGTERM"); });
+after(() => { try { server.stdin.end(); } catch {} server?.kill("SIGTERM"); fs.rmSync(stateDir, { recursive: true, force: true }); });
 
 test("initialize advertises resources and the skills extension", async () => {
   const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {} });

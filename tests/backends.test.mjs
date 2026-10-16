@@ -201,9 +201,10 @@ test("win32: module loads with the full backend surface", async () => {
   }
 });
 
-test("remote agent refuses tools outside the allow-list", async () => {
+test("remote agent refuses tools outside the allow-list", async (t) => {
   const { run } = await import("../src/exec.mjs");
   const sentinel = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "cu-agent-deny-")), "x");
+  t.after(() => fs.rmSync(path.dirname(sentinel), { recursive: true, force: true }));
   const payload = Buffer.from(JSON.stringify({ tool: "write_file", args: { path: sentinel } })).toString("base64");
   const r = await run("node", [fileURLToPath(new URL("../agent.mjs", import.meta.url)), payload]);
   const reply = JSON.parse(r.stdout.trim());
