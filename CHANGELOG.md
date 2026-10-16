@@ -7,16 +7,28 @@
 - Add same-view `get_app_state since` diffs without replacing the complete target cache; expired, changed or incomplete baselines return a full resync.
 - Forward filtered macOS searches to the native deep walk and accept common key spellings (`Page_Down`, `PgDn`, `ArrowLeft`, `Forward_Delete`, `KP_Enter`).
 - Preserve trajectory text redaction and capture-pin replay refusal for aliased batch arguments.
-- An untargeted Return or space sent through `type` (a newline or `press_enter`) or `hold_key` now gets the same focused-control confirmation as `key`; before, those paths skipped it.
-- Linux `screenshot {display:"all"}` captures the whole screen again instead of returning `bad_args`.
+- Supply the concise operating skill through standard MCP initialization.
+- Serve detailed operations and recording as exact packaged MCP resources; incomplete skill packs fail at startup.
+- Clarify bundled-helper setup and the local-app, signed-in-Chrome and isolated-browser routes.
+- `computer_register` removes an ssh computer it just added when installing or probing the agent fails; before, the failed computer stayed listed and selectable. An entry that existed before the call is left alone.
+
+### Input ownership on the desktop-helper and ssh routes
+
+- The consent check on the app that would receive keyboard or pointer input now also runs when input goes through the desktop helper or an ssh agent. Before, it ran only when the server drove the backend in-process, so helper-routed input into an unapproved Linux window was delivered. The runner answers a new allow-listed `input_owner` request, and the same ledger decision applies before dispatch.
+- A runner that cannot name the owner refuses the input. Only a macOS runner may lack the request, because the macOS backend gates input on the bound app. An older helper or agent without the request returns `app_upgrade_required`.
+- Windows, current behaviour: the Windows backend does not implement `input_owner`, so keyboard and pointer input through the Windows desktop helper or an ssh agent on Windows is refused (`unsupported_on_platform`; an older helper returns `app_upgrade_required`). The direct Windows route does not run this check and keeps the bound-app checks. Held input on Windows needs the helper, so it is refused on both routes.
 
 ### Linux desktop control (X11)
 
 - Consent now covers the window that receives input. Keystrokes check the active window's app and pointer events check the topmost window under the point, so input aimed at an unapproved app is refused. Previously a fresh server could click and type into any window, and an approved app's decision covered input that landed elsewhere.
-- Keystrokes are refused while a menu or popup item is open (`popup_open`); Escape is always allowed.
-- `focus`, `get_value` and `select_text` work through AT-SPI. Targeted `type` and `key` refuse when the element's window is not the active one (`window_not_active`).
+- A window's app identity comes from its process. Toolkits that set no `_NET_WM_PID`, Tk among them, are identified through the X server's X-Resource extension, and a process's other windows count as the same app for consent.
+- Keystrokes are refused while a menu or popup item is open (`popup_open`); Escape is always allowed. A menu probe that does not answer refuses the keystroke (`popup_unknown`).
+- `focus`, `get_value` and `select_text` work through AT-SPI. Targeted `type` and `key` refuse when the element's window is not the active one (`window_not_active`). When AT-SPI and X11 name an app differently (Chromium), these checks match by pid.
+- An untargeted Return, Enter or space reads the focused control, whether it is sent through `key`, `hold_key`, or `type` with a newline or `press_enter`. If that control would pay, buy, send, transfer or delete, the key needs the same confirmation as a click on it (`confirmation_required`). A focused control that cannot be read refuses the key (`focused_control_unknown`). The helper and ssh routes answer the same `focused_control` request.
 - `screenshot` and `list_windows` accept `app_ref.name`. App-window captures list the windows stacked above them in `occluded_by`.
+- `switch_display` and `screenshot {display}` check the index against `list_displays` and refuse an unknown one (`bad_args`). `screenshot` with `display` crops to that display, and `switch_display` sets the display later full-screen captures use. `display:"all"` captures the whole screen. `display` cannot be combined with `region` or `app_ref`.
 - `list_apps` returns one entry per process, with its pid.
+- `open_application` and `write_clipboard` report an executable that is not installed as `app_not_found` (or `launch_failed`); before, the server exited.
 - Screen recording runs ffmpeg `x11grab` as a child this server owns; it is finished by `recording_stop`, session close and server exit.
 - `kill_app` is implemented: window close first, `force:true` for SIGKILL, ambiguous names refused.
 - `list_sessions` is implemented.
@@ -25,12 +37,23 @@
 - Smoke: consent checks run only for the app named in `CU_SMOKE_APP`; the registry checks expect the refusals the host actually gives.
 - Held input on standalone Linux (drag, hold, held mouse) still requires the desktop helper. See LIMITATIONS for why.
 
-- Supply the concise operating skill through standard MCP initialization.
-- Serve detailed operations and recording as exact packaged MCP resources; incomplete skill packs fail at startup.
-- Clarify bundled-helper setup and the local-app, signed-in-Chrome and isolated-browser routes.
+### Linux on Wayland
+
+- A session counts as Wayland when `XDG_SESSION_TYPE=wayland` or the `WAYLAND_DISPLAY` socket exists, even with an XWayland `DISPLAY` set; before, such a session was driven with X11 tools that saw only XWayland windows. `request_access` reports the reason (`session_reason`).
+- On sway and Hyprland, keyboard and pointer input go through virtual Wayland devices (`src/backends/wayland-input.py`). Consent applies to the app the compositor names: the focused window's pid for keys, the window under the point for the pointer. The `window_not_active` and `popup_open` guards run here too.
+- Refused even on sway: a point where floating windows, or XWayland windows, of two different apps overlap, and pointer input with no coordinates (sway does not report the pointer position).
+- Every other compositor, GNOME and KDE included, is observation only: screenshots (grim, wlroots only), the clipboard and the AT-SPI tree. Input is refused (`input_owner_unknown`) and `request_access` says why.
+- `read_clipboard` no longer appends a newline, and `list_apps` on sway no longer throws.
+- Verified on headless sway 1.9 with XWayland, direct route: 21 of 27 parity tasks demonstrated at 5 repeats (`parity/results/linux-wayland-isolated-sway-2026-10-11.json`). Hyprland is unit-tested only. A real sway login session and the desktop-helper route are not exercised.
+
+### Docker computers
+
+- `screenshot`, `zoom` and `browser_screenshot` on a spawned Docker computer return the image. It is read back over `docker exec` under the same single-message budget as a local capture, or reported as `image_omitted`. Before, they returned an in-container path.
+- Spawn reports ready only once the container's session bus is up, so an app opened right after spawn reaches AT-SPI.
+- The image no longer runs `npm ci`; the server and tests have no npm dependencies.
 
 Host guidance delivery is owned by Engine separately. No app or store publication is claimed.
-Local source checks: 389 passed / 18 skipped; focused MCP resource suite: 11 passed.
+Local source checks on macOS: 515 tests, 494 passed, 0 failed, 21 skipped; focused MCP resource suite (`tests/mcp-skills.test.mjs`): 12 passed.
 
 ## 0.12.0 — the agent gets its own pointer
 
