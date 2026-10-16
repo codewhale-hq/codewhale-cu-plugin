@@ -3,6 +3,7 @@
   "date": "2026-09-15T15:53:38.719Z",
   "commit": "f1cceb105177d8eb67bc191878de7885e10cd06f",
   "git_dirty": false,
+  "display_scale": 2,
   "tasks": {
     "browser.download": {
       "issue": 2,

@@ -83,6 +83,17 @@ const summaries = [];
 const summaryCounts = new Map();
 /** surface -> evidence sentence; anything absent stays untested. */
 const surfaces = new Map();
+function platformRow(platform, sessionType, scale) {
+  if (platform === "darwin") return scale == null ? null : scale > 1 ? "macOS Retina" : "macOS non-Retina";
+  if (platform === "linux") return sessionType === "wayland" ? "Wayland" : "Linux X11";
+  if (platform === "win32") return "Windows";
+  return null;
+}
+function addSurface(row, demonstrated, total, repeats, surface, date) {
+  if (!row) return;
+  const evidence = `${demonstrated}/${total} tasks demonstrated at ${repeats} repeats (${surface}, ${date.slice(0, 10)})`;
+  surfaces.set(row, surfaces.has(row) ? `${surfaces.get(row)}; separate run: ${evidence}` : evidence);
+}
 
 for (const dir of runDirs) {
   const run = JSON.parse(fs.readFileSync(path.join(dir, "run.json"), "utf8"));
@@ -114,7 +125,8 @@ for (const dir of runDirs) {
   lines.push("| task | issue | Codewhale | Codex | status | median elapsed | median tool calls | pointer displacement | foreground | notes |");
   lines.push("|---|---|---|---|---|---|---|---|---|---|");
 
-  const resultJson = { platform: surface, date: meta.date, commit: meta.codewhale_commit, git_dirty: meta.git_dirty === true, tasks: {} };
+  const scale = /@(\d+(?:\.\d+)?)x/.exec(meta.display_geometry ?? "")?.[1];
+  const resultJson = { platform: surface, date: meta.date, commit: meta.codewhale_commit, git_dirty: meta.git_dirty === true, display_scale: scale ? Number(scale) : null, tasks: {} };
 
   const taskMeta = metaForRun(run);
   // A filtered run cannot erase unexecuted tasks from the qualification table.
@@ -152,21 +164,7 @@ for (const dir of runDirs) {
 
   // Surface evidence for the Platforms table, derived from this run only.
   const demonstrated = [...repsByTask.values()].filter((reps) => reps.length === REPEATS_REQUIRED && reps.every((r) => r.status === "ok")).length;
-  const scale = /@(\d+(?:\.\d+)?)x/.exec(meta.display_geometry ?? "")?.[1];
-  if (meta.platform === "darwin") {
-    const key = scale && Number(scale) > 1 ? "macOS Retina" : "macOS non-Retina";
-    const evidence = `${demonstrated}/${repsByTask.size} tasks demonstrated at ${meta.repeats} repeats (${surface}, ${meta.date.slice(0, 10)})`;
-    surfaces.set(key, surfaces.has(key) ? `${surfaces.get(key)}; separate run: ${evidence}` : evidence);
-  }
-  if (meta.platform === "linux") {
-    const key = meta.session_type === "wayland" ? "Wayland" : "Linux X11";
-    const evidence = `${demonstrated}/${repsByTask.size} tasks demonstrated at ${meta.repeats} repeats (${surface}, ${meta.date.slice(0, 10)})`;
-    surfaces.set(key, surfaces.has(key) ? `${surfaces.get(key)}; separate run: ${evidence}` : evidence);
-  }
-  if (meta.platform === "win32") {
-    surfaces.set("Windows",
-      `${demonstrated}/${repsByTask.size} tasks demonstrated at ${meta.repeats} repeats (${surface}, ${meta.date.slice(0, 10)})`);
-  }
+  addSurface(platformRow(meta.platform, meta.session_type, resultJson.display_scale), demonstrated, repsByTask.size, meta.repeats, surface, meta.date);
 
   const day = meta.date.slice(0, 10);
   const stem = `${meta.platform}-${meta.session_type}${meta.isolated ? "-isolated" : ""}${container ? "-docker" : ""}${desktop ? `-${desktop}` : ""}${helperRoute ? "-helper" : ""}-${day}`;
@@ -215,17 +213,17 @@ for (const file of summaryFiles) {
   lines.push(`- commit: \`${prior.commit}\`; date: ${prior.date}`);
   lines.push(`- rendered from the committed summary \`${path.relative(ROOT, file)}\` (run recorded on another host)`);
   lines.push("");
-  lines.push("| task | issue | Codewhale | status | median elapsed | median tool calls | pointer displacement | notes |");
-  lines.push("|---|---|---|---|---|---|---|---|");
+  lines.push("| task | issue | Codewhale | status | median elapsed | median tool calls | pointer displacement | foreground | notes |");
+  lines.push("|---|---|---|---|---|---|---|---|---|");
   for (const [id, t] of Object.entries(prior.tasks).sort()) {
-    lines.push(`| ${id} | #${t.issue ?? "?"} | ${t.successes}/${t.attempts} | ${t.status} | ${t.median_elapsed_ms ?? "-"}ms | ${t.median_tool_calls ?? "-"} | ${t.pointer_displacement_px ?? "-"}px | ${t.notes ?? "-"} |`);
+    const fg = !t.attempts || t.foreground_taken_reps == null ? "-" : t.foreground_taken_reps === 0 ? "preserved" : `taken ${t.foreground_taken_reps}/${t.attempts}`;
+    lines.push(`| ${id} | #${t.issue ?? "?"} | ${t.successes}/${t.attempts} | ${t.status} | ${t.median_elapsed_ms ?? "-"}ms | ${t.median_tool_calls ?? "-"} | ${t.pointer_displacement_px ?? "-"}px | ${fg} | ${t.notes ?? "-"} |`);
   }
   lines.push("");
-  const demonstrated = Object.values(prior.tasks).filter((t) => t.status === "demonstrated").length;
-  const key = prior.platform.startsWith("linux") ? (prior.platform.includes("wayland") ? "Wayland" : "Linux X11") : prior.platform.startsWith("win32") ? "Windows" : prior.platform;
-  if (!surfaces.has(key)) {
-    surfaces.set(key, `${demonstrated}/${Object.keys(prior.tasks).length} tasks demonstrated (${prior.platform}, ${prior.date.slice(0, 10)})`);
-  }
+  const tasks = Object.values(prior.tasks);
+  const demonstrated = tasks.filter((t) => t.status === "demonstrated").length;
+  const [, platform, sessionType] = /^([^-]+)-(\S+)/.exec(prior.platform) ?? [];
+  addSurface(platformRow(platform, sessionType, prior.display_scale), demonstrated, tasks.length, Math.max(0, ...tasks.map((t) => t.attempts ?? 0)), prior.platform, prior.date);
 }
 
 // ---------- one Platforms table for every surface, at the end ----------
