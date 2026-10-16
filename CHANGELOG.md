@@ -7,6 +7,8 @@
 - Add same-view `get_app_state since` diffs without replacing the complete target cache; expired, changed or incomplete baselines return a full resync.
 - Forward filtered macOS searches to the native deep walk and accept common key spellings (`Page_Down`, `PgDn`, `ArrowLeft`, `Forward_Delete`, `KP_Enter`).
 - Preserve trajectory text redaction and capture-pin replay refusal for aliased batch arguments.
+- An untargeted Return or space sent through `type` (a newline or `press_enter`) or `hold_key` now gets the same focused-control confirmation as `key`; before, those paths skipped it.
+- Linux `screenshot {display:"all"}` captures the whole screen again instead of returning `bad_args`.
 
 ### Linux desktop control (X11)
 

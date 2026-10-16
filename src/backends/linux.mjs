@@ -812,7 +812,7 @@ except Exception as e:
       let shotRegion = region;
       let windowInfo = null;
       let occludedBy = null;
-      const wantedDisplay = args.display ?? (appRef === null && !region ? activeDisplay : null);
+      const wantedDisplay = args.display === "all" ? null : args.display ?? (appRef === null && !region ? activeDisplay : null);
       if (wantedDisplay != null) {
         if (region || appRef !== null) throw Object.assign(new ExecError("choose display, region or app_ref, not a combination"), { code: "bad_args" });
         const d = await displayByIndex(wantedDisplay);

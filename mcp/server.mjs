@@ -980,8 +980,8 @@ function activatedControl(computer, name, args) {
   return best ? { label: best.label, last: best.label, app: st.app_ref ?? null } : null;
 }
 
-function confirmationCheck(computer, name, args, control = activatedControl(computer, name, args)) {
-  if (!CONFIRM_TOOLS.has(name) || computer.owned === true) return;
+function confirmationCheck(computer, name, args, control = activatedControl(computer, name, args), activates = CONFIRM_TOOLS.has(name)) {
+  if (!activates || computer.owned === true) return;
   if (!control || !IRREVERSIBLE_LABEL.test(control.last)) return;
   const { computer: _computer, ...callArgs } = args;
   const hash = crypto.createHash("sha256").update(stableJson([computer.id, name, callArgs, control.label])).digest("hex");
@@ -1004,12 +1004,14 @@ function confirmationCheck(computer, name, args, control = activatedControl(comp
 const ACTIVATING_KEY = /^(return|enter|kp_enter|space)$/i;
 
 async function focusedControlCheck(computer, name, args, focusedOf) {
-  if (name !== "key" || args.target != null || computer.owned === true || typeof focusedOf !== "function") return;
-  if (!ACTIVATING_KEY.test(String(args.text ?? "return").split("+").pop().trim())) return;
+  if (args.target != null || computer.owned === true || typeof focusedOf !== "function") return;
+  const pressed = name === "key" || name === "hold_key" ? String(args.text ?? "return").split("+").pop().trim()
+    : name === "type" && (args.press_enter === true || /[\r\n]/.test(String(args.text ?? ""))) ? "return" : null;
+  if (pressed === null || !ACTIVATING_KEY.test(pressed)) return;
   const ctl = await focusedOf();
   const label = [ctl?.label, ctl?.description].find((v) => typeof v === "string" && v.trim());
   if (!label || TEXT_ROLE.test(String(ctl.role ?? ""))) return;
-  confirmationCheck(computer, name, args, { label, last: label, app: ctl.app ?? null });
+  confirmationCheck(computer, name, args, { label, last: label, app: ctl.app ?? null }, true);
 }
 
 /** focused_control over the wire; a runner without it (macOS, older helpers) keeps the observation-based check. */
