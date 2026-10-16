@@ -15,8 +15,9 @@ docker/run.sh -- npm run parity -- --isolated --task 'native.*' --repeats 5
 ```
 
 Receipts land in `receipts/linux-docker/<timestamp>/` on the host. The source is
-copied into the image rather than mounted, so every run reflects a build; the
-dependency layer is cached, so edit-and-re-run costs a few seconds.
+copied into the image rather than mounted, so every run reflects a build. The
+image installs no npm dependencies and the source copy is its last layer, so
+edit-and-re-run rebuilds only that layer.
 
 ## What a green run here is, and is not, evidence for
 
@@ -49,9 +50,10 @@ under test.
 
 ## Resolved non-green rows (2026-09-16)
 
-This run predates the consent check on the app receiving each input; the
-harness has not passed its input tasks since, so the 25/27 below is a
-historical result, not the current state. A re-run is in progress.
+This run predates the consent check on the app receiving each input, so the
+25/27 below is a historical result, not the current state. The current Docker
+results are the 2026-10-11 rows in `docs/PARITY_MATRIX.md` (23/27 at 5
+repeats, directly and through the desktop helper).
 
 `docker/run.sh parity --repeats 5` on 2026-09-16 (Chromium 152, Debian 12,
 node 24.21, Xvfb 1600x1200) is **25/27 demonstrated**: every row green except

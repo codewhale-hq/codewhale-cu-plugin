@@ -1,6 +1,7 @@
-// Linux backend — X11 first (xdotool/wmctrl/scrot/xclip), Wayland where the
-// right tools exist (grim/wtype/ydotool/wf-recorder/wl-clipboard). The
-// accessibility tree comes from AT-SPI via python3+pyatspi when installed.
+// Linux backend — X11 first (xdotool/wmctrl/scrot/xclip). Wayland sessions on
+// sway and Hyprland go through linux-wayland.mjs (grim, wl-clipboard,
+// swaymsg/hyprctl, wayland-input.py). The accessibility tree comes from
+// AT-SPI via python3+pyatspi when installed.
 // Everything probes at call time and fails closed with the missing tool named.
 import fs from "node:fs";
 import os from "node:os";
