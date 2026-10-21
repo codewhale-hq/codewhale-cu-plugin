@@ -198,10 +198,13 @@ export function create({ exec }) {
   // every action updates the floating capture and its drawn cursor so the
   // person can watch without the real pointer moving. `preview(enabled:false)`
   // mutes it for the session.
-  // The preview panel is live while a session is bound: after the first
-  // successful capture a timer keeps refreshing it, so the person watches the
-  // app instead of a frozen still. CODEWHALE_CU_PREVIEW_REFRESH_MS=0 disables
-  // the loop (tests, headless); the floor keeps a hostile value tolerable.
+  // The preview panel is live while a session is bound and working: after the
+  // first successful capture a timer keeps refreshing it, so the person
+  // watches the app instead of a frozen still. A session with no bind, preview
+  // or action for CODEWHALE_CU_PREVIEW_IDLE_MS (default 60 s) stops capturing
+  // until its next action — hosts keep idle sessions open for hours.
+  // CODEWHALE_CU_PREVIEW_REFRESH_MS=0 disables the loop (tests, headless); the
+  // floors keep a hostile value tolerable.
   const state = { activeDisplay: 1, lastRaster: null, inputApp: null, foregroundInput: false, previewEnabled: true, pointer: null, heldDrag: null };
   // Shared-surface politeness: front leases, real-pointer gestures,
   // foreground keys and activations wait for a gap in the user's hardware
@@ -215,6 +218,7 @@ export function create({ exec }) {
   };
   let previewLoop = null;
   let previewBusy = false;
+  let previewActiveAt = 0;
   function stopPreviewLoop() { if (previewLoop) { clearInterval(previewLoop); previewLoop = null; } }
   // A hide must not race an in-flight capture: its late preview_notify would
   // re-show a panel that was just dismissed.
@@ -224,8 +228,10 @@ export function create({ exec }) {
     if (previewLoop) return;
     const ms = Number(process.env.CODEWHALE_CU_PREVIEW_REFRESH_MS ?? 1000);
     if (!Number.isFinite(ms) || ms <= 0) return;
+    const idleMs = Math.max(5_000, Number(process.env.CODEWHALE_CU_PREVIEW_IDLE_MS) || 60_000);
     previewLoop = setInterval(() => {
       if (previewBusy || !state.previewEnabled || !state.inputApp) return;
+      if (Date.now() - previewActiveAt > idleMs) { stopPreviewLoop(); return; }
       previewBusy = true;
       updatePreview(false).catch(() => {}).finally(() => { previewBusy = false; });
     }, Math.max(50, ms));
@@ -299,6 +305,7 @@ export function create({ exec }) {
     const interference = leaseVerdict(result);
     if (interference !== null) result.user_input_during_lease = interference;
     if (state.previewEnabled && state.inputApp && ["type", "key_event", "bg_pointer", "bg_key", "set_value", "select_text", "perform_action", "hit_test", "click_element", "scroll_element", "focus_element"].includes(tool)) {
+      previewActiveAt = Date.now();
       try { await updatePreview(); } catch (error) { result.preview_error = error.message; }
     }
     return result;
@@ -770,8 +777,10 @@ export function create({ exec }) {
     state.foregroundInput = !!activate;
     // Surface the watch panel on bind; a capture failure (e.g. missing Screen
     // Recording) must never block the bind itself. The first successful
-    // capture also starts the refresh loop so the panel stays live while bound.
+    // capture also starts the refresh loop so the panel stays live while the
+    // session works.
     if (state.previewEnabled) {
+      previewActiveAt = Date.now();
       previewBusy = true;
       updatePreview(true).catch(() => {}).finally(() => { previewBusy = false; });
     }
@@ -957,6 +966,7 @@ export function create({ exec }) {
       state.previewEnabled = enabled;
       if (!enabled) { stopPreviewLoop(); await quiescePreview(); await native("preview_notify", { enabled: false }); return { enabled: false }; }
       if (!state.inputApp) throw new ExecError("open_application first to choose the preview app");
+      previewActiveAt = Date.now();
       return updatePreview(true);
     },
     screenshot,

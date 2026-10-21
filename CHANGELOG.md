@@ -12,6 +12,10 @@
 - Clarify bundled-helper setup and the local-app, signed-in-Chrome and isolated-browser routes.
 - `computer_register` removes an ssh computer it just added when installing or probing the agent fails; before, the failed computer stayed listed and selectable. An entry that existed before the call is left alone.
 
+### Many live sessions (CW-7495)
+
+- macOS: the live preview stops capturing after 60 s without a bind, preview or action (`CODEWHALE_CU_PREVIEW_IDLE_MS`), and the next action restarts it. Before, a bound session refreshed it every second (a window capture, a cursor read and a panel update) until the session closed, which never happens under a host that keeps idle sessions open.
+
 ### Input ownership on the desktop-helper and ssh routes
 
 - The consent check on the app that would receive keyboard or pointer input now also runs when input goes through the desktop helper or an ssh agent. Before, it ran only when the server drove the backend in-process, so helper-routed input into an unapproved Linux window was delivered. The runner answers a new allow-listed `input_owner` request, and the same ledger decision applies before dispatch.
