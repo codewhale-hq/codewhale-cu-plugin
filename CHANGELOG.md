@@ -19,7 +19,8 @@
 - Through the helper, one session at a time sends input to an app. Another session's input to the same process is refused `input_busy` before anything is sent, until the first session binds another app, closes, is stopped or makes no request for `CODEWHALE_CU_INPUT_IDLE_MS` (default 60 s). Before, two sessions bound to one app could interleave their keystrokes in it. `input_busy` is now in the refusal-code reference.
 - A held pointer whose session has made no request for that idle window is released when another session sends input. Before, it refused every other session's input until its host closed the connection.
 - `list_sessions` through the helper reports each session's `owner` (`pid`, `host_pid`), `self` and `writing`, and the idle window as `inputIdleSec`.
-- Limitations: Codex keeps one server per thread; what was and was not established about doubled keystrokes; the stale-helper notice cannot tell two builds of one version apart.
+- Limitations: Codex keeps one server per thread; what was and was not established about doubled keystrokes; a helper without a build fingerprint cannot be told apart from another build of its version.
+- The helper's `hello` carries a build fingerprint (a hash of the plugin's `src`, `app` and `plugin.json` taken at start) and its plugin path. `request_access` marks `app.stale` with `installed_build` when the helper's app on disk has changed since it started, and `app.build_skew` with `bundled_build` when this plugin and the helper are different builds of one version. Before, both read as the same version and nothing was reported. Helpers without a fingerprint are compared by version only, as before.
 
 ### Input ownership on the desktop-helper and ssh routes
 

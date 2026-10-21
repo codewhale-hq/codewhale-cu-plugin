@@ -637,10 +637,15 @@ that is already up keeps the modules it loaded at start, so leaving it running
 makes every later check report the *previous* build's behaviour — which is how
 one round of development receipts was once produced against stale code.
 
-The stale-helper notice compares version numbers only. Two builds with the
-same version look identical to it: on 2026-10-21 an installed 0.12.1 helper
-built from October 8 source was serving beside a 0.12.1 checkout with later
-server, tool and transport changes. Compare the bundle's
+A helper reports a build fingerprint, a hash of the plugin's `src`, `app` and
+`plugin.json` taken when it starts. `request_access` marks it `app.stale` when
+its app on disk no longer matches that fingerprint (replaced after it
+started), and `app.build_skew` when it and this plugin are different builds of
+the same version. Helpers built before the fingerprint report none, so the
+version number is all that can be compared with them: on 2026-10-21 an
+installed 0.12.1 helper built from October 8 source was serving beside a
+0.12.1 checkout with later server, tool and transport changes, and nothing
+flagged it. With such a helper, compare the bundle's
 `Contents/Resources/plugin` with the source before trusting a receipt.
 
 Demonstrated 2026-09-06 (arm64, macOS): after a one-time grant, killing the

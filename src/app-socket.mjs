@@ -42,6 +42,40 @@ export function helperStaleness(helper, bundled = APP_VERSION) {
   return { stale: true, note: `The running helper reports ${helper} but this plugin is ${bundled} — restart the Codewhale Computer Use app to load the current build.` };
 }
 
+const FINGERPRINT_ENTRIES = ["plugin.json", "app", "src"];
+
+export function runtimeFingerprint(root = PLUGIN_ROOT) {
+  const hash = crypto.createHash("sha256");
+  const add = (relative) => {
+    const file = path.join(root, relative);
+    const stat = fs.statSync(file);
+    if (stat.isDirectory()) {
+      for (const name of fs.readdirSync(file).sort()) {
+        if (!name.startsWith(".") && name !== "node_modules") add(path.join(relative, name));
+      }
+    } else if (stat.isFile()) hash.update(relative.split(path.sep).join("/")).update("\0").update(fs.readFileSync(file)).update("\0");
+  };
+  for (const entry of FINGERPRINT_ENTRIES) add(entry);
+  return hash.digest("hex").slice(0, 16);
+}
+
+let pluginBuild;
+function fingerprintOrNull(root) {
+  try { return runtimeFingerprint(root); } catch { return null; }
+}
+
+export function helperBuildDrift(app, { bundled = (pluginBuild ??= fingerprintOrNull(PLUGIN_ROOT)), bundledVersion = APP_VERSION } = {}) {
+  if (typeof app?.build !== "string") return { stale: false, skew: false, note: null };
+  const installed = typeof app.pluginRoot === "string" && path.isAbsolute(app.pluginRoot) ? fingerprintOrNull(app.pluginRoot) : null;
+  if (installed && installed !== app.build) {
+    return { stale: true, skew: false, installed, note: `The running helper is build ${app.build}, but its app on disk is now build ${installed}: it was replaced after the helper started. Restart the Codewhale Computer Use app to load the installed build.` };
+  }
+  if (bundled && bundled !== app.build && app.version === bundledVersion) {
+    return { stale: false, skew: true, bundled, note: `This plugin (build ${bundled}) and the running helper (build ${app.build}) are different builds of ${bundledVersion}. The helper runs its own installed code; reinstall it from this plugin if the two must match.` };
+  }
+  return { stale: false, skew: false, note: null };
+}
+
 function shortHash(s) {
   return crypto.createHash("sha256").update(s).digest("hex").slice(0, 12);
 }

@@ -138,8 +138,11 @@ Once the GUI is the right interface: observe once, act once, then verify.
    `"direct"` means the hosting app or terminal is. Follow the actual
    `appHint`: bundled Codewhale builds already carry their native helper.
    `app.stale:true` means the running helper reports an older version than the
-   plugin — tell the user to restart the Codewhale Computer Use app before
-   debugging any behavior.
+   plugin, or its app on disk was replaced after it started — tell the user to
+   restart the Codewhale Computer Use app before debugging any behavior.
+   `app.build_skew:true` means the helper is a different build of the same
+   version; it is not a reason to restart, but name it when behavior differs
+   from what this plugin documents.
 2. `list_apps` shows user-facing apps only; pass `all:true` to include
    menu-bar helpers and background processes. If the user names an app that is
    absent, call `open_application` once with the original user-provided name,

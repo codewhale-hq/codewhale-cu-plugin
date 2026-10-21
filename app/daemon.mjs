@@ -20,16 +20,18 @@ import path from "node:path";
 import { handle, closeSession, closeAllSessions, releaseSessionInput, reopenSession, ALLOWED, controlStatus, setControlMode, summarizeSessions } from "../src/app-handler.mjs";
 import { runBackgroundCheck } from "./background-check.mjs";
 import { checkForUpdate, prepareUpdate, restartWithUpdate, readUpdateResult } from "./updates.mjs";
-import { APP_ID, APP_NAME, APP_VERSION, socketPath, runInfoPath, writeRegistration, defaultLaunch, hello } from "../src/app-socket.mjs";
+import { APP_ID, APP_NAME, APP_VERSION, PLUGIN_ROOT, socketPath, runInfoPath, writeRegistration, defaultLaunch, hello, runtimeFingerprint } from "../src/app-socket.mjs";
 import { stateDir } from "../src/registry.mjs";
 
 const startedAt = new Date().toISOString();
 const bundle = process.env.CODEWHALE_CU_APP_BUNDLE || null;
 let controlOwner = false;
 const log = (msg) => process.stderr.write(`${new Date().toISOString()} ${APP_NAME}: ${msg}\n`);
+let build = null;
+try { build = runtimeFingerprint(); } catch (error) { log(`could not fingerprint the runtime: ${error.message}`); }
 
 function appInfo() {
-  return { id: APP_ID, name: APP_NAME, version: APP_VERSION, sessionProtocol: 2, backgroundProtocol: 1, controlProtocol: 1, controlOwner, pid: process.pid, platform: process.platform, node: process.version, bundle, startedAt, socket: socketPath() };
+  return { id: APP_ID, name: APP_NAME, version: APP_VERSION, build, pluginRoot: PLUGIN_ROOT, sessionProtocol: 2, backgroundProtocol: 1, controlProtocol: 1, controlOwner, pid: process.pid, platform: process.platform, node: process.version, bundle, startedAt, socket: socketPath() };
 }
 
 if (await hello({ timeoutMs: 1_500 })) {

@@ -14,7 +14,7 @@ import { spawnDockerComputer, destroyDockerComputer, destroySessionSpawns } from
 import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD, resolveTool, parseGrant, MERGED_EXPANSION, LEASE_GATED_TOOLS } from "../src/tools.mjs";
 import { tryJson, withSignal, throwIfAborted, wait, currentSignal } from "../src/exec.mjs";
 import { inputRefusal, watchLease, HUMAN_DRIVING } from "../src/lease.mjs";
-import { APP_VERSION, helperStaleness } from "../src/app-socket.mjs";
+import { APP_VERSION, helperStaleness, helperBuildDrift } from "../src/app-socket.mjs";
 import { checkAppScript } from "../src/app-script-policy.mjs";
 import { createRecorder, readTrajectory, listTrajectories, resolveTrajectory, isTrajectoryTool, containsRasterPin } from "../src/trajectory.mjs";
 
@@ -1495,6 +1495,12 @@ async function callTool(params, bindWhen = null) {
           data.app.stale = true;
           data.note = [data.note, staleness.note].filter(Boolean).join(" ");
         }
+      }
+      if (backendMethod === "probe" && data?.app?.build) {
+        const drift = helperBuildDrift(data.app);
+        if (drift.stale) Object.assign(data.app, { stale: true, installed_build: drift.installed });
+        if (drift.skew) Object.assign(data.app, { build_skew: true, bundled_build: drift.bundled });
+        if (drift.note) data.note = [data.note, drift.note].filter(Boolean).join(" ");
       }
     } else {
       const backend = await getBackend(computer, binding);
