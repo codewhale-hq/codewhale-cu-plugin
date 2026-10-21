@@ -27,6 +27,8 @@ const LOCAL_ONLY_TOOLS = new Set(["app_script"]);
 
 const backends = new Map();
 const heldPointers = new Map();
+const appWriters = new Map();
+const INPUT_IDLE_MS = Math.max(1_000, Number(process.env.CODEWHALE_CU_INPUT_IDLE_MS) || 60_000);
 const INPUT_MUTATIONS = new Set([
   "open_application", "left_click", "double_click", "triple_click", "right_click", "middle_click", "mouse_move",
   "left_click_drag", "left_mouse_down", "left_mouse_up", "scroll", "type", "key", "hold_key", "set_value", "focus", "select_text", "perform_action", "invoke_menu",
@@ -86,6 +88,15 @@ function enqueue(fn) {
   return next;
 }
 
+function inputOwnerIdle(key) {
+  const owner = sessions.get(key);
+  return !owner || owner.closed || (!owner.requests.size && Date.now() - owner.touched > INPUT_IDLE_MS);
+}
+
+function dropAppWriters(key) {
+  for (const [app, writer] of appWriters) if (writer.key === key) appWriters.delete(app);
+}
+
 /** Cancel this host's work, then release only input held by its backend. */
 export function releaseSessionInput(sessionId, computerId = "local", { close = false } = {}) {
   const key = `${computerId}:${sessionId}`;
@@ -101,6 +112,7 @@ export function releaseSessionInput(sessionId, computerId = "local", { close = f
     try {
       await withSignal(null, () => backends.get(key)?.releaseInput?.());
       if (heldPointers.get(computerId) === key) heldPointers.delete(computerId);
+      dropAppWriters(key);
       if (close) await withSignal(null, () => backends.get(key)?.closeSession?.());
       if (close) backends.delete(key);
     } finally { session.touched = Date.now(); }
@@ -131,23 +143,30 @@ export function closeAllSessions() {
 
 /**
  * Content-free session registry view for agents: which sessions are live,
- * what each is bound to, what it is doing right now, and whether any session
- * holds a pointer. App identity and action names only — task text never
- * reaches this process, so none can leak. Read-only by construction.
+ * what each is bound to, what it is doing right now, whether any session
+ * holds a pointer or the input claim on its app, and which processes own
+ * each session. App identity, action names and process ids only — task text
+ * never reaches this process, so none can leak. Read-only by construction.
  */
-export function summarizeSessions() {
+export function summarizeSessions({ ownerOf, self } = {}) {
   const live = [...sessions.entries()].filter(([, s]) => !s.closed);
   return {
     control: controlMode,
     count: live.length,
+    inputIdleSec: INPUT_IDLE_MS / 1000,
     sessions: live.map(([key, s]) => {
-      const computerId = key.slice(0, key.indexOf(":"));
+      const colon = key.indexOf(":");
+      const computerId = key.slice(0, colon);
+      const sessionId = key.slice(colon + 1);
       return {
         target: s.target ?? null,
         mode: s.mode ?? null,
         action: s.action ?? null,
         ageSec: Math.max(0, Math.round((Date.now() - s.touched) / 1000)),
         inputHeld: heldPointers.get(computerId) === key,
+        writing: Number.isInteger(s.target?.pid) && appWriters.get(`${computerId}:${s.target.pid}`)?.key === key && !inputOwnerIdle(key),
+        ...(ownerOf ? { owner: ownerOf(sessionId) ?? null } : {}),
+        ...(self ? { self: sessionId === self } : {}),
       };
     }),
   };
@@ -233,10 +252,21 @@ export async function handle(req, { computerId = "local", sessionId = "direct", 
       const instance = await backend(computerId, sessionId, persistentInputOwner);
       throwIfAborted();
       session.action = tool;
-      if (tool === "open_application") { session.target = null; session.mode = null; }
-      if (INPUT_MUTATIONS.has(tool) && heldPointers.has(computerId) && heldPointers.get(computerId) !== key) {
-        return { ok: false, error: { code: "input_busy", message: "Another computer session owns a held pointer; release it or close that session before sending input." } };
+      if (tool === "open_application") { session.target = null; session.mode = null; dropAppWriters(key); }
+      const holder = heldPointers.get(computerId);
+      if (INPUT_MUTATIONS.has(tool) && holder && holder !== key) {
+        if (!inputOwnerIdle(holder)) {
+          return { ok: false, error: { code: "input_busy", message: "Another computer session owns a held pointer; release it or close that session before sending input." } };
+        }
+        await withSignal(null, () => backends.get(holder)?.releaseInput?.());
+        if (heldPointers.get(computerId) === holder) heldPointers.delete(computerId);
       }
+      const app = INPUT_MUTATIONS.has(tool) && tool !== "open_application" && Number.isInteger(session.target?.pid) ? `${computerId}:${session.target.pid}` : null;
+      const writer = app ? appWriters.get(app) : null;
+      if (writer && writer.key !== key && !inputOwnerIdle(writer.key)) {
+        return { ok: false, error: { code: "input_busy", message: `Another computer session is sending input to ${session.target.name}. Wait for it to finish or work in another app; its claim lapses after ${INPUT_IDLE_MS / 1000} s without a request from that session (list_sessions shows who holds it).` } };
+      }
+      if (app) appWriters.set(app, { key });
       const fn = instance[tool];
       if (typeof fn !== "function") {
         return { ok: false, error: { code: "unsupported_on_platform", message: `"${tool}" is not implemented on ${process.platform}` } };

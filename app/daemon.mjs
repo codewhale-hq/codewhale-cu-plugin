@@ -175,7 +175,9 @@ async function serve(conn) {
             // narrows this lease for its whole life: the daemon refuses tools
             // the grant does not name, so narrowing survives the socket.
             const grant = Array.isArray(req.grant) && req.grant.length ? new Set(req.grant.map((t) => String(t))) : null;
-            leases.set(ownedSession, { socket: conn, token: leaseToken, grant });
+            const pid = (value) => Number.isInteger(value) && value > 0 ? value : null;
+            const owner = { pid: pid(req.owner?.pid), host_pid: pid(req.owner?.host_pid) };
+            leases.set(ownedSession, { socket: conn, token: leaseToken, grant, owner: owner.pid || owner.host_pid ? owner : null });
             reopenSession(ownedSession);
             reply = { ok: true, leaseToken, ...(grant ? { grant: [...grant] } : {}) };
           }
@@ -189,7 +191,7 @@ async function serve(conn) {
           // when the user has paused or stopped other sessions: seeing who is
           // driving is exactly what a model needs to explain machine state.
           // Same envelope as every backend reply so the server reads `data`.
-          reply = { ok: true, platform: process.platform, tool: req.tool, data: summarizeSessions() };
+          reply = { ok: true, platform: process.platform, tool: req.tool, data: summarizeSessions({ ownerOf: (id) => leases.get(id)?.owner, self: req.sessionId }) };
         } else if (leases.get(req.sessionId).stopped && !["close_session", "release_session_input"].includes(req.tool)) {
           reply = { ok: false, error: { code: "control_stopped", message: "The user stopped this computer session. Start a new task after they allow control in the menu bar." } };
         } else if (["close_session", "release_session_input"].includes(req.tool)) {

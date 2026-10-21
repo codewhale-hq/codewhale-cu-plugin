@@ -15,6 +15,9 @@
 ### Many live sessions (CW-7495)
 
 - macOS: the live preview stops capturing after 60 s without a bind, preview or action (`CODEWHALE_CU_PREVIEW_IDLE_MS`), and the next action restarts it. Before, a bound session refreshed it every second (a window capture, a cursor read and a panel update) until the session closed, which never happens under a host that keeps idle sessions open.
+- Through the helper, one session at a time sends input to an app. Another session's input to the same process is refused `input_busy` before anything is sent, until the first session binds another app, closes, is stopped or makes no request for `CODEWHALE_CU_INPUT_IDLE_MS` (default 60 s). Before, two sessions bound to one app could interleave their keystrokes in it. `input_busy` is now in the refusal-code reference.
+- A held pointer whose session has made no request for that idle window is released when another session sends input. Before, it refused every other session's input until its host closed the connection.
+- `list_sessions` through the helper reports each session's `owner` (`pid`, `host_pid`), `self` and `writing`, and the idle window as `inputIdleSec`.
 
 ### Input ownership on the desktop-helper and ssh routes
 

@@ -253,7 +253,7 @@ export const TOOLS = [
   },
   {
     name: "list_sessions",
-    description: "List the live computer sessions on this machine: bound target, delivery mode, current action, idle age, and whether any session currently holds a pointer. Read-only and content-free (no task text is ever recorded). Use it to see who else — another model or agent — is driving the computer before you act.",
+    description: "List the live computer sessions on this machine: bound target, delivery mode, current action, idle age, whether a session holds a pointer or the input claim on its app (`writing`), and its owner process ids (`owner.host_pid` is the MCP host; `self` marks yours). Read-only and content-free (no task text is ever recorded). Use it to see who else — another model or agent — is driving the computer before you act.",
     inputSchema: { type: "object", properties: { computer: computerParam }, additionalProperties: false },
   },
   {

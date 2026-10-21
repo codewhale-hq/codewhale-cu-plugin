@@ -84,6 +84,7 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 | `automation_denied` | -1743: the responsible app lacks Automation consent for the target | name System Settings → Privacy & Security → Automation; never retry it away |
 | `permission` / `permissions_denied` | a grant is missing | name the permission and the Settings pane, then stop |
 | `control_stopped` | the kill switch ended this session | report to the user; the session cannot resume |
+| `input_busy` | another live session holds a pointer, or is sending input to the same app; nothing was sent | `list_sessions` to see who; work in another app or wait — the claim lapses once that session goes quiet |
 | `cancelled` | the host cancelled the request | the input may or may not have landed — observe before retrying |
 | `timeout` | the request exceeded its deadline | observe; only retry after confirming the first attempt did not land |
 
