@@ -4,6 +4,7 @@
 
 static int cuControlFD=-1;
 static NSMutableData *cuControlBuffer;
+static dispatch_source_t cuControlReader;
 static void cuSend(NSString *command) {
   if(cuControlFD<0) return;
   NSData *data=[[NSString stringWithFormat:@"{\"command\":\"%@\"}\n",command] dataUsingEncoding:NSUTF8StringEncoding];
@@ -28,8 +29,9 @@ static NSView *cuSeparator(void) {
   NSBox *line=[NSBox new]; line.boxType=NSBoxSeparator; line.translatesAutoresizingMaskIntoConstraints=NO; return line;
 }
 
-@interface CUControlPanel : NSObject
+@interface CUControlPanel : NSObject <NSMenuDelegate, NSWindowDelegate>
 @property(retain) NSStatusItem *item;
+@property(retain) NSTimer *timer;
 @property(retain) NSWindow *window;
 @property(retain) NSTextField *accessStatus;
 @property(retain) NSTextField *screenStatus;
@@ -50,6 +52,7 @@ static NSView *cuSeparator(void) {
 - (void)start;
 - (void)show:(id)sender;
 - (void)tick:(NSTimer *)timer;
+- (void)drain;
 @end
 @implementation CUControlPanel
 - (NSView *)permissionRow:(NSString *)name detail:(NSString *)detail status:(NSTextField **)status button:(NSButton **)button action:(SEL)action {
@@ -77,14 +80,20 @@ static NSView *cuSeparator(void) {
   self.stopItem=[menu addItemWithTitle:@"Stop all computer sessions" action:@selector(stop:) keyEquivalent:@""]; self.stopItem.target=self;
   [menu addItem:NSMenuItem.separatorItem];
   NSMenuItem *quit=[menu addItemWithTitle:@"Quit Computer Use" action:@selector(terminate:) keyEquivalent:@""]; quit.target=NSApp;
-  self.item.menu=menu; cuControlBuffer=[NSMutableData new];
+  menu.delegate=self; self.item.menu=menu; cuControlBuffer=[NSMutableData new];
   [self buildWindow];
-  [NSTimer scheduledTimerWithTimeInterval:0.25 target:self selector:@selector(tick:) userInfo:nil repeats:YES];
+  if(cuControlFD>=0) {
+    int fd=cuControlFD;
+    cuControlReader=dispatch_source_create(DISPATCH_SOURCE_TYPE_READ,(uintptr_t)fd,0,dispatch_get_main_queue());
+    dispatch_source_set_event_handler(cuControlReader,^{ [self drain]; });
+    dispatch_source_set_cancel_handler(cuControlReader,^{ close(fd); });
+    dispatch_resume(cuControlReader);
+  }
   cuSend(@"status");
 }
 - (void)buildWindow {
   self.window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,650) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable backing:NSBackingStoreBuffered defer:NO];
-  self.window.title=@"Computer Use"; self.window.releasedWhenClosed=NO;
+  self.window.title=@"Computer Use"; self.window.releasedWhenClosed=NO; self.window.delegate=self;
   self.window.collectionBehavior=NSWindowCollectionBehaviorMoveToActiveSpace;
   NSImageView *icon=[NSImageView imageViewWithImage:[NSImage imageNamed:NSImageNameApplicationIcon]];
   [icon.widthAnchor constraintEqualToConstant:48].active=YES; [icon.heightAnchor constraintEqualToConstant:48].active=YES;
@@ -120,7 +129,13 @@ static NSView *cuSeparator(void) {
   for(NSView *view in @[self.targets,self.checkResult,explain,self.errorLabel,self.updateStatus]) [view.widthAnchor constraintEqualToConstant:432].active=YES;
   [self.window center];
 }
-- (void)show:(id)sender { [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES]; cuSend(@"status"); }
+- (void)show:(id)sender {
+  [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES];
+  if(!self.timer) self.timer=[NSTimer scheduledTimerWithTimeInterval:0.25 target:self selector:@selector(tick:) userInfo:nil repeats:YES];
+  [self tick:nil];
+}
+- (void)windowWillClose:(NSNotification *)notification { [self.timer invalidate]; self.timer=nil; }
+- (void)menuWillOpen:(NSMenu *)menu { cuSend(@"status"); }
 - (void)openAccessibility:(id)sender {
   NSDictionary *options=@{(__bridge NSString *)kAXTrustedCheckOptionPrompt:@YES}; AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
   [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]];
@@ -182,10 +197,13 @@ static NSView *cuSeparator(void) {
   self.accessStatus.stringValue=ax?@"Granted · read controls and send input":@"Required to read controls and send input";
   self.screenStatus.stringValue=sc?@"Granted · capture app windows":@"Required for app screenshots";
   self.accessButton.title=ax?@"Settings…":@"Allow…"; self.screenButton.title=sc?@"Settings…":@"Allow…";
+  cuSend(@"status");
+}
+- (void)drain {
   if(cuControlFD<0) return;
   char bytes[4096]; ssize_t count;
   while((count=read(cuControlFD,bytes,sizeof bytes))>0) [cuControlBuffer appendBytes:bytes length:(NSUInteger)count];
-  if(count==0) { close(cuControlFD); cuControlFD=-1; self.activity.stringValue=@"Helper disconnected"; self.targets.stringValue=@"Quit and reopen Computer Use to reconnect."; self.pauseButton.enabled=NO; self.stopButton.enabled=NO; self.checkButton.enabled=NO; return; }
+  if(count==0) { cuControlFD=-1; dispatch_source_cancel(cuControlReader); self.activity.stringValue=@"Helper disconnected"; self.targets.stringValue=@"Quit and reopen Computer Use to reconnect."; self.pauseButton.enabled=NO; self.stopButton.enabled=NO; self.checkButton.enabled=NO; return; }
   if(cuControlBuffer.length>65536) { [cuControlBuffer setLength:0]; return; }
   while(YES) {
     const char *start=cuControlBuffer.bytes; const char *end=memchr(start,'\n',cuControlBuffer.length); if(!end) break;
@@ -193,6 +211,5 @@ static NSView *cuSeparator(void) {
     [cuControlBuffer replaceBytesInRange:NSMakeRange(0,length+1) withBytes:NULL length:0];
     NSDictionary *state=[NSJSONSerialization JSONObjectWithData:line options:0 error:nil]; if([state isKindOfClass:NSDictionary.class]) [self render:state];
   }
-  cuSend(@"status");
 }
 @end

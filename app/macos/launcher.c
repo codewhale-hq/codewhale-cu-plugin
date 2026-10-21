@@ -266,7 +266,10 @@ int main(void) {
   signal(SIGHUP, forward);
 
   // Process standard macOS Quit/Reopen events instead of blocking in waitpid.
-  [NSTimer scheduledTimerWithTimeInterval:0.25 target:delegate selector:@selector(pollChild:) userInfo:nil repeats:YES];
+  dispatch_source_t childExit = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, (uintptr_t)child, DISPATCH_PROC_EXIT, dispatch_get_main_queue());
+  dispatch_source_set_event_handler(childExit, ^{ [delegate pollChild:nil]; });
+  dispatch_resume(childExit);
+  [delegate pollChild:nil];
   [NSApp run];
   forward(SIGTERM);
   return 0;
