@@ -1,5 +1,53 @@
 # Limitations
 
+## Many live MCP sessions (0.12.1)
+
+The host decides how many server processes run and when they end. The plugin
+cannot reap them; it keeps each one cheap and keeps them from fighting over
+input.
+
+- **Codex keeps one server per thread.** Observed 2026-10-21 on macOS: the
+  ChatGPT app's Codex app-server starts every configured MCP server once per
+  thread and keeps each server's stdin open after the thread goes idle. One
+  app-server held 11 Codewhale `mcp/server.mjs` processes after 15 minutes,
+  and the same number of each other MCP server it hosts. Each child's stdin
+  was held open only by the app-server, so `server.mjs` never sees end of
+  input and never exits. Quitting the host closes them. Claude Code and Claude
+  Desktop also run one instance per session.
+- **An idle instance is one Node process and nothing else.** Until its first
+  computer request it opens no helper session, runs no timer and captures
+  nothing. Measured on that Mac: 7–31 MB resident and under 1 s of CPU in
+  17 hours per instance.
+- **A session that worked and went quiet** keeps its helper lease (one local
+  socket) and its app binding. On macOS its live preview stops capturing after
+  `CODEWHALE_CU_PREVIEW_IDLE_MS` (default 60 s) without a bind, preview or
+  action; the next action restarts it. Through the helper, its held pointer
+  and its input claim on its app lapse after `CODEWHALE_CU_INPUT_IDLE_MS`
+  (default 60 s) without a request from it.
+- **Finding stale sessions.** `list_sessions` reports each helper session's
+  `owner` (`pid` of the MCP server and `host_pid` of the process that started
+  it), `ageSec` since its last request, `writing`, and `self` for the caller.
+  The ids are reported by the MCP server itself and are for display only. The
+  menu bar's Stop all sessions ends every helper session. Instances that never
+  used the helper hold nothing in it and are not listed.
+- **One writer per app.** Through the helper, while one session is sending
+  input to an app, another session's input to the same process is refused
+  with `input_busy` before anything is sent. The claim ends when the first
+  session binds another app, closes, is stopped, or goes quiet for the idle
+  window. Observation is never blocked, and sessions on different apps run
+  side by side, one gesture at a time. Direct mode (no helper) has no claim
+  across processes: every gesture takes the machine-wide native input lock
+  (`~/.codewhale-cu/input.lock`), so two gestures never overlap, but two
+  direct-mode hosts can still alternate input into one app.
+- **Doubled keystrokes are not explained by this plugin.** The helper
+  installs no event tap or event monitor, and it never re-posts or replays the
+  person's input; it posts only the events a tool call asked for, once, and a
+  request whose reply was lost is reported `outcome_unknown`, not resent. On
+  2026-10-21, `CGGetEventTapList` showed no tap owned by the helper or by any
+  `server.mjs`. The doubled typing seen while many Codex `SkyComputerUseClient`
+  processes were alive stopped when those processes were stopped. Its cause was
+  not reproduced or established.
+
 ## Per-app consent and user yield (0.11.0)
 
 The consent ledger makes the app — not the tool — the unit of trust on
@@ -588,6 +636,12 @@ every install and lose them (the build prints a warning when this happens).
 that is already up keeps the modules it loaded at start, so leaving it running
 makes every later check report the *previous* build's behaviour — which is how
 one round of development receipts was once produced against stale code.
+
+The stale-helper notice compares version numbers only. Two builds with the
+same version look identical to it: on 2026-10-21 an installed 0.12.1 helper
+built from October 8 source was serving beside a 0.12.1 checkout with later
+server, tool and transport changes. Compare the bundle's
+`Contents/Resources/plugin` with the source before trusting a receipt.
 
 Demonstrated 2026-09-06 (arm64, macOS): after a one-time grant, killing the
 daemon and reinstalling a Developer-ID-signed bundle over the granted install
