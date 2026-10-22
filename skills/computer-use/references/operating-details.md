@@ -269,6 +269,13 @@ Once the GUI is the right interface: observe once, act once, then verify.
     Keys and raw pointer gestures stop when another app takes focus. Never
     keep reactivating after the user takes control; return to `activate:false`
     when the shared-desktop step ends.
+  - A coordinate click on a control that is visible but not `AXPressable`
+    (Finder's toolbar view-mode buttons are the common case) fails `auto`
+    closed with `accessibility AXPress failed: -25205 … no pointer fallback
+    was sent`. The point hit-tested correctly and the element refused the
+    action: repeat the identical call with `strategy:"app"`, which routes the
+    click to the bound app's window while the pointer stays put. Do not
+    re-screenshot to "fix" it and do not move the point.
   - Menus appear in `get_app_state`. Use the advertised action (often
     `AXPress` to open a menu, then `AXPick` on its item), then observe again.
     `invoke_menu {path:["File","New"]}` does that traversal in one call,
