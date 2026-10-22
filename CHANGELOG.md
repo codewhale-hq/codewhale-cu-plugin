@@ -2,6 +2,10 @@
 
 ## 0.12.1 — unreleased
 
+- `screenshot` takes `max_dimension`: the longest side of the returned raster in pixels. A 6K display returned 5760x3240 (2.1MB), which no vision model receives at that size, so the picture the model saw and the raster its coordinate targets were checked against were different grids. Passing the model's vision budget (for example 1568) makes the returned image exactly the raster the receipt describes, and `pixels`/`scale` are derived from the file actually written.
+- The setup background check writes its verification capture to a generated path in the recordings directory instead of a temp directory the sanitizer refuses. Before, every check that reached the final screenshot failed with `output path must be inside the recordings directory` after the click and typing had already succeeded.
+- Document `max_dimension` in the operating details next to the raster_id guidance a vision model reads before acting.
+
 - Integrate the October 6–8 Cua Driver workflow improvements through the existing tools: fresh unique element lookup in batches, `args` compatibility, final observations, complete-plan validation and explicit completed/delivery receipts.
 - Stop batches on failed waits and recheck wait conditions on the returned observation.
 - Add same-view `get_app_state since` diffs without replacing the complete target cache; expired, changed or incomplete baselines return a full resync.

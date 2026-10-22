@@ -90,6 +90,13 @@ async function fitRasterToBudget(file) {
   }
 }
 
+async function fitRasterToDimension(file, maxDimension) {
+  if (maxDimension === undefined) return;
+  const { w, h } = imagePixels(file);
+  if (Math.max(w, h) <= maxDimension) return;
+  await runOk("sips", ["-Z", String(maxDimension), file], { timeoutMs: 20_000 });
+}
+
 const KEY_CODES = {
   return: 36, enter: 36, tab: 48, space: 49, escape: 53, esc: 53, delete: 51,
   backspace: 51, forwarddelete: 117, home: 115, end: 119, pageup: 116, pagedown: 121,
@@ -470,7 +477,10 @@ export function create({ exec }) {
   async function displayInfo() { return native("displays"); }
 
   // ---------- screenshots ----------
-  async function screenshot({ display, region, app_ref, window_id, path: outPath } = {}) {
+  async function screenshot({ display, region, app_ref, window_id, path: outPath, max_dimension } = {}) {
+    if (max_dimension !== undefined && (!Number.isInteger(max_dimension) || max_dimension < 256 || max_dimension > 8192)) {
+      throw new ExecError("max_dimension must be an integer between 256 and 8192");
+    }
     // Once an app is selected, ordinary observations follow it behind the
     // user's work. An explicit display/region remains a deliberate desktop capture.
     if (app_ref === undefined && display === undefined && region === undefined) app_ref = state.inputApp ?? undefined;
@@ -512,6 +522,7 @@ export function create({ exec }) {
     const r = await runL("screencapture", args, { timeoutMs: 20_000 });
     if (r.code !== 0) throw new ExecError(`screencapture exited ${r.code}: ${r.stderr.trim().slice(0, 300)}`, r);
     await fitRasterToBudget(file);
+    await fitRasterToDimension(file, max_dimension);
     const stat = fs.statSync(file);
     displays ??= await displayInfo();
     const d = displays.find((x) => x.index === (disp === "all" ? 1 : disp)) ?? displays[0];

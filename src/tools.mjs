@@ -225,6 +225,7 @@ export const TOOLS = [
         app_ref: { type: "object", properties: { name: { type: "string" }, bundle_id: { type: "string" }, pid: { type: "integer" } }, description: "macOS: capture this app window even when it is in the background. Linux (X11): capture the app's window frame by exact name; the receipt names windows stacked above it." },
         display: { type: ["integer", "string"], description: "Display index or 'all'" },
         region: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4, description: "[x, y, w, h] in screen points" },
+        max_dimension: { type: "integer", minimum: 256, maximum: 8192, description: "Longest side of the returned raster in pixels. Set it to the vision budget of the model reading the image (for example 1568) so the picture you see is exactly the raster that coordinate targets and zoom regions use. The receipt's pixels and scale describe the image actually returned." },
         path: { type: "string", description: "Optional absolute .png/.jpg/.jpeg path inside the recordings directory. Omit to use a generated name there." },
         computer: computerParam,
       },

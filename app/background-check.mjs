@@ -72,7 +72,7 @@ export async function runBackgroundCheck({ bundle, demoDirectory } = {}) {
     await call("left_click", { target: { ...button.element, type: "element", app_ref: { pid: child.pid } } });
     await until(() => applied);
     if (applied.value !== phrase) throw new Error("The text received by the practice window did not match. Check the app log and retry.");
-    const capture = await call("screenshot", { app_ref: { pid: child.pid }, path: path.join(scratch, "practice.png") });
+    const capture = await call("screenshot", { app_ref: { pid: child.pid } });
     if (demoDirectory) fs.copyFileSync(capture.file, path.join(demoDirectory, "03-verified.png"));
     if (capture.app_ref?.pid !== child.pid || !capture.pixels?.w || !capture.pixels?.h) throw new Error("The practice window screenshot could not be verified. Check Screen Recording permission.");
     const count = latest.samples;

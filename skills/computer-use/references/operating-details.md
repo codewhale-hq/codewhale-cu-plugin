@@ -186,6 +186,10 @@ Once the GUI is the right interface: observe once, act once, then verify.
    meaning from OCR or a screenshot file path.
    With vision, when accessibility cannot express the target: `screenshot`
    (optionally `zoom` for small targets) and act with a coordinate target.
+   Pass `max_dimension` to `screenshot` when your vision budget is smaller than
+   the display: the returned raster is then exactly the picture you see (a
+   6K capture is 5760 px wide and no vision model receives it at that size), so
+   the pixels you choose and the pixels the tool receives are the same grid.
    Default coordinates are pixels **in the returned raster**. Include its
    `raster_id` in every raster coordinate target and in `zoom`'s parent arguments;
    the crop returns its own ID. OCR blocks already contain pinned targets.
