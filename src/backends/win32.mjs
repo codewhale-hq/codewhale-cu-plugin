@@ -8,6 +8,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { run, ExecError, tryJson, withSignal, throwIfAborted } from "../exec.mjs";
 import { createBrowser } from "../browser-cdp.mjs";
+import { pngSize } from "../png-size.mjs";
 import { recordingsDir, recordingsOutputPath } from "../recordings.mjs";
 
 const USER32 = `
@@ -408,7 +409,8 @@ Write-Output ($result | ConvertTo-Json -Depth 6 -Compress);`, { timeoutMs: 60_00
     },
     screenshot: async (args = {}) => {
       if (Object.hasOwn(args, "app_ref") || Object.hasOwn(args, "window_id")) throw unsupportedSelector("Windows screenshot does not support app_ref or window_id; omit them for a desktop screenshot");
-      const { display = activeDisplay, region } = args;
+      const { display = activeDisplay, region, max_dimension } = args;
+      if (max_dimension !== undefined && (!Number.isInteger(max_dimension) || max_dimension < 256 || max_dimension > 8192)) throw Object.assign(new ExecError("max_dimension must be an integer between 256 and 8192"), { code: "bad_args" });
       const outPath = recordingsOutputPath(args.path);
       if (display != null && (!Number.isInteger(display) || display < 1)) throw new ExecError("display index must be a positive integer");
       if (region != null && (!Array.isArray(region) || region.length !== 4 || !region.every(Number.isInteger) || region[2] <= 0 || region[3] <= 0)) throw new ExecError("region must be integer [x,y,width,height] with positive size");
@@ -423,11 +425,34 @@ $bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height);
 try {
   $g = [System.Drawing.Graphics]::FromImage($bmp);
   try { $g.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, $bounds.Size); } finally { $g.Dispose(); }
-  $bmp.Save('${file.replace(/'/g, "''")}', [System.Drawing.Imaging.ImageFormat]::Png);
+  $limit = ${max_dimension ?? 0}
+  $longest = [Math]::Max($bmp.Width, $bmp.Height)
+  if ($limit -gt 0 -and $longest -gt $limit) {
+    $factor = $limit / $longest
+    $sw = [Math]::Max(1, [int][Math]::Round($bmp.Width * $factor))
+    $sh = [Math]::Max(1, [int][Math]::Round($bmp.Height * $factor))
+    $scaled = New-Object System.Drawing.Bitmap($sw, $sh)
+    try {
+      $sg = [System.Drawing.Graphics]::FromImage($scaled)
+      try {
+        $sg.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $sg.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+        $sg.DrawImage($bmp, 0, 0, $sw, $sh)
+      } finally { $sg.Dispose() }
+      $bmp.Dispose()
+      $bmp = $scaled
+    } catch {
+      $scaled.Dispose()
+      throw
+    }
+  }
+  $bmp.Save('${file.replace(/'/g, "''")}', [System.Drawing.Imaging.ImageFormat]::Png)
 } finally { $bmp.Dispose(); }
 @{ x = $bounds.X; y = $bounds.Y; w = $bounds.Width; h = $bounds.Height } | ConvertTo-Json -Compress;`, { timeoutMs: 30_000 });
       if (!fs.existsSync(file) || ![meta.x, meta.y, meta.w, meta.h].every(Number.isFinite) || meta.w <= 0 || meta.h <= 0) throw new ExecError("screenshot did not return a valid raster");
-      lastRaster = { file, bytes: fs.statSync(file).size, points: { x: meta.x, y: meta.y, w: meta.w, h: meta.h }, pixels: { w: meta.w, h: meta.h }, scale: 1, capturedAt: new Date().toISOString() };
+      const points = { x: meta.x, y: meta.y, w: meta.w, h: meta.h };
+      const pixels = pngSize(file);
+      lastRaster = { file, bytes: fs.statSync(file).size, points, pixels: pixels ?? { w: meta.w, h: meta.h }, scale: pixels ? pixels.w / points.w : 1, capturedAt: new Date().toISOString() };
       return { ...lastRaster };
     },
     // Always crops the last raster this backend captured; a caller-named

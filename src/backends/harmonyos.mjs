@@ -214,6 +214,7 @@ export function create({ exec }) {
     },
     screenshot: async (args = {}) => {
       rejectAppSelectors(args);
+      if (args.max_dimension !== undefined) throw Object.assign(new ExecError("max_dimension is not supported on the harmony backend: the device snapshot is transferred at its own size. Use region to capture less."), { code: "unsupported" });
       const outPath = recordingsOutputPath(args.path);
       const dir = recordingsDir();
       fs.mkdirSync(dir, { recursive: true });

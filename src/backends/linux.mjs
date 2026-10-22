@@ -159,7 +159,7 @@ export function create({ exec } = {}) {
       e.code = "no_session";
       throw e;
     }
-    for (const t of ["xdotool", "wmctrl", "scrot", "import", "grim", "slurp", "wtype", "ydotool", "wf-recorder", "ffmpeg", "xclip", "xsel", "wl-copy", "wl-paste", "python3", "xrandr", "swaymsg", "hyprctl"]) {
+    for (const t of ["xdotool", "wmctrl", "scrot", "import", "grim", "slurp", "wtype", "ydotool", "wf-recorder", "ffmpeg", "magick", "convert", "xclip", "xsel", "wl-copy", "wl-paste", "python3", "xrandr", "swaymsg", "hyprctl"]) {
       tools[t] = await have(t);
     }
     tools.pyatspi = tools.python3 && (await run("python3", ["-c", "import pyatspi"], { timeoutMs: 10_000 })).code === 0;
@@ -362,6 +362,28 @@ export function create({ exec } = {}) {
   }
 
   /** Capture a PNG to `file`, optionally cropped to region [x,y,w,h] points. */
+  async function scaleRaster(file, maxDimension) {
+    if (maxDimension === undefined) return;
+    if (!Number.isInteger(maxDimension) || maxDimension < 256 || maxDimension > 8192) {
+      throw Object.assign(new ExecError("max_dimension must be an integer between 256 and 8192"), { code: "bad_args" });
+    }
+    const dims = pngSize(file);
+    if (!dims) throw new ExecError("the capture is not a PNG, so max_dimension cannot be applied");
+    const longest = Math.max(dims.w, dims.h);
+    if (longest <= maxDimension) return;
+    const factor = maxDimension / longest;
+    const w = Math.max(1, Math.round(dims.w * factor));
+    const h = Math.max(1, Math.round(dims.h * factor));
+    const temporary = `${file}.resize.png`;
+    let r;
+    if (tools.magick) r = await run("magick", [file, "-resize", `${w}x${h}!`, temporary], { timeoutMs: 20_000 });
+    else if (tools.convert) r = await run("convert", [file, "-resize", `${w}x${h}!`, temporary], { timeoutMs: 20_000 });
+    else if (tools.ffmpeg) r = await run("ffmpeg", ["-y", "-loglevel", "error", "-i", file, "-vf", `scale=${w}:${h}`, temporary], { timeoutMs: 20_000 });
+    else throw new ExecError("max_dimension needs imagemagick (magick or convert) or ffmpeg on this desktop");
+    if (r.code !== 0 || !fs.existsSync(temporary)) throw new ExecError(`scaling the capture failed: ${r.stderr.trim().slice(0, 300)}`, r);
+    fs.renameSync(temporary, file);
+  }
+
   async function takeShot(file, region) {
     outputPath(file);
     const { cmd, base } = await shotTool();
@@ -827,15 +849,18 @@ except Exception as e:
         occludedBy = frame.occludedBy;
       }
       await takeShot(file, shotRegion);
+      await scaleRaster(file, args.max_dimension);
       const dims = pngSize(file);
+      const points = shotRegion ? { x: shotRegion[0], y: shotRegion[1], w: shotRegion[2], h: shotRegion[3] } : dims ? { x: 0, y: 0, w: dims.w, h: dims.h } : null;
       lastRaster = {
         file,
         bytes: fs.statSync(file).size,
         // Region rasters describe the region; full shots get geometry from the
-        // PNG itself (Linux shots are always scale 1: points == pixels).
-        points: shotRegion ? { x: shotRegion[0], y: shotRegion[1], w: shotRegion[2], h: shotRegion[3] } : dims ? { x: 0, y: 0, w: dims.w, h: dims.h } : null,
+        // PNG itself. `scale` is derived below because max_dimension can make
+        // pixels differ from screen points.
+        points,
         pixels: dims ?? (shotRegion ? { w: Math.round(shotRegion[2]), h: Math.round(shotRegion[3]) } : null),
-        scale: 1,
+        scale: points?.w && dims ? dims.w / points.w : 1,
         capturedAt: new Date().toISOString(),
       };
       return { ...lastRaster, ...(windowInfo ? { window: windowInfo, occluded_by: occludedBy, occlusion_note: occludedBy.length ? "windows listed in occluded_by are stacked above this window and appear in the crop" : null } : {}) };

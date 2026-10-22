@@ -2,6 +2,8 @@
 
 ## 0.12.1 — unreleased
 
+- `max_dimension` now works on every backend that returns a raster. Linux X11/Wayland scales with imagemagick (`magick`/`convert`) or ffmpeg and reports the derived `scale`; Windows scales inside the existing PowerShell capture before saving; the HarmonyOS backend refuses it explicitly instead of silently ignoring the argument and returning a raster larger than the caller asked for. Before, only macOS honoured it, so a Linux or Windows host asking for a vision-sized raster still received a full-resolution one and the `pixels`/`scale` receipt kept describing a picture the model never got.
+
 - `screenshot` takes `max_dimension`: the longest side of the returned raster in pixels. A 6K display returned 5760x3240 (2.1MB), which no vision model receives at that size, so the picture the model saw and the raster its coordinate targets were checked against were different grids. Passing the model's vision budget (for example 1568) makes the returned image exactly the raster the receipt describes, and `pixels`/`scale` are derived from the file actually written.
 - The setup background check writes its verification capture to a generated path in the recordings directory instead of a temp directory the sanitizer refuses. Before, every check that reached the final screenshot failed with `output path must be inside the recordings directory` after the click and typing had already succeeded.
 - Document `max_dimension` in the operating details next to the raster_id guidance a vision model reads before acting.
