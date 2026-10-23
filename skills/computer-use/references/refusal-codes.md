@@ -31,7 +31,7 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 
 | code | meaning | move |
 | --- | --- | --- |
-| `background_focus_required` | background mode refuses raw pointer gestures (the window route borrows key focus) | use element targets; foreground control needs the user's explicit authorization |
+| `background_focus_required` | background mode refuses raw pointer gestures (the window route borrows key focus) | use element targets; explicitly select the approved app with activate:true when the authorized task needs focus |
 | `bg_dispatch_unavailable` | the window-routed pointer cannot be resolved on this helper | update Computer Use or use element targets — the user's cursor is never used instead |
 | `real_pointer_refused` | a request tried to drive the user's cursor | there is no such route; use the window-routed pointer tools |
 | `background_scroll_unavailable` | no scrollbar at that point | target an observed scroll area |
@@ -49,7 +49,7 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 | `app_denied` | the user denied this app — the deny covers every spelling of it | do not work around it; only they can `consent {action:"revoke"}` |
 | `consent_needs_user` | a consent allow/revoke, a `confirm`, `app_script`, or computer register/spawn was called without the user's own decision | ask the user; the host shows them the exact call — never retry it as a model call or a `run_actions` step |
 | `consent_declined` | the user declined the host's prompt for that call | do not retry; continue without it or ask them |
-| `foreground_consent_required` | `activate:true` needs the separate foreground decision | ask, then `consent {action:"allow"\|"deny", scope:"foreground"}` — or keep working background (`activate:false`) |
+| `foreground_consent_required` | an older installed server requires a separate foreground decision | follow that installed server's permission flow; current source reuses the approved app grant |
 | `confirmation_required` | the click or press would activate a pay/buy/order/send/transfer/delete control | stop and show the user exactly what will happen; only on their approval, `consent {action:"allow", confirm:"<token>"}` and repeat the identical call |
 | `confirmation_unknown` | the confirmation token is unknown, used, or expired | repeat the original call for a fresh token and ask the user again |
 | `script_refused` | `app_script` would reach a shell, Cocoa, dynamic code, a terminal app, or an app it does not name with a literal | use the host's shell for shell work, or name the app literally; never rewrite the script to get past the check |
@@ -62,7 +62,7 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 | `popup_open` | a menu or popup item is open in the app that would receive the keys | send `key escape` (allowed while a menu is open), observe the app, then retry |
 | `popup_unknown` | Linux could not check the receiving app for an open menu (the AT-SPI probe did not answer), so keystrokes are refused | retry, or send `key escape` first |
 | `focused_control_unknown` | Linux could not read the focused control (the AT-SPI probe did not answer), so an untargeted Return, Enter or space is refused | retry, or target the control with an element target |
-| `window_not_active` | the element is focused, but its window is not the active one, so keys would go to another window | bring the app forward (`open_application activate:true`, which needs foreground consent) or ask the user to focus it |
+| `window_not_active` | the element is focused, but its window is not the active one, so keys would go to another window | bring the app forward (`open_application activate:true`, covered by that app's permission) or ask the user to focus it |
 | `no_window` | the app has no visible window to capture (minimized or unmapped) | restore it, or ask the user; capture the display instead |
 | `no_window_manager` | window geometry is not published, so app-window screenshots and recordings cannot be cropped | start a window manager, or capture the display |
 | `focus_failed` | AT-SPI refused focus on the element (not focusable, or focus refused) | observe again and choose a focusable control |
@@ -90,7 +90,9 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 
 `background_focus_required` means this path would borrow keyboard focus and
 was refused before delivery. Use accessibility, browser control or a separate
-computer; a typing pause does not authorize foreground control.
+computer, or explicitly select the same approved app with `activate:true` if
+the authorized task needs focus. A typing pause does not authorize a different
+app or override a denial.
 
 ## Reading a receipt
 

@@ -1,7 +1,7 @@
 // Per-app consent: the app, not the tool, is the unit of trust on the local
 // computer. Unit tests pin the ledger; server tests prove the gate refuses
 // before backend dispatch, cannot be sidestepped by re-spelling the app, and
-// that foreground control is a separate consent from app access.
+// that app approval covers explicit foreground selection without overriding a deny.
 import { hostKeysLine, attest, attestParams, TEST_LEDGER_KEY, ledgerMac } from "./fixtures/host-decision.mjs";
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
@@ -209,16 +209,19 @@ test("a deny cannot be sidestepped by re-spelling the same app", async (t) => {
   assert.equal(kill.error?.code, "app_denied");
 });
 
-test("allow opens; activate:true is a separate foreground consent", async (t) => {
+test("app approval covers activate:true; explicit foreground denial still wins", async (t) => {
   const s = await boot(t);
   await s.tool("consent", { action: "allow", app: "FakeApp" });
   const fg = await s.tool("open_application", { name: "FakeApp", activate: true });
-  assert.equal(fg.error?.code, "foreground_consent_required");
+  assert.equal(fg.ok, true, JSON.stringify(fg));
+  assert.equal((await s.tool("consent", { action: "status" })).foreground, null);
   const deniedFg = await s.tool("consent", { action: "deny", scope: "foreground" });
   assert.equal(deniedFg.scope, "foreground");
   const again = await s.tool("open_application", { name: "FakeApp", activate: true });
   assert.equal(again.error?.code, "foreground_denied");
-  await s.tool("consent", { action: "allow", scope: "foreground" });
+  const deniedBg = await s.tool("open_application", { name: "FakeApp", activate: false });
+  assert.equal(deniedBg.ok, true);
+  await s.tool("consent", { action: "revoke", scope: "foreground" });
   const opened = await s.tool("open_application", { name: "FakeApp", activate: true });
   assert.equal(opened.ok, true);
   assert.equal(opened.shared_pointer, true);
@@ -227,15 +230,21 @@ test("allow opens; activate:true is a separate foreground consent", async (t) =>
   assert.equal(bg.ok, true);
 });
 
-test("foreground consent gates activate:true on every local platform, not just macOS", async (t) => {
+test("foreground app approval stays scoped to the target on every local platform", async (t) => {
   const s = await boot(t, { CODEWHALE_CU_TEST_BACKEND: path.join(ROOT, "tests", "fixtures", "fake-backend.mjs") });
   await s.tool("consent", { action: "allow", app: "FakeApp" });
   const fg = await s.tool("open_application", { name: "FakeApp", activate: true });
-  assert.equal(fg.error?.code, "foreground_consent_required", "the shared-surface escalation asks on every platform");
-  await s.tool("consent", { action: "allow", scope: "foreground" });
+  assert.equal(fg.ok, true, JSON.stringify(fg));
+  const other = await s.tool("open_application", { name: "OtherApp", activate: true });
+  assert.equal(other.error?.code, "consent_required");
+  const unnamed = await s.tool("open_application", { activate: true });
+  assert.equal(unnamed.error?.code, "consent_required");
   const opened = await s.tool("open_application", { name: "FakeApp", activate: true });
   assert.equal(opened.ok, true, JSON.stringify(opened));
   assert.equal(opened.shared_pointer, true);
+  await s.tool("consent", { action: "revoke", app: "FakeApp" });
+  const revoked = await s.tool("open_application", { name: "FakeApp", activate: true });
+  assert.equal(revoked.error?.code, "consent_required");
 });
 
 test("remember:true persists; consent status shows the ledger", async (t) => {

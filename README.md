@@ -24,8 +24,9 @@ menu-bar app.
 - **Keep working.** macOS selects apps in background mode by default.
   Accessibility actions and process-directed typing remain available. Actions
   that need a keyboard-focus lease refuse before delivery; use browser
-  control or a separate computer for those tasks. Shared-desktop control
-  requires the user's explicit authorization and interrupts concurrent use.
+  control, a separate computer, or explicit foreground selection of the
+  approved app for those tasks. That app's existing approval covers foreground
+  selection without another prompt; human-input yielding and Pause/Stop remain.
 - **Stay in control.** See selected apps and their input modes. Pause cancels
   queued work and releases held input; Stop ends existing sessions. Only the
   person using the menu-bar controls can allow input again.
@@ -299,8 +300,8 @@ with the actual unit and value change in the receipt. Unsupported gestures,
 including raw double/triple/middle click, drag and hover, remain unavailable in
 background mode. There is no automatic foreground fallback.
 
-When the user authorizes exclusive desktop use, select `activate: true` for
-foreground control. Raw clicks, hover, drag and wheel then go to the bound
+When the authorized task needs focus in an approved app, select `activate: true`
+for foreground control without a second approval prompt. Raw clicks, hover, drag and wheel then go to the bound
 app's window as window-routed event records (`strategy: "window-record"`,
 `pointer_moved: false`) — the agent has its own pointer, drawn in the preview,
 and **the user's cursor is never moved, warped or held on macOS**. There is no
@@ -338,13 +339,14 @@ default and persist with `remember:true`; `consent {action:"status"}`
 shows the ledger and `revoke` clears it. A denial is a wall: the ledger
 folds name, bundle id and pid together, so a denied app fails `app_denied`
 under every spelling and cannot be opened, driven, or killed through this
-surface. `open_application activate:true` — the shared-desktop escalation —
-separately requires `consent {action:"allow", scope:"foreground"}`. Spawned
+surface. The same app approval covers explicit `open_application activate:true`
+without recording a global foreground grant. A recorded foreground denial still
+blocks it; revoking the app grant removes foreground access too. Spawned
 computers are exempt (a task-owned desktop holds nothing of the user's);
 remote computers are covered by their transport's trust; `app_script` keeps
 macOS's own Automation consent.
 
-In explicitly authorized foreground mode, whenever a shared surface is taken —
+In explicitly selected foreground mode for an approved app, whenever a shared surface is taken —
 a front lease for window-record input,
 a real-pointer gesture, foreground keys, or an activation — the helper waits
 for a gap in the user's hardware input first (bounded, ~450 ms gap within a

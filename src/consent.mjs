@@ -10,7 +10,7 @@
 //
 // Two scopes:
 //   apps        — keyed by resolved identity (bundle id, name, pid)
-//   foreground  — darwin activate:true, the shared-desktop escalation
+//   foreground  — optional computer-wide override; app approval otherwise covers activation
 //
 // This is a model-level ledger, not an OS sandbox: a determined agent with
 // another channel could still reach an app. What it buys is the honest part —

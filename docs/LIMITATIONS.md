@@ -72,8 +72,9 @@ gap in the user's hardware input. What neither is:
   bound app after waiting, so a switch during the wait cannot redirect them.
   Input arriving mid-action is still reported (`user_input_during_lease`),
   not prevented.
-- **Foreground consent applies on every local platform** — `activate:true`
-  always asks. But only macOS has a real background/foreground split:
+- **App approval covers foreground selection on every local platform** —
+  `activate:true` uses that app's permission without another prompt; a recorded
+  foreground denial still blocks it. Only macOS has a real background/foreground split:
   `activate:false` on Windows launches minimized and on Linux re-restores
   focus after launch; raw input on both is still shared-surface by nature,
   so background there means "don't steal focus on launch", not
@@ -594,7 +595,7 @@ recording-file listing remain available on every platform.
 - **Element focus does not activate windows by itself.** `focus` moves keyboard
   focus inside an app and reports `window_active`. Keys aimed at an element
   whose window is not active are refused (`window_not_active`) until the app is
-  brought forward with foreground consent. GTK 3 has been seen raising its own
+  explicitly brought forward using its existing app permission. GTK 3 has been seen raising its own
   window and selecting an entry's text when an entry takes focus.
 - **`app_ref` is an exact app name.** Screenshots and window listings crop to an
   app's frame. Windows stacked above it are named in `occluded_by`, and their

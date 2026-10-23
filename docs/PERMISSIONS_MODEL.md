@@ -248,10 +248,11 @@ Notes specific to this plugin:
   *different* grant from "Codewhale may drive Finder". Both must be present.
   `request_access` should report them as two separate lists, clearly labelled,
   so a user is never told "you granted it" when only one of the two is true.
-- **Foreground is its own capability**, not a flag on `input`:
-  `desktop.foreground` (take the shared desktop and the cursor). It is the one
-  that interrupts the person's own work, so it should be the hardest to get and
-  the first to expire.
+- **One app approval covers its foreground control.** Explicitly selecting
+  `activate:true` for an approved app needs no second consent prompt. A
+  foreground capability may still be declared and reported separately; it
+  must not create another approval ceremony. Explicit foreground denials,
+  app revocation and Pause/Stop continue to apply.
 
 ## 7. What Codewhale should build
 

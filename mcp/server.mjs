@@ -788,7 +788,7 @@ async function consentForRef(computer, ref) {
  * {grant} describing the decision that let the call through (used to merge
  * aliases after open_application resolves the real identity), or null when
  * the call targets no app. Throws ServerError consent_required / app_denied /
- * foreground_consent_required / foreground_denied.
+ * foreground_denied.
  */
 async function consentCheck(computer, name, args) {
   if (computer.transport !== "local" || computer.owned === true) return null;
@@ -840,9 +840,6 @@ async function consentCheck(computer, name, args) {
     }
     grant = { ref: known, persisted: verdict.persisted === true };
   }
-  // Taking the shared pointer/focus is a second, separate consent: the first
-  // activate:true is the moment the agent stops being background — on every
-  // platform, not just macOS.
   if (name === "open_application" && args.activate === true) {
     const fg = consent.foregroundDecision(computer.id);
     if (fg.state === "denied") {
@@ -850,10 +847,10 @@ async function consentCheck(computer, name, args) {
         `the user denied shared-desktop (foreground) control on this computer — continue with open_application activate:false (background control) or ask them to reconsider.`,
         { scope: "foreground" });
     }
-    if (fg.state === "undecided") {
-      throw new ServerError("foreground_consent_required",
-        `open_application activate:true would take this computer's shared pointer and focus — ask the user, then record their answer with consent {action:"allow"|"deny", scope:"foreground"}. Background control (activate:false) needs no such consent.`,
-        { scope: "foreground" });
+    if (!grant) {
+      throw new ServerError("consent_required",
+        "Foreground selection needs a named application approved by the user. Select that application by name, bundle_id or pid.",
+        { scope: "app" });
     }
   }
   return grant ? { grant } : null;
@@ -1316,7 +1313,7 @@ async function callTool(params, bindWhen = null) {
       if (scope === "foreground") {
         const r = verb ? consent.recordForeground(computer.id, verb, { remember: args.remember === true })
           : consent.revokeForeground(computer.id);
-        return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, scope, ...r, note: verb ? `Shared-desktop (foreground) control ${verb === "allow" ? "allowed" : "denied"} for ${r.persisted ? "this computer until revoked" : "this session"}.` : "Foreground decision removed — the next activate:true asks again." })) }] };
+        return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, scope, ...r, note: verb ? `Shared-desktop (foreground) control ${verb === "allow" ? "allowed" : "denied"} for ${r.persisted ? "this computer until revoked" : "this session"}.` : "Foreground override removed — approved app access covers activate:true." })) }] };
       }
       const ref = refFromConsentArgs(args);
       const keys = consent.appKeys(ref);

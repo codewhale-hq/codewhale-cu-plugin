@@ -75,8 +75,9 @@ a raster ID. Browser viewport points use the browser's separate contract.
 - `consent {action:"status"|"allow"|"deny"|"revoke", app?|scope?}` — the
   per-app decision ledger on `local`. First contact with an app refuses
   `consent_required`; record the user's answer (`remember:true` persists).
-  `scope:"foreground"` is the separate shared-pointer decision
-  `open_application activate:true` needs. A denied app fails `app_denied`
+  App approval also covers `open_application activate:true` for that app;
+  `scope:"foreground"` remains an optional override whose denial blocks it.
+  A denied app fails `app_denied`
   under every spelling; only the user can revoke it.
   `consent {action:"allow", confirm:"<token>"}` records the user's approval
   of one exact pay/buy/send/transfer/delete call that refused

@@ -66,12 +66,13 @@ until the user has decided. Ask them, then record the answer:
   denied app cannot be opened, driven, or killed through this surface.
   Only the user can change it; never work around it.
 
-Foreground is a second, separate consent. `open_application
-{activate:true}` — the shared-desktop escalation, on any platform —
-additionally needs `consent {action:"allow", scope:"foreground"}`; a
-refusal reads `foreground_consent_required`, a recorded denial
-`foreground_denied`. Background control (`activate:false`, the default
-everywhere) needs only the app consent.
+App approval covers explicit foreground selection on every local platform.
+For an authorized task that needs focus, select the same approved app with
+`open_application {activate:true}` without asking for a second approval.
+This does not record a global foreground grant or authorize another app.
+An explicit `scope:"foreground"` denial still refuses `foreground_denied`;
+only the user can revoke it. Background control (`activate:false`) stays the
+default and should resume after the foreground step.
 
 Spawned computers are exempt — a task-owned desktop holds nothing of the
 user's. Remote computers are covered by their transport's trust, not this
@@ -84,7 +85,7 @@ decision (`consent` allow or revoke, a `confirm`), running `app_script`, and
 registering or spawning a computer are the user's own calls: the host shows
 them the exact call, and a model call alone returns `consent_needs_user`.
 
-Only in explicitly authorized foreground mode, where a shared surface is taken
+Only in explicitly selected foreground mode for an approved app, where a shared surface is taken
 — a front lease for window-record
 input, a real-pointer gesture, foreground keys, an activation — the helper
 first waits for a gap in the person's hardware input rather than cutting
@@ -257,14 +258,13 @@ Once the GUI is the right interface: observe once, act once, then verify.
     fallbacks, modified/window-targeted keys, web value replacement and typing
     paths that require a key-window lease refuse `background_focus_required`
     before delivery. Use an accessibility menu/control, browser control or an
-    authorized separate computer. Do not escalate to foreground or retry the
-    same action merely because the user stopped typing briefly.
+    authorized separate computer, or explicitly select the same approved app
+    with `activate:true` if the authorized task needs focus. An idle moment
+    does not authorize a different app or override a recorded denial.
   - Shared-desktop gestures and foreground keyboard delivery require explicit
-    user authorization for exclusive desktop use, followed by
-    `open_application(activate:true)` — which itself needs the foreground
-    consent (`consent {action:"allow", scope:"foreground"}`; see Consent on
-    the user's computer). Do not select it merely to work around a
-    background refusal. Receipts identify `input_scope: "shared-desktop"`;
+    `open_application(activate:true)` on the approved app; the existing app
+    permission covers this selection without another prompt. Foreground
+    denials, human-input yielding and Pause/Stop still apply. Receipts identify `input_scope: "shared-desktop"`;
     pointer gestures use the physical cursor, even if it is restored afterward.
     Keys and raw pointer gestures stop when another app takes focus. Never
     keep reactivating after the user takes control; return to `activate:false`
@@ -287,7 +287,7 @@ Once the GUI is the right interface: observe once, act once, then verify.
     but disabled item is refused (`menu_item_disabled`) rather than pressed.
   - A pointer gesture is refused when another application's window covers the
     point; it names the owner. Observe again and use the selected control's
-    accessibility action, or wait for authorized exclusive desktop use. Do not
+    accessibility action, or explicitly select the approved app for the authorized foreground step. Do not
     move or close the reported window.
   - An accessibility press refuses to cross a modal sheet
     (`window_blocked_by_modal_sheet`): deal with the sheet first.

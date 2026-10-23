@@ -101,7 +101,7 @@ export const TOOLS = [
   },
   {
     name: "consent",
-    description: "Per-app consent on the local computer. Any call that targets an app — open_application, an app_ref, an element, or an action on the bound app — refuses consent_required until the user decides; record their answer here. action status | allow | deny | revoke. app is a name or bundle id (or pid:/number for a pid); scope 'foreground' is the separate darwin decision for foreground control (open_application activate:true). Decisions apply to this session; remember:true persists them.",
+    description: "Per-app consent on the local computer. Any call that targets an app — open_application, an app_ref, an element, or an action on the bound app — refuses consent_required until the user decides; record their answer here. action status | allow | deny | revoke. app is a name or bundle id (or pid:/number for a pid); App approval also covers explicit foreground selection (open_application activate:true); scope 'foreground' is an optional computer-wide override and a recorded denial still blocks it. Decisions apply to this session; remember:true persists them.",
     inputSchema: {
       type: "object",
       required: ["action"],
@@ -354,7 +354,7 @@ export const TOOLS = [
       properties: {
         name: { type: "string" }, bundle_id: { type: "string" }, url: { type: "string" },
         pid: { type: "integer", description: "Bind to this exact process. Use when two processes share a bundle id (list_apps shows both); it takes precedence over name and bundle_id and never launches anything." },
-        activate: { type: "boolean", description: "Bring to foreground; defaults to false — background is the default on every platform. On macOS false keeps process-bound keyboard/accessibility control and refuses raw pointer gestures (they would borrow key focus); on Windows it launches the app minimized; on Linux it restores the previously focused window after launch. True selects foreground control and requires the separate foreground consent — pointer input still goes to the app's window, never the user's cursor; use only when the user has authorized exclusive desktop use. Neither mode is an isolated computer." },
+        activate: { type: "boolean", description: "Bring to foreground; defaults to false — background is the default on every platform. On macOS false keeps process-bound keyboard/accessibility control and refuses raw pointer gestures (they would borrow key focus); on Windows it launches the app minimized; on Linux it restores the previously focused window after launch. True explicitly brings this approved app forward using its existing app permission; no second foreground approval is needed. A recorded foreground denial still blocks it. Pointer input still goes to the app's window, never the user's cursor; yield to the user's activity. Neither mode is an isolated computer." },
         computer: computerParam,
       },
       additionalProperties: false,
