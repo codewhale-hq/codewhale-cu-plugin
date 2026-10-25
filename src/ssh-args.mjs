@@ -50,6 +50,12 @@ export function sshOptions(computer, { portFlag = "-p" } = {}) {
     "-o", "ConnectTimeout=8",
     "-o", "StrictHostKeyChecking=yes",
     "-o", "UpdateHostKeys=no",
+    "-o", "ServerAliveInterval=15",
+    "-o", "ServerAliveCountMax=3",
+    "-o", "ForwardAgent=no",
+    "-o", "ForwardX11=no",
+    "-o", "ClearAllForwardings=yes",
+    "-o", "PermitLocalCommand=no",
   ];
   if (computer.knownHosts) {
     options.push("-o", `UserKnownHostsFile=${knownHostsFile(computer.knownHosts)}`, "-o", `GlobalKnownHostsFile=${process.platform === "win32" ? "NUL" : "/dev/null"}`);

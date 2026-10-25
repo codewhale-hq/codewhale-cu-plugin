@@ -28,7 +28,10 @@ else if (remote[0] === 'node') {
   const agent = path.join(process.env.FAKE_HOME, remote[1]);
   process.argv = [process.execPath, agent, ...remote.slice(2)];
   import(require('node:url').pathToFileURL(agent).href);
-} else process.exit(1);
+} else {
+  const done = require('node:child_process').spawnSync('/bin/sh', ['-c', remote.join(' ')], {cwd: process.env.FAKE_HOME, stdio: 'inherit'});
+  process.exit(done.status ?? 1);
+}
 `);
 fs.writeFileSync(path.join(binDir, "scp.cjs"), `
 const fs = require('node:fs'), path = require('node:path');

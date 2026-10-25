@@ -1629,12 +1629,12 @@ async function callTool(params, bindWhen = null) {
       note: "The capture is on disk at the returned path, but inlining it would exceed this host's single-message budget and drop the connection. Capture one display, a region, or an app window, or call zoom on this raster to get a viewable image.",
     });
     const imageMime = (bytes) => (bytes[0] === 0xff ? "image/jpeg" : "image/png");
-    // A spawned container's captures are read back over docker exec, under
-    // the same budget as a local file.
+    // A spawned container's or ssh computer's captures are read back over its
+    // transport, under the same budget as a local file.
     if ((name === "screenshot" || name === "zoom" || name === "browser_screenshot") && typeof ex?.readImage === "function" && (data.file || data.path)) {
       const maxBytes = Math.floor(INLINE_IMAGE_MAX_BYTES / 4) * 3;
       const image = await ex.readImage(data.file || data.path, { maxBytes });
-      if (!image.data) data.image_omitted = omitted(image.bytes);
+      if (!image.data) data.image_omitted = image.reason ? { reason: image.reason, note: image.note } : omitted(image.bytes);
       else imageBlock = { type: "image", mimeType: imageMime(image.data), data: image.data.toString("base64") };
     }
     if ((name === "screenshot" || name === "zoom" || name === "browser_screenshot") && computer.transport === "local" && (data.file || data.path)) {

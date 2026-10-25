@@ -93,8 +93,8 @@ export function appExec(app, sessionId = SESSION_ID) {
  */
 export function ensureSshChannel(binding, argv) {
   let ch = binding.sshChannel;
-  if (ch?.alive) return ch;
-  const next = { alive: false, restarted: !!ch, everReplied: false, pending: new Map(), seq: 1, buf: "", proc: null };
+  if (ch?.alive && !ch.retired) return ch;
+  const next = { alive: false, restarted: !!ch, everReplied: !!ch?.everReplied, pending: new Map(), seq: 1, buf: "", proc: null, stderr: "", retired: false };
   binding.sshChannel = next;
   const failAll = (err) => {
     for (const [, p] of next.pending) { clearTimeout(p.timer); p.reject(err); }
@@ -110,7 +110,14 @@ export function ensureSshChannel(binding, argv) {
   next.proc = proc;
   next.alive = true;
   proc.stdin.on("error", () => {});
-  proc.stderr.on("data", () => {}); // drain; stderr is never parsed
+  proc.stderr.setEncoding("utf8");
+  proc.stderr.on("data", (d) => { next.stderr = (next.stderr + d).slice(-600); });
+  next.retire = () => {
+    next.retired = true;
+    try { proc.stdin.end(); } catch {}
+    try { proc.kill("SIGTERM"); } catch {}
+    setTimeout(() => { try { proc.kill("SIGKILL"); } catch {} }, 2_000).unref();
+  };
   proc.stdout.setEncoding("utf8");
   proc.stdout.on("data", (d) => {
     next.buf += d;
@@ -132,7 +139,8 @@ export function ensureSshChannel(binding, argv) {
   const dead = (why) => {
     if (!next.alive) return;
     next.alive = false;
-    failAll(Object.assign(new ExecError(`ssh agent channel closed${why ? `: ${why}` : ""}`), { code: "remote_session_lost", requestDispatched: true }));
+    const tail = next.stderr.replace(/[^\x20-\x7e\n]/g, "").trim().split("\n").slice(-3).join(" | ").slice(-300);
+    failAll(Object.assign(new ExecError(`ssh agent channel closed${why ? `: ${why}` : ""}${tail ? ` — ${tail}` : ""}`), { code: "remote_session_lost", requestDispatched: true }));
   };
   proc.on("error", (err) => dead(String(err?.message ?? err)));
   proc.on("close", (code, sig) => dead(code != null ? `exited ${code}` : `signal ${sig}`));
@@ -162,7 +170,7 @@ export function channelRequest(ch, request, timeoutMs) {
     const id = ch.seq++;
     const timer = setTimeout(() => {
       ch.pending.delete(id);
-      // The request was written; the remote may still be executing it.
+      ch.retire?.();
       reject(Object.assign(new ExecError(`ssh agent timed out after ${timeoutMs}ms`), { code: "remote_timeout", requestDispatched: true }));
     }, timeoutMs);
     ch.pending.set(id, { resolve, reject, timer });
@@ -226,9 +234,25 @@ export function sshExec(computer, binding) {
       if (r.code !== 0) throw new ExecError(`ssh ${userHost} exited ${r.code}: ${r.stderr.trim().slice(0, 400)}`, r);
       // The agent prints exactly one JSON line; anything before it is MOTD noise.
       const line = r.stdout.trim().split("\n").filter((l) => l.startsWith("{")).pop();
-      const reply = line ? JSON.parse(line) : null;
+      let reply = null;
+      try { reply = line ? JSON.parse(line) : null; } catch { reply = null; }
       if (!reply) throw new ExecError(`ssh ${userHost}: agent returned no JSON receipt`, r);
       return reply;
+    },
+    async readImage(file, { maxBytes } = {}) {
+      const unreadable = (note) => ({ bytes: 0, data: null, reason: "remote_image_unreadable", note });
+      if (typeof file !== "string" || !/^\/[A-Za-z0-9_.@%+=:,/-]{1,500}\.(png|jpe?g)$/i.test(file) || file.split("/").includes("..")) {
+        return unreadable("The capture is on the remote computer at a path this host will not fetch; pull it with scp if you need the bytes.");
+      }
+      const size = await run("ssh", [...base, "wc", "-c", "<", file], { timeoutMs: 15_000 });
+      const bytes = Number(size.stdout.trim());
+      if (size.code !== 0 || !Number.isSafeInteger(bytes) || bytes <= 0) return unreadable("The capture is on the remote computer but its size could not be read (the remote needs a POSIX shell with wc and base64); pull it with scp if you need the bytes.");
+      if (maxBytes != null && bytes > maxBytes) return { bytes, data: null };
+      const r = await run("ssh", [...base, "base64", "<", file], { timeoutMs: 30_000 });
+      const data = r.code === 0 ? Buffer.from(r.stdout.replace(/\s+/g, ""), "base64") : null;
+      const magic = data && (data.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47])) || data.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff])));
+      if (!data || !magic || data.length !== bytes) return unreadable("The capture is on the remote computer but could not be read back intact; pull it with scp if you need the bytes.");
+      return { bytes, data };
     },
   };
   attachPersistentChannel(ex, binding, ["ssh", ...base, "node", remoteAgent, "--serve"]);
@@ -261,7 +285,8 @@ export function dockerExec(computer, binding) {
       if (r.timedOut) throw Object.assign(new ExecError(`docker exec ${container}: timed out`, r), { code: "remote_timeout", requestDispatched: true });
       if (r.code !== 0) throw new ExecError(`docker exec ${container} exited ${r.code}: ${r.stderr.trim().slice(0, 400)}`, r);
       const line = r.stdout.trim().split("\n").filter((l) => l.startsWith("{")).pop();
-      const reply = line ? JSON.parse(line) : null;
+      let reply = null;
+      try { reply = line ? JSON.parse(line) : null; } catch { reply = null; }
       if (!reply) throw new ExecError(`docker exec ${container}: agent returned no JSON receipt`, r);
       return reply;
     },
@@ -291,18 +316,29 @@ export async function installRemoteAgent(computer) {
   for (const dir of ["", "backends"]) {
     const full = path.join(srcDir, dir);
     for (const f of fs.readdirSync(full)) {
-      if (f.endsWith(".mjs") || f.endsWith(".m") || f.endsWith(".h")) rels.push(`src/${dir ? dir + "/" : ""}${f}`);
+      if (f.endsWith(".mjs") || f.endsWith(".m") || f.endsWith(".h") || f.endsWith(".py")) rels.push(`src/${dir ? dir + "/" : ""}${f}`);
     }
   }
-  const marker = ".codewhale-cu/agent";
-  let r = await run("ssh", [...ex.base, "mkdir", "-p", `${marker}/src/backends`], { timeoutMs: 15_000 });
+  const root = ".codewhale-cu";
+  const marker = `${root}/agent`;
+  const stageName = `agent.new-${crypto.randomBytes(6).toString("hex")}`;
+  const stage = `${root}/${stageName}`;
+  const abandon = () => run("ssh", [...ex.base, "rm", "-rf", stage], { timeoutMs: 15_000 }).catch(() => {});
+  const posix = (await run("ssh", [...ex.base, "sh", "-c", "true"], { timeoutMs: 15_000 })).code === 0;
+  const target = posix ? stage : marker;
+  let r = await run("ssh", [...ex.base, "mkdir", "-p", `${target}/src/backends`], { timeoutMs: 15_000 });
   if (r.code !== 0) throw new ExecError(`ssh ${ex.userHost}: mkdir failed: ${r.stderr.trim().slice(0, 300)}`, r);
   for (const rel of rels) {
     const localPath = rel === "agent.mjs" ? path.join(PLUGIN_ROOT, "agent.mjs") : path.join(srcDir, rel.slice(4));
-    const dest = safeRemotePath(`${marker}/${rel}`);
+    const dest = safeRemotePath(`${target}/${rel}`);
     validateSshTarget(computer);
     r = await run("scp", [...sshOptions(computer, { portFlag: "-P" }), "--", localPath, `${ex.userHost}:${dest}`], { timeoutMs: 30_000 });
-    if (r.code !== 0) throw new ExecError(`scp ${rel} failed: ${r.stderr.trim().slice(0, 300)}`, r);
+    if (r.code !== 0) { if (target === stage) await abandon(); throw new ExecError(`scp ${rel} failed: ${r.stderr.trim().slice(0, 300)}`, r); }
+  }
+  if (target === stage) {
+    const swap = `sh -c 'd=${root}; rm -rf "$d/agent.old"; if [ -e "$d/agent" ] || [ -L "$d/agent" ]; then mv "$d/agent" "$d/agent.old" || exit 1; fi; if mv "$d/${stageName}" "$d/agent"; then rm -rf "$d/agent.old"; else if [ -e "$d/agent.old" ]; then mv "$d/agent.old" "$d/agent"; fi; exit 1; fi'`;
+    r = await run("ssh", [...ex.base, swap], { timeoutMs: 30_000 });
+    if (r.code !== 0) { await abandon(); throw new ExecError(`ssh ${ex.userHost}: installing the agent failed: ${r.stderr.trim().slice(0, 300)}`, r); }
   }
   // Probe remote platform via the agent itself.
   const reply = await ex.remote({ tool: "platform" });
