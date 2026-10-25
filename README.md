@@ -283,7 +283,7 @@ Use `open_application` with `activate: false` to select the input destination
 without bringing it forward. Keyboard events go to that process and semantic
 actions use Accessibility — both are quiet: no cursor movement, no activation.
 Unqualified `get_app_state`, `list_windows`, and `screenshot` follow that app,
-including behind other windows. Explicit display/region captures remain available.
+including behind other windows. Explicit display/region captures remain available once the user has approved at least one app on the computer.
 Text insertion prefers writable accessibility selection over process key events.
 For an authorized workflow that requires keyboard focus, explicitly select
 `activate: true`; receipts then say `keyboard_delivery: "foreground-guarded"`.
@@ -335,7 +335,10 @@ On `local`, the app — not the tool — is the unit of trust. The first call
 that targets an application (`open_application`, an `app_ref`, an element or
 `state_id`, an action on the bound app, or an observation that names no app and
 so would use the frontmost one on macOS) refuses `consent_required` until
-the user decides; the model asks them and records the answer with
+the user decides. A whole-screen `screenshot` or `recording` start, which names
+no app, refuses until the user has approved at least one app on that computer;
+after that it is not per-app (it shows everything on the screen), so capture
+one app with `app_ref` when the rest of the screen should stay private; the model asks them and records the answer with
 `consent {action:"allow"|"deny", app:"…"}`. Decisions cover the session by
 default and persist with `remember:true`; `consent {action:"status"}`
 shows the ledger and `revoke` clears it. A denial is a wall: the ledger

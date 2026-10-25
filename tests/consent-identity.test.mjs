@@ -254,3 +254,28 @@ test("repeated Return in a text field is not gated", async (t) => {
   assert.equal((await s.tool("key", { text: "return", repeat: 5 })).ok, true);
   assert.equal((await s.tool("type", { text: "a\n\nb" })).ok, true);
 });
+
+test("a whole-screen capture needs at least one approved app on the computer", async (t) => {
+  const s = await boot(t);
+  for (const args of [{}, { region: [0, 0, 10, 10] }, { display: 1 }]) {
+    const r = await s.tool("screenshot", args);
+    assert.equal(r.error?.code, "consent_required", JSON.stringify(args));
+  }
+  const recording = await s.tool("recording", { action: "start" });
+  assert.equal(recording.error?.code, "consent_required");
+  await s.tool("consent", { action: "deny", app: "Terminal" });
+  assert.equal((await s.tool("screenshot", {})).error?.code, "consent_required", "a deny alone is not an approval");
+  assert.deepEqual(s.calls("screenshot"), []);
+  assert.deepEqual(s.calls("recording_start"), []);
+  await s.tool("consent", { action: "allow", app: "FakeApp" });
+  const shot = await s.tool("screenshot", {});
+  assert.equal(shot.ok, true, JSON.stringify(shot));
+});
+
+test("naming an app still decides on that app, not on the rest of the ledger", async (t) => {
+  const s = await boot(t);
+  await s.tool("consent", { action: "allow", app: "FakeApp" });
+  const other = await s.tool("screenshot", { app_ref: { name: "Terminal" } });
+  assert.equal(other.error?.code, "consent_required");
+  assert.match(other.error.message, /Terminal/);
+});

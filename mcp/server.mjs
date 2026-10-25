@@ -875,6 +875,11 @@ async function consentCheck(computer, name, args) {
       }
     }
   }
+  const wholeScreen = !refs.length && args.app_ref == null && (name === "screenshot" || (name === "recording_start" && args.window_id == null));
+  if (wholeScreen && !consent.anyAllowed(computer.id)) {
+    throw new ServerError("consent_required",
+      `No application on this computer has the user's approval yet, and a whole-screen capture shows every app on it. Ask the user which application to work in, then record their answer with consent {action:"allow", app:"<name>"}; or capture one app with app_ref.`);
+  }
   let grant = null;
   for (const ref of refs) {
     // A state or element whose backend reported no identity at all has no app

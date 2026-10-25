@@ -3,6 +3,7 @@
 // 16MB; a full-screen 5K PNG base64s to ~29MB). These tests drive the real
 // server over stdio and assert that an over-budget raster degrades to its
 // text receipt while the connection keeps serving.
+import { hostKeysLine, attestParams } from "./fixtures/host-decision.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -31,6 +32,7 @@ async function session(t, extraEnv = {}) {
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
+  server.stdin.write(hostKeysLine());
   t.after(() => {
     server.kill("SIGTERM");
     for (const dir of [stateDir, recDir]) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
@@ -58,7 +60,7 @@ async function session(t, extraEnv = {}) {
     const id = nextId++;
     const timer = setTimeout(() => { pending.delete(id); reject(new Error(`timeout: ${method}`)); }, 30_000);
     pending.set(id, (msg) => { clearTimeout(timer); resolve(msg); });
-    server.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+    server.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params: attestParams(method, params) }) + "\n");
   });
 
   const init = await rpc("initialize", { protocolVersion: "2025-06-18" });
@@ -78,6 +80,7 @@ test("an over-budget raster degrades to its receipt and keeps the transport aliv
   // The fixture's 1x1 PNG base64s to ~92 bytes, so a 64-byte budget puts any
   // capture over the line without writing a huge file.
   const cu = await session(t, { CODEWHALE_CU_MAX_IMAGE_BYTES: "64" });
+  await cu.call("consent", { action: "allow", app: "FakeApp" });
 
   const shot = await cu.call("screenshot");
   assert.equal(shot.receipt.ok, true, "an over-budget capture still succeeds");
@@ -106,6 +109,7 @@ test("an over-budget raster degrades to its receipt and keeps the transport aliv
 
 test("a raster within budget is still inlined as an image block", async (t) => {
   const cu = await session(t);
+  await cu.call("consent", { action: "allow", app: "FakeApp" });
   const shot = await cu.call("screenshot");
   assert.equal(shot.receipt.ok, true);
   assert.equal(shot.receipt.image_omitted, undefined);

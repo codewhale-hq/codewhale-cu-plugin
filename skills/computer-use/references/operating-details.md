@@ -301,6 +301,8 @@ Once the GUI is the right interface: observe once, act once, then verify.
     control. The replacement is available only during explicitly authorized
     foreground control.
   Use app-scoped screenshots (`app_ref`) to avoid capturing unrelated windows.
+  A whole-screen screenshot or recording needs at least one approved app and
+  is not judged per app.
   The nonactivating preview panel is on by default while an app is bound —
   it shows the captured app window and a drawn cursor at each action's target
   so the user can watch; the real pointer never moves. `preview(enabled:false)`

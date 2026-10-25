@@ -153,6 +153,7 @@ test("saved capture pins cannot replay, including legacy files and nested action
   assert.equal(containsRasterPin({ target: { type: "coordinate", x: 1, y: 1 } }), false);
   assert.equal(containsRasterPin({ target: { type: "element", state_id: "s-1" } }), false);
 
+  await tool("consent", { action: "allow", app: "FakeApp" });
   const started = await tool("trajectory", { action: "start" });
   const shot = await tool("screenshot");
   assert.equal(shot.ok, true, JSON.stringify(shot));

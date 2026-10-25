@@ -207,6 +207,11 @@ export function revoke(computerId, keys) {
   return { removed };
 }
 
+export function anyAllowed(computerId) {
+  for (const [key, entry] of session.get(computerId) ?? []) if (key !== "scope:foreground" && entry.decision === "allow") return true;
+  return Object.values(persistedEntries(computerId)).some((entry) => entry.decision === "allow");
+}
+
 export function foregroundDecision(computerId) {
   const s = session.get(computerId)?.get("scope:foreground");
   const stored = load().computers[computerId]?.foreground;

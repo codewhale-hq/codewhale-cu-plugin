@@ -47,7 +47,7 @@ function startServer(t, owner, route = "direct") {
       if (msg.method === "elicitation/create" && msg.id !== undefined) {
         // The user approves exactly one call here: consent for xterm, nothing else.
         prompts.push(msg.params.message);
-        const approve = msg.params.message === 'Computer Use asks for your decision: consent_allow {"app":"xterm"}';
+        const approve = ['Computer Use asks for your decision: consent_allow {"app":"xterm"}', 'Computer Use asks for your decision: consent_allow {"app":"unrelated"}'].includes(msg.params.message);
         server.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { action: approve ? "accept" : "decline" } }) + "\n");
         continue;
       }
@@ -89,6 +89,7 @@ for (const route of ["direct", "helper"]) {
   test(`${route}: pointer input is judged against the window under the point, after a screenshot pins the frame`, async (t) => {
     const s = startServer(t, XTERM, route);
     await s.init();
+    assert.equal((await s.tool("consent", { action: "allow", app: "unrelated" })).ok, true);
     assert.equal((await s.tool("screenshot", {})).ok, true);
     const r = await s.tool("left_click", { target: { type: "coordinate", x: 10, y: 20 } });
     assert.equal(r.error.code, "consent_required");
