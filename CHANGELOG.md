@@ -2,6 +2,8 @@
 
 ## 0.12.1 — unreleased
 
+- The operating skill no longer depends on line endings, and its consent and stop rules come first. A Windows checkout with CRLF endings made the advertised instructions 6,501 bytes, one over the 6,500-byte budget, so hosted Windows CI failed on the previous commit; `.gitattributes` now pins text files to LF. The consent and stop rules moved ahead of the observe-act-verify loop (they used to start at byte 3,595), so a host that truncates server instructions at 4,096 bytes, as the Engine does, keeps them. The never-replay rule for `action_sent:true` and `outcome_unknown` moved into that block too. No rule was dropped.
+
 - An approved app can be brought forward with `activate:true` without a second foreground approval prompt. The grant stays scoped to that app; missing or revoked app approval and explicit foreground denials still refuse. Background stays the default, with human-input yielding, Pause/Stop, input ownership and consequential-action confirmation unchanged. This is source behavior for the next update, not an installed-helper upgrade.
 
 
