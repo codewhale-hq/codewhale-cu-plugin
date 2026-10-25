@@ -8,7 +8,14 @@ import { stateDir } from "./registry.mjs";
 /** The one recordings directory: desktop and browser captures, zoom crops,
  * recordings and trajectories all live under it. */
 export function recordingsDir() {
-  return path.resolve(process.env.CODEWHALE_CU_RECORDINGS_DIR || path.join(stateDir(), "recordings"));
+  const dir = path.resolve(process.env.CODEWHALE_CU_RECORDINGS_DIR || path.join(stateDir(), "recordings"));
+  if (!process.env.CODEWHALE_CU_RECORDINGS_DIR && process.platform !== "win32") {
+    try {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      if (fs.statSync(dir).mode & 0o077) fs.chmodSync(dir, 0o700);
+    } catch { return dir; }
+  }
+  return dir;
 }
 
 const badPath = (message) => Object.assign(new ExecError(message), { code: "bad_args" });
