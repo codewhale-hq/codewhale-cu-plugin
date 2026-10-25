@@ -2,6 +2,8 @@
 
 ## 0.12.1 — unreleased
 
+- Documentation corrections. The skill reference said Windows refuses scoped semantic mutations; it binds window and element identities and refuses a stale path (unverified on Windows), and the 0.3.1 publication-review row now says so. The a196196 and f3859d0 commit messages are slightly off (the recordings directory held 2,495 entries, 2,497 being its link count; `docs/RELEASE_CHECKLIST.md` still links the historical v0.11.2 release under the old owner on purpose).
+
 - A runner that cannot read the focused control says so. When the desktop helper or ssh agent is too old to report it (or the backend lacks it) and a key press would have been judged, the receipt carries `focus_gate: "unavailable"`, so the model and the user learn that a Return on a focused button is not being checked. The macOS native read of the focused control has still never run against a live app (Accessibility is not granted to the build host); the macOS gate is checked with fake helpers only.
 
 - Re-registering an ssh computer no longer inherits fields across users or ports. User, port, known-hosts file, agent path and platform hint carry over only when host, user and port all match; before, the same host with another user or port kept them, and a stale `platformHint` could make the launch policy and the owner checks apply another platform's rules.

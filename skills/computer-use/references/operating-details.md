@@ -174,7 +174,8 @@ Once the GUI is the right interface: observe once, act once, then verify.
    chat message. `run_actions` batches up to 8 steps
    (click → type → key return → get_value).
    macOS provides background element actions; Linux AT-SPI support depends
-   on the control. Windows currently refuses scoped semantic mutations.
+   on the control. Windows semantic mutations bind the observed window and
+   element identities and refuse a stale path; they are untested on Windows.
    Windows and Linux are development backends: do not assume their raw
    input is background-safe or that native Pause/Stop controls are available.
 5. When accessibility cannot read visible text, macOS supports
