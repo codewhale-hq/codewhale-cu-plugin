@@ -875,10 +875,21 @@ async function consentCheck(computer, name, args) {
       }
     }
   }
-  const wholeScreen = !refs.length && args.app_ref == null && (name === "screenshot" || (name === "recording_start" && args.window_id == null));
+  const wholeScreen = !refs.length && args.app_ref == null && (name === "screenshot" || name === "zoom" || (name === "recording_start" && args.window_id == null));
   if (wholeScreen && !consent.anyAllowed(computer.id)) {
     throw new ServerError("consent_required",
       `No application on this computer has the user's approval yet, and a whole-screen capture shows every app on it. Ask the user which application to work in, then record their answer with consent {action:"allow", app:"<name>"}; or capture one app with app_ref.`);
+  }
+  if (wholeScreen && (computer.platform ?? process.platform) === "darwin") {
+    const front = await frontmostApp(computer);
+    if (front) {
+      const { verdict, ref: known } = await consentForRef(computer, front);
+      if (verdict.state === "denied") {
+        throw new ServerError("app_denied",
+          `the user denied access to ${known.name ?? known.bundle_id ?? `pid ${known.pid}`} on this computer, and it is in front, so a whole-screen capture would show it — capture another app with app_ref, or ask the user (consent {action:"revoke"} lifts a deny).`,
+          { app: known });
+      }
+    }
   }
   let grant = null;
   for (const ref of refs) {

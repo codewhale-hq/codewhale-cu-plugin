@@ -335,8 +335,9 @@ On `local`, the app — not the tool — is the unit of trust. The first call
 that targets an application (`open_application`, an `app_ref`, an element or
 `state_id`, an action on the bound app, or an observation that names no app and
 so would use the frontmost one on macOS) refuses `consent_required` until
-the user decides. A whole-screen `screenshot` or `recording` start, which names
-no app, refuses until the user has approved at least one app on that computer;
+the user decides. A whole-screen `screenshot`, `zoom` or `recording` start, which names
+no app, refuses until the user has approved at least one app on that computer
+(and, on macOS, while the app in front is one they denied);
 after that it is not per-app (it shows everything on the screen), so capture
 one app with `app_ref` when the rest of the screen should stay private; the model asks them and records the answer with
 `consent {action:"allow"|"deny", app:"…"}`. Decisions cover the session by

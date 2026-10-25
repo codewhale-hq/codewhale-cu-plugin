@@ -290,3 +290,30 @@ test("every key spelling a backend accepts for Return or space is judged on the 
   assert.deepEqual(s.calls("key"), []);
   assert.equal((await s.tool("key", { text: "tab" })).ok, true);
 });
+
+test("zoom without a named or bound app needs an approved app too", async (t) => {
+  const s = await boot(t);
+  await s.tool("consent", { action: "allow", app: "FakeApp" });
+  const shot = await s.tool("screenshot", {});
+  assert.equal(shot.ok, true, JSON.stringify(shot));
+  await s.tool("consent", { action: "revoke", app: "FakeApp" });
+  const zoomed = await s.tool("zoom", { region: [0, 0, 10, 10], raster_id: shot.raster_id });
+  assert.equal(zoomed.error?.code, "consent_required");
+  assert.deepEqual(s.calls("zoom"), []);
+});
+
+test("a whole-screen capture is refused while a deny covers the app in front", { skip: process.platform !== "darwin" }, async (t) => {
+  const s = await boot(t);
+  await s.tool("consent", { action: "allow", app: "OtherApp" });
+  assert.equal((await s.tool("screenshot", {})).ok, true);
+  await s.tool("consent", { action: "deny", app: "FakeApp" });
+  const refused = await s.tool("screenshot", {});
+  assert.equal(refused.error?.code, "app_denied");
+  assert.match(refused.error.message, /FakeApp/);
+  const recording = await s.tool("recording", { action: "start" });
+  assert.equal(recording.error?.code, "app_denied");
+  assert.equal(s.calls("screenshot").length, 1);
+  assert.deepEqual(s.calls("recording_start"), []);
+  s.setState({ apps: [{ name: "Notes", pid: 9, bundle_id: "com.apple.Notes", frontmost: true }] });
+  assert.equal((await s.tool("screenshot", {})).ok, true, "a deny on an app that is not in front does not block a capture");
+});
