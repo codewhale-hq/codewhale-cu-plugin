@@ -680,8 +680,9 @@ $name = $null; if ($proc) { $name = $proc.ProcessName }
 @{ window = @{ pid = [int]$p[0]; hwnd = [int64]$p[1]; 'class' = $p[2]; title = $p[3]; name = $name } } | ConvertTo-Json -Compress -Depth 4;`, { timeoutMs: 20_000 });
       const w = j.window;
       if (!w) {
-        if (kind === "pointer") return null;
-        throw Object.assign(new ExecError("no window has keyboard focus, so the application that would receive these keys cannot be named"), { code: "input_owner_unknown" });
+        throw Object.assign(new ExecError(kind === "pointer"
+          ? "no window exists at this point (it may be off the screen), so the application that would receive this pointer input cannot be named"
+          : "no window has keyboard focus, so the application that would receive these keys cannot be named"), { code: "input_owner_unknown" });
       }
       if (!w.name || !Number.isInteger(w.pid) || w.pid <= 0) throw Object.assign(new ExecError("the process that owns this window could not be identified"), { code: "input_owner_unknown" });
       return { name: w.name, comm: w.name, pid: w.pid, title: w.title, window: `0x${Number(w.hwnd).toString(16)}`, ...(w.title ? { aliases: [w.title] } : {}) };

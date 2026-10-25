@@ -168,3 +168,12 @@ test("win32: cursor_position is self-contained and parses JSON output", async (t
   assert.match(script, /Add-Type -TypeDefinition/, "cursor_position carries the type definition");
   assert.match(script, /GetCursorPos/);
 });
+
+test("win32: a pointer position with no window under it cannot be attributed, so it is refused", async (t) => {
+  fakePowershell(t, { stdout: JSON.stringify({ window: null }) });
+  const backend = win32.create({ exec: { persistentInputOwner: true } });
+  for (const point of [{ x: 99999, y: 0 }, { x: -50000, y: -50000 }]) {
+    await assert.rejects(backend.input_owner({ kind: "pointer", point }), (e) => e.code === "input_owner_unknown", JSON.stringify(point));
+  }
+  await assert.rejects(backend.input_owner({ kind: "keyboard" }), (e) => e.code === "input_owner_unknown");
+});
