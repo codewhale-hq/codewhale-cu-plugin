@@ -1266,7 +1266,7 @@ async function callTool(params, bindWhen = null) {
       // A spawned computer is the point of the call — it becomes active so
       // subsequent tools act on the disposable desktop without a switch.
       activeComputerId = entry.id;
-      return { content: [{ type: "text", text: JSON.stringify(receipt(entry, { ok: true, active: activeComputerId, spawned: { id: entry.id, transport: entry.transport, platform: entry.platform, container: entry.container, image: entry.image, owned: true, built: spawned.built }, note: "This is a disposable, task-owned desktop — it is destroyed by computer remove or when this session ends. The user's own machine is untouched." })) }] };
+      return { content: [{ type: "text", text: JSON.stringify(receipt(entry, { ok: true, active: activeComputerId, spawned: { id: entry.id, transport: entry.transport, platform: entry.platform, container: entry.container, image: entry.image, owned: true, built: spawned.built }, lifetime_s: spawned.lifetimeSeconds, note: `This is a disposable, task-owned desktop — it is destroyed by computer remove, when this session ends, or after ${Math.round(spawned.lifetimeSeconds / 3600 * 10) / 10} hours. The user's own machine is untouched.` })) }] };
     } catch (err) {
       return { content: [{ type: "text", text: JSON.stringify(fail(null, err.code ?? "spawn_failed", err.message ?? String(err))) }], isError: true };
     }

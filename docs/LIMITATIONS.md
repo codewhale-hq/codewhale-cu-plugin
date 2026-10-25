@@ -123,15 +123,25 @@ window on their session, or see their apps. What it is not:
   lifecycle. It says nothing about Wayland, a real login session's window
   manager, GPU rendering, or distro app catalogs.
 - **Isolation is the container boundary.** There are no host mounts and no
-  shared display; the agent joins the container's own session bus. But the
-  container shares the host kernel — it is a workspace boundary, not a
-  security sandbox for hostile code.
-- **Abrupt death can leave a container.** `remove` and graceful session end
-  (stdin close, SIGTERM/SIGINT/SIGHUP) reap what this session spawned; a
-  SIGKILL'd host cannot run its teardown. Spawned containers carry
-  `codewhale.cu.spawned/session/computer` labels so a stale one is
-  identifiable (`docker ps --filter label=codewhale.cu.spawned=1`) — a
-  reaper is intentionally not in this slice.
+  shared display; the agent joins the container's own session bus. The
+  container has a private IPC namespace and a 1 GB `/dev/shm`, all
+  capabilities dropped, `no-new-privileges`, 4 GB of memory (swap included),
+  2 CPUs (fewer if the daemon has fewer), 2048 processes and a six-hour
+  lifetime, after which it exits; the stopped container stays until the
+  session ends or the next spawn reaps it, and the registry entry fails closed
+  until `computer remove` clears it. `CODEWHALE_CU_SPAWN_MEMORY`, `_CPUS`, `_PIDS` and `_TTL_S` change
+  the limits (an invalid value keeps the default). Network egress is on, as
+  before; `CODEWHALE_CU_SPAWN_NETWORK=none` starts the container with no
+  network. The container still shares the host kernel — it is a workspace
+  boundary, not a security sandbox for hostile code.
+- **Abrupt death can leave a container, briefly.** `remove` and graceful
+  session end (stdin close, SIGTERM/SIGINT/SIGHUP) reap what this session
+  spawned; a SIGKILL'd host cannot run its teardown. Spawned containers carry
+  `codewhale.cu.spawned/session/computer/owner_pid` labels
+  (`docker ps --filter label=codewhale.cu.spawned=1`). The next spawn removes
+  containers whose owner process is gone on this host; one whose pid has been
+  reused by another process, one owned by another host sharing the daemon, or
+  one started before these labels existed, is left alone.
 - **Registry entries can outlive their container.** If a host dies after
   spawning but before teardown, the entry remains and fails closed on next
   use (the route check and `docker exec` both fail) — remove it.

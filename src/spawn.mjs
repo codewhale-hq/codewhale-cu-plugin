@@ -11,16 +11,25 @@
 // issued against containers carrying our spawn label — a hand-registered
 // docker entry pointing at a user's container cannot be destroyed here.
 import crypto from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 import { run, ExecError, trim } from "./exec.mjs";
 import { PLUGIN_ROOT, SESSION_ID, b64 } from "./transport.mjs";
+import { ID_RE } from "./registry.mjs";
 
 export const SPAWN_LABEL = "codewhale.cu.spawned";
 export const SESSION_LABEL = "codewhale.cu.session";
 export const COMPUTER_LABEL = "codewhale.cu.computer";
+export const OWNER_LABEL = "codewhale.cu.owner_pid";
+export const HOST_LABEL = "codewhale.cu.owner_host";
 export const DEFAULT_IMAGE = process.env.CODEWHALE_CU_SPAWN_IMAGE || "codewhale-cu-linux";
 
 const CONTAINER_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+const MEMORY_RE = /^[1-9][0-9]{0,5}[mg]$/;
+const CPUS_RE = /^(0\.[1-9]|[1-9][0-9]?(\.[0-9])?)$/;
+const IMAGE_RE = /^[A-Za-z0-9][A-Za-z0-9_.:\/@-]{0,255}$/;
+const PID_RE = /^[1-9][0-9]{0,9}$/;
+const COUNT_RE = /^[1-9][0-9]{1,5}$/;
 const AGENT_EXEC = "/app/docker/agent-exec.sh";
 
 class SpawnError extends ExecError {
@@ -31,10 +40,45 @@ class SpawnError extends ExecError {
 }
 
 function docker(args, opts = {}) {
-  // Docker CLI lives off PATH; on macOS a Colima/Docker-Desktop install puts
-  // it in /usr/local/bin or /opt/homebrew/bin which the MCP host's PATH may
-  // lack, so try the well-known paths too.
   return run("docker", args, opts);
+}
+
+function limit(name, fallback, pattern) {
+  const value = String(process.env[name] ?? fallback);
+  return pattern.test(value) ? value : fallback;
+}
+
+export function containerLimits(daemonCpus = Infinity) {
+  const network = process.env.CODEWHALE_CU_SPAWN_NETWORK === "none" ? ["--network", "none"] : [];
+  const memory = limit("CODEWHALE_CU_SPAWN_MEMORY", "4g", MEMORY_RE);
+  const cpus = String(Math.min(Number(limit("CODEWHALE_CU_SPAWN_CPUS", "2", CPUS_RE)), Math.max(daemonCpus, 0.1)));
+  return {
+    flags: [
+      "--init", "--shm-size=1g", "--memory", memory, "--memory-swap", memory,
+      "--cpus", cpus,
+      "--pids-limit", limit("CODEWHALE_CU_SPAWN_PIDS", "2048", COUNT_RE),
+      "--cap-drop=ALL", "--security-opt=no-new-privileges", ...network,
+    ],
+    lifetimeSeconds: limit("CODEWHALE_CU_SPAWN_TTL_S", "21600", COUNT_RE),
+  };
+}
+
+function processAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (error) { return error.code !== "ESRCH"; }
+}
+
+export async function reapOrphanedSpawns(command = docker, alive = processAlive, host = os.hostname()) {
+  const listed = await command(["ps", "-a", "--filter", `label=${SPAWN_LABEL}=1`, "--format", `{{.Names}}|{{.Label "${OWNER_LABEL}"}}|{{.Label "${HOST_LABEL}"}}`], { timeoutMs: 10_000, signal: null });
+  if (listed.code !== 0) return [];
+  const reaped = [];
+  for (const line of listed.stdout.split("\n")) {
+    const [container, owner, ownerHost] = line.trim().split("|");
+    const pid = Number(owner);
+    if (!container || !CONTAINER_RE.test(container) || !PID_RE.test(owner ?? "") || pid > 2147483647 || ownerHost !== host || alive(pid)) continue;
+    const r = await command(["rm", "-f", container], { timeoutMs: 15_000, signal: null });
+    if (r.code === 0) reaped.push(container);
+  }
+  return reaped;
 }
 
 async function dockerOk(args, opts = {}) {
@@ -73,26 +117,29 @@ async function ensureImage(image) {
  * transactional: either a live computer comes back or nothing was left.
  */
 export async function spawnDockerComputer({ id, image = DEFAULT_IMAGE } = {}) {
+  if (typeof id !== "string" || !ID_RE.test(id)) throw new SpawnError("bad_args", "spawn needs a computer id of letters, digits, dot, dash and underscore");
+  if (typeof image !== "string" || !IMAGE_RE.test(image)) throw new SpawnError("spawn_image_missing", `"${String(image).slice(0, 60)}" is not a docker image reference`);
   if (!await dockerAvailable()) {
     throw new SpawnError("docker_unavailable", "A Linux Docker engine is required — start Docker Desktop in Linux-container mode (or Colima) and spawn again");
   }
   const { built } = await ensureImage(image);
+  await reapOrphanedSpawns().catch(() => {});
   const container = `cu-spawn-${id}-${crypto.randomBytes(3).toString("hex")}`;
   const cleanup = async () => {
     await docker(["rm", "-f", container], { timeoutMs: 15_000, signal: null }).catch(() => {});
   };
   try {
-    // --init reaps the desktop's children; --ipc=host keeps Chromium off the
-    // 64MB default /dev/shm, same as docker/run.sh. "sleep infinity" is the
-    // payload — the image entrypoint stands up Xvfb/openbox/the session bus
-    // first, and the agent is exec'd in per request.
+    const ncpu = Number((await docker(["info", "--format", "{{.NCPU}}"], { timeoutMs: 10_000, signal: null })).stdout.trim());
+    const { flags, lifetimeSeconds } = containerLimits(ncpu > 0 ? ncpu : Infinity);
     await dockerOk([
       "run", "-d", "--name", container,
-      "--init", "--ipc=host",
+      ...flags,
       "--label", `${SPAWN_LABEL}=1`,
       "--label", `${SESSION_LABEL}=${SESSION_ID}`,
       "--label", `${COMPUTER_LABEL}=${id}`,
-      image, "sleep", "infinity",
+      "--label", `${OWNER_LABEL}=${process.pid}`,
+      "--label", `${HOST_LABEL}=${os.hostname()}`,
+      image, "sleep", lifetimeSeconds,
     ], { timeoutMs: 30_000 });
     const deadline = Date.now() + 30_000;
     let lastErr = "no reply";
@@ -102,13 +149,14 @@ export async function spawnDockerComputer({ id, image = DEFAULT_IMAGE } = {}) {
       // whole stack a caller is about to drive, not just a live agent.
       const probe = await docker(["exec", container, "/bin/sh", AGENT_EXEC, b64({ tool: "list_windows", args: {}, nonce: "spawn" })], { timeoutMs: 10_000, signal: null });
       if (probe.code === 0 && /"ok"\s*:\s*true/.test(probe.stdout)) {
-        return { container, image, built };
+        return { container, image, built, lifetimeSeconds: Number(lifetimeSeconds) };
       }
       lastErr = trim(probe.stderr || probe.stdout) || `exited ${probe.code}`;
-      if (Date.now() >= deadline) break;
+      if (Date.now() >= deadline || /is not running|No such container/i.test(lastErr)) break;
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    throw new SpawnError("spawn_failed", `spawned desktop did not come up: ${lastErr}`);
+    const logs = trim((await docker(["logs", "--tail", "15", container], { timeoutMs: 10_000, signal: null }).catch(() => ({ stdout: "", stderr: "" }))).stderr || "");
+    throw new SpawnError("spawn_failed", `spawned desktop did not come up: ${lastErr}${logs ? ` — container log: ${logs}` : ""}`);
   } catch (err) {
     await cleanup();
     throw err;

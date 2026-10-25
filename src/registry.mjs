@@ -10,7 +10,7 @@ export class RegistryError extends Error {
   constructor(code, message) { super(message); this.name = "RegistryError"; this.code = code; }
 }
 
-const ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+export const ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 export const PLATFORMS = ["darwin", "linux", "win32", "harmonyos"];
 const knownPlatform = (value) => value == null || PLATFORMS.includes(value);
 
