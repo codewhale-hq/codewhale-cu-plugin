@@ -192,7 +192,7 @@ function namedApps(tool, args) {
 function policyRefusal(tool, args, computerId) {
   let targets = namedApps(tool, args);
   if (tool === "open_application") {
-    const refusal = launchRefusal(args);
+    const refusal = launchRefusal(args, process.platform, { remote: computerId !== "local" });
     if (refusal) return refusal;
   }
   if (tool === "app_script") {

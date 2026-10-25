@@ -1430,7 +1430,7 @@ async function callTool(params, bindWhen = null) {
       if (policy.refused) throw new ServerError("script_refused", `app_script refused: ${policy.refused}. Do not rewrite the script to get around this; use the computer-use tools, or ask the user.`);
     }
     if (name === "open_application") {
-      const refusal = launchRefusal(args, computer.platform ?? computer.platformHint ?? (computer.transport === "local" ? process.platform : computer.transport === "hdc" ? "harmonyos" : "linux"));
+      const refusal = launchRefusal(args, computer.platform ?? computer.platformHint ?? (computer.transport === "local" ? process.platform : computer.transport === "hdc" ? "harmonyos" : "linux"), { remote: computer.transport !== "local" });
       if (refusal) throw new ServerError(refusal.code, refusal.message);
     }
     const gateResult = await consentCheck(computer, name, args);
@@ -1761,7 +1761,7 @@ function validateToolArgs(computer, name, out) {
     if (out.ocr_region != null && (!Array.isArray(out.ocr_region) || out.ocr_region.length !== 4)) throw new ServerError("bad_args", "ocr_region must be [x, y, w, h] in screen points");
   }
   if (name === "open_application") {
-    const refusal = launchRefusal(out, computer.platform ?? computer.platformHint ?? (computer.transport === "local" ? process.platform : computer.transport === "hdc" ? "harmonyos" : "linux"));
+    const refusal = launchRefusal(out, computer.platform ?? computer.platformHint ?? (computer.transport === "local" ? process.platform : computer.transport === "hdc" ? "harmonyos" : "linux"), { remote: computer.transport !== "local" });
     if (refusal) throw new ServerError(refusal.code, refusal.message);
   }
   if (name === "app_script") {
