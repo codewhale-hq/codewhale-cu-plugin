@@ -1,8 +1,13 @@
 # Permission model for Computer Use — and what Codewhale should copy
 
-Status: **proposal**. Nothing here is implemented. Written 2026-10-22 after a
-live driving session exposed that Computer Use cannot be authorized at all in
-Full Access, and that the reason is structural rather than a missing branch.
+Status: **proposal, partly implemented**. Written 2026-10-22 after a live
+driving session exposed that Computer Use cannot be authorized at all in Full
+Access, and that the reason is structural rather than a missing branch. The
+Engine since lets Full Access ask for a consent decision (its commit
+`ad697b35f5`, 2026-10-22); the four-layer split in sections 4 to 7, a
+host-owned grant store and a `/plugin permissions` view are not built. The
+plugin side is unchanged: it still verifies a host attestation or a client
+elicitation before it records an allow.
 
 ## 1. The finding, in one paragraph
 

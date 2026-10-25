@@ -58,7 +58,7 @@ Update log: `~/Library/Logs/Codewhale Computer Use/update.log`.
 ## Getting help
 
 Open an issue at
-[github.com/Hmbown/codewhale-cu-plugin/issues](https://github.com/Hmbown/codewhale-cu-plugin/issues)
+[github.com/codewhale-hq/codewhale-cu-plugin/issues](https://github.com/codewhale-hq/codewhale-cu-plugin/issues)
 with the plugin version, macOS version, the failed action and the error text.
 Remove private app contents, document text and credentials from any log
 excerpt. For a suspected vulnerability, follow [SECURITY.md](../SECURITY.md)

@@ -7,7 +7,7 @@ than contributions that add surface area.
 ## Getting started
 
 ```bash
-git clone https://github.com/Hmbown/codewhale-cu-plugin
+git clone https://github.com/codewhale-hq/codewhale-cu-plugin
 cd codewhale-cu-plugin
 npm ci
 npm test          # unit, protocol and app tests; no GUI input is performed

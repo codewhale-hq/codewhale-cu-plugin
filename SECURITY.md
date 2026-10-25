@@ -5,7 +5,7 @@
 Please do not file public issues for suspected vulnerabilities. Use GitHub's
 private vulnerability reporting for this repository
 (**Security → Report a vulnerability** on
-[github.com/Hmbown/codewhale-cu-plugin](https://github.com/Hmbown/codewhale-cu-plugin)).
+[github.com/codewhale-hq/codewhale-cu-plugin](https://github.com/codewhale-hq/codewhale-cu-plugin)).
 If that option is not available, open an issue that says only that you have a
 security report and how to reach you, without details of the problem.
 

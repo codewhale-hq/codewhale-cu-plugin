@@ -75,7 +75,7 @@ helper is an error, never permission to bypass it. Permission recovery is in
 [Setup and troubleshooting](docs/TROUBLESHOOTING.md).
 
 **Choose your surface.** Apps on this Mac use Computer Use; your signed-in Chrome
-uses [Codewhale for Chrome](https://github.com/Hmbown/codewhale-plugin-marketplace/tree/main/plugins/chromewhale);
+uses [Codewhale for Chrome](https://github.com/codewhale-hq/codewhale-plugin-marketplace/tree/main/plugins/chromewhale);
 a clean browser uses Computer Use's `browser` tool. `/computer status` checks
 the first route; Chrome has its own connector and per-site grants.
 
@@ -110,7 +110,8 @@ neither has the native human controls, exact-window targeting or a qualified
 signed installer, and both are excluded from the plugin's public host
 eligibility until those gates pass. Their raw input uses the shared desktop
 and must not be treated as background control. Windows semantic mutations
-currently refuse scoped element targets. See the
+bind the observed window and element runtime identities and refuse stale
+paths. See the
 [publication review](docs/PUBLICATION_REVIEW.md) and
 [porting plan](docs/PORTING.md).
 The SSH route remains experimental. See the platform-specific
@@ -526,8 +527,9 @@ recorder.
 
 ## Verification status
 
-**Source (this snapshot).** `npm test` is green on macOS: 381 tests, 364
-passed, 0 failed, 17 platform skips (per-release counts ride with the
+**Source (this snapshot).** `npm test` is green on macOS: 515 tests, 494
+passed, 0 failed, 21 platform skips; the Linux Docker box runs the same 515 with
+471 passed, 0 failed, 44 skips (per-release counts ride with the
 [release notes](CHANGELOG.md)). The GitHub Actions workflow runs the same
 suite plus the receipt hygiene check on macOS, Ubuntu and Windows runners. Source
 tests exercise the protocol, routing, session and injected-runner paths;
