@@ -355,3 +355,38 @@ test("on Linux a window index does not scope a recording to an app", async (t) =
   }
   assert.deepEqual(s.calls("recording_start"), []);
 });
+
+const OTHER = { name: "OtherApp", pid: 555, bundle_id: "com.other.app", frontmost: false };
+
+test("a failed launch by pid is remembered by the app it named, so it cannot wedge the binding", async (t) => {
+  const s = await boot(t, { state: { owner: null, apps: [FAKE, OTHER] } });
+  await bound(s, "FakeApp");
+  await s.tool("consent", { action: "allow", app: "OtherApp" });
+  s.setState({ apps: [FAKE, OTHER], owner: null, open_error: { code: "launch_failed" } });
+  assert.equal((await s.tool("open_application", { pid: 555 })).error?.code, "launch_failed");
+  s.setState({ apps: [FAKE], owner: null });
+  const typed = await s.tool("type", { text: "hello" });
+  assert.equal(typed.ok, true, JSON.stringify(typed));
+});
+
+test("repeated failed launches are remembered once, not once per attempt", async (t) => {
+  const s = await boot(t, { state: { owner: null, apps: [FAKE, OTHER] } });
+  await bound(s, "FakeApp");
+  await s.tool("consent", { action: "allow", app: "OtherApp" });
+  s.setState({ apps: [FAKE, OTHER], owner: null, open_error: { code: "launch_failed" } });
+  for (let i = 0; i < 12; i++) await s.tool("open_application", { pid: 555 });
+  const before = s.calls("list_apps").length;
+  assert.equal((await s.tool("type", { text: "hello" })).ok, true);
+  assert.ok(s.calls("list_apps").length - before <= 1, `list_apps calls for one action: ${s.calls("list_apps").length - before}`);
+});
+
+test("a launch with no resolved app is judged afterwards even when nothing was bound before", async (t) => {
+  const s = await boot(t, { state: { owner: null } });
+  await s.tool("consent", { action: "allow", app: "OtherApp" });
+  s.setControl({ open_without_resolved: true });
+  assert.equal((await s.tool("open_application", { name: "OtherApp" })).ok, true);
+  await s.tool("consent", { action: "deny", app: "OtherApp" });
+  const typed = await s.tool("type", { text: "hello" });
+  assert.equal(typed.error?.code, "app_denied");
+  assert.deepEqual(s.calls("type"), []);
+});

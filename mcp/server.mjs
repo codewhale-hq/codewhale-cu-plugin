@@ -718,11 +718,16 @@ async function waitFor(computer, args, switched) {
 // Spawned computers are exempt: a task-owned desktop holds nothing of the
 // user's, and remote machines are covered by the transport's own trust.
 
-function noteUnsettledBind(computerId, args) {
+async function noteUnsettledBind(computer, args) {
   let refs = [];
   try { refs = launchIdentityRefs(args); } catch { return; }
-  if (!refs.length) return;
-  unsettledBinds.set(computerId, [...(unsettledBinds.get(computerId) ?? []), ...refs]);
+  const named = new Map((unsettledBinds.get(computer.id) ?? []).map((ref) => [JSON.stringify(ref), ref]));
+  for (const ref of refs) {
+    const identity = ref.pid != null ? await resolveAppIdentity(computer, ref).catch(() => null) : ref;
+    const entry = { ...(identity?.bundle_id ? { bundle_id: identity.bundle_id } : {}), ...(identity?.name ? { name: identity.name } : {}) };
+    if (consent.appKeys(entry).length) named.set(JSON.stringify(entry), entry);
+  }
+  unsettledBinds.set(computer.id, [...named.values()].slice(-8));
 }
 
 /** Tools whose implicit target is the bound app when no explicit app_ref or element is given. */
@@ -859,7 +864,7 @@ async function consentCheck(computer, name, args) {
       if (st?.computerId === computer.id) refs.push(st.app_ref);
     }
     const bound = boundApps.get(computer.id);
-    if (!refs.length && bound && BOUND_TARGET_TOOLS.has(name)) refs.push(bound, ...(unsettledBinds.get(computer.id) ?? []));
+    if (!refs.length && BOUND_TARGET_TOOLS.has(name)) refs.push(...(bound ? [bound] : []), ...(unsettledBinds.get(computer.id) ?? []));
     if (IMPLICIT_FRONTMOST_TOOLS.has(name) && args.app_ref === undefined && (computer.platform ?? process.platform) === "darwin"
         && !(name === "find_elements" && args.state_id != null) && (name !== "recording_start" || args.window_id != null)) {
       if (bound) {
@@ -1641,7 +1646,7 @@ async function callTool(params, bindWhen = null) {
     // Every successful launch retires captured pixels, including backends
     // that report only launch status rather than a resolved app identity.
     if (name === "open_application") lastRasters.delete(computer.id);
-    if (name === "open_application" && !data?.resolved) noteUnsettledBind(computer.id, args);
+    if (name === "open_application" && !data?.resolved) await noteUnsettledBind(computer, args);
 
     // Binding a different app retires this computer's element cache: a bare
     // index must never silently address the previous app's observation —
@@ -1731,7 +1736,7 @@ async function callTool(params, bindWhen = null) {
     // A failed open_application cleared the backend's input binding before it
     // attempted anything — the tracked bound app must not claim otherwise.
     if (name === "open_application" && dispatched) {
-      noteUnsettledBind(computer.id, args);
+      await noteUnsettledBind(computer, args);
       lastRasters.delete(computer.id);
     }
     // Local input may have landed before cancellation or timeout too.
