@@ -127,7 +127,7 @@ export function register({ id, transport, label, ...rest }) {
   const reg = load();
   const prev = reg.computers[id];
   reg.computers[id] = {
-    ...(prev?.transport === transport && (transport !== "ssh" || prev.host === rest.host) ? prev : {}),
+    ...(prev?.transport === transport && (transport !== "ssh" || (prev.host === rest.host && (prev.user ?? null) === (rest.user ?? null) && (prev.port ?? null) === (rest.port ?? null))) ? prev : {}),
     id,
     transport,
     label: label ?? prev?.label ?? id,

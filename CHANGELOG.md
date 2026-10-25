@@ -2,6 +2,8 @@
 
 ## 0.12.1 — unreleased
 
+- Re-registering an ssh computer no longer inherits fields across users or ports. User, port, known-hosts file, agent path and platform hint carry over only when host, user and port all match; before, the same host with another user or port kept them, and a stale `platformHint` could make the launch policy and the owner checks apply another platform's rules.
+
 - Windows input that fails partway reports that input may have been sent. A PowerShell failure on an input script, such as typing that dies after some characters, now sets `outcome_unknown` so the caller does not replay it, unless the failure came before any input (`cursor_move_failed` before a press, `element_stale`, `element_disabled`, `element_read_only`). HarmonyOS `list_displays` ignores a failure to delete its probe directory instead of failing a probe that worked. The Windows code is source-only: it was checked against injected runners and has never run on Windows.
 
 - The default recordings directory is tightened more carefully. The 0700 change followed a symlink and changed the mode of whatever the default path pointed at (including setgid and group access on a shared directory) and swallowed every failure. It now skips a directory that is a symlink, changes only a directory the current user owns, through an opened handle, keeps the owner's own permission bits, and writes one line to stderr when it could not make the directory private. A directory named by `CODEWHALE_CU_RECORDINGS_DIR` that does not exist yet is created 0700 by the plugin; an existing one is still left as the operator made it.
