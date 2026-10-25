@@ -50,8 +50,6 @@ export function pruneCaptures(dir, { days = captureRetentionDays(), now = Date.n
 
 let pruned = false;
 
-/** The one recordings directory: desktop and browser captures, zoom crops,
- * recordings and trajectories all live under it. */
 let warnedPrivacy = false;
 
 function makePrivate(dir) {
@@ -69,12 +67,17 @@ function makePrivate(dir) {
   }
 }
 
+/** The one recordings directory: desktop and browser captures, zoom crops,
+ * recordings and trajectories all live under it. */
 export function recordingsDir() {
   const chosen = process.env.CODEWHALE_CU_RECORDINGS_DIR;
   const dir = path.resolve(chosen || path.join(stateDir(), "recordings"));
   try {
     if (chosen) {
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(path.dirname(dir), { recursive: true });
+        fs.mkdirSync(dir, { mode: 0o700 });
+      }
       return dir;
     }
     if (process.platform !== "win32") makePrivate(dir);
