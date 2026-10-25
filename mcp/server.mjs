@@ -15,6 +15,7 @@ import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS,
 import { tryJson, withSignal, throwIfAborted, wait, currentSignal } from "../src/exec.mjs";
 import { inputRefusal, watchLease, HUMAN_DRIVING } from "../src/lease.mjs";
 import { APP_VERSION, helperStaleness, helperBuildDrift } from "../src/app-socket.mjs";
+import { launchRefusal } from "../src/launch-policy.mjs";
 import { checkAppScript } from "../src/app-script-policy.mjs";
 import { createRecorder, readTrajectory, listTrajectories, resolveTrajectory, isTrajectoryTool, containsRasterPin } from "../src/trajectory.mjs";
 
@@ -1376,6 +1377,10 @@ async function callTool(params, bindWhen = null) {
       const policy = checkAppScript(args.script, args.language);
       if (policy.refused) throw new ServerError("script_refused", `app_script refused: ${policy.refused}. Do not rewrite the script to get around this; use the computer-use tools, or ask the user.`);
     }
+    if (name === "open_application") {
+      const refusal = launchRefusal(args, computer.platform ?? computer.platformHint ?? (computer.transport === "local" ? process.platform : computer.transport === "hdc" ? "harmonyos" : "linux"));
+      if (refusal) throw new ServerError(refusal.code, refusal.message);
+    }
     const gateResult = await consentCheck(computer, name, args);
     if (gateResult?.implicit) args = { ...args, app_ref: gateResult.implicit };
     confirmationCheck(computer, name, args);
@@ -1656,7 +1661,7 @@ async function callTool(params, bindWhen = null) {
   } catch (err) {
     // A failed open_application cleared the backend's input binding before it
     // attempted anything — the tracked bound app must not claim otherwise.
-    if (name === "open_application") {
+    if (name === "open_application" && dispatched) {
       boundApps.delete(computer.id);
       lastRasters.delete(computer.id);
     }
@@ -1700,6 +1705,10 @@ function validateToolArgs(computer, name, out) {
     if (out.query != null && typeof out.query !== "string") throw new ServerError("bad_args", "query must be a string");
     if (out.role != null && typeof out.role !== "string") throw new ServerError("bad_args", "role must be a string");
     if (out.ocr_region != null && (!Array.isArray(out.ocr_region) || out.ocr_region.length !== 4)) throw new ServerError("bad_args", "ocr_region must be [x, y, w, h] in screen points");
+  }
+  if (name === "open_application") {
+    const refusal = launchRefusal(out, computer.platform ?? computer.platformHint ?? (computer.transport === "local" ? process.platform : computer.transport === "hdc" ? "harmonyos" : "linux"));
+    if (refusal) throw new ServerError(refusal.code, refusal.message);
   }
   if (name === "app_script") {
     if (typeof out.script !== "string" || !out.script.trim()) throw new ServerError("bad_args", "app_script needs a non-empty script string");

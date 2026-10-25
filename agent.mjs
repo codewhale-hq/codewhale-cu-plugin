@@ -2,7 +2,7 @@
 // One-shot: `node agent.mjs <base64(json)>` prints exactly one JSON receipt
 // line. The request is {"tool": "...", "args": {...}}; the shared handler
 // enforces the tool allow-list, so the transport can never become a shell.
-import { handle } from "./src/app-handler.mjs";
+import { handle, closeAllSessions } from "./src/app-handler.mjs";
 
 function reply(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
@@ -28,7 +28,15 @@ if (argv[0] === "--serve") {
       if (line) void serve(line);
     }
   });
-  process.stdin.on("end", () => process.exit(0));
+  const shutdown = async () => {
+    const limit = setTimeout(() => process.exit(1), 3_000);
+    const failed = (await closeAllSessions()).filter((result) => result.status === "rejected");
+    clearTimeout(limit);
+    for (const result of failed) process.stderr.write(`input release failed: ${result.reason?.message ?? result.reason}\n`);
+    process.exit(failed.length ? 1 : 0);
+  };
+  process.stdin.on("end", shutdown);
+  for (const signal of ["SIGTERM", "SIGHUP", "SIGINT"]) process.on(signal, shutdown);
 } else {
   let req;
   try {

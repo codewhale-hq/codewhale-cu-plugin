@@ -11,6 +11,8 @@ export class RegistryError extends Error {
 }
 
 const ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+export const PLATFORMS = ["darwin", "linux", "win32", "harmonyos"];
+const knownPlatform = (value) => value == null || PLATFORMS.includes(value);
 
 export function stateDir() {
   return process.env.CODEWHALE_CU_STATE_DIR || path.join(os.homedir(), ".codewhale-cu");
@@ -33,6 +35,7 @@ function localEntry() {
 /** An entry read from computers.json that could not have been registered. */
 function unusableEntry(entry) {
   if (!entry || typeof entry !== "object") return true;
+  if (!knownPlatform(entry.platform) || !knownPlatform(entry.platformHint)) return true;
   if (entry.transport !== "ssh") return false;
   try { validateSshTarget(entry); return false; } catch { return true; }
 }
@@ -45,6 +48,7 @@ export function load() {
     // refuse (an ssh host or user that reads as an option) is dropped.
     for (const [id, entry] of Object.entries(raw.computers)) {
       if (unusableEntry(entry)) delete raw.computers[id];
+      else if (entry.transport !== "docker") { delete entry.owned; delete entry.spawnedBy; }
     }
     return raw;
   } catch {
@@ -64,7 +68,7 @@ export function save(reg) {
 export function list() {
   const reg = load();
   // Keep the local entry truthful even if the state file is stale.
-  reg.computers.local = { ...(reg.computers.local ?? {}), ...localEntry() };
+  reg.computers.local = localEntry();
   if (!reg.computers[reg.active]) reg.active = "local";
   return reg;
 }
@@ -96,6 +100,10 @@ export function register({ id, transport, label, ...rest }) {
   if (id === "local" && transport !== "local") {
     throw new RegistryError("reserved_id", '"local" is reserved for this machine');
   }
+  if (!knownPlatform(rest.platform) || !knownPlatform(rest.platformHint)) {
+    throw new RegistryError("invalid_platform", `platform must be one of: ${PLATFORMS.join(", ")}`);
+  }
+  if (transport !== "docker") { delete rest.owned; delete rest.spawnedBy; }
   if (transport === "ssh") {
     try {
       validateSshTarget(rest);
@@ -119,7 +127,7 @@ export function register({ id, transport, label, ...rest }) {
   const reg = load();
   const prev = reg.computers[id];
   reg.computers[id] = {
-    ...prev,
+    ...(prev?.transport === transport && (transport !== "ssh" || prev.host === rest.host) ? prev : {}),
     id,
     transport,
     label: label ?? prev?.label ?? id,

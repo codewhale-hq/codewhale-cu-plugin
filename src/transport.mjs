@@ -7,6 +7,7 @@
 import { run, runOk, runInputLease, ExecError, currentSignal } from "./exec.mjs";
 import { ensureApp, appSessionRequest } from "./app-socket.mjs";
 import { sshArgv, sshDestination, sshOptions, validateSshTarget } from "./ssh-args.mjs";
+import { PLATFORMS } from "./registry.mjs";
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -377,6 +378,7 @@ function effectivePlatform(computer) {
     else if (computer.transport === "docker") platform = "linux"; // spawned containers are always the Linux desktop image
     else platform = "linux"; // conservative default for ssh; registration probes it
   }
+  if (!PLATFORMS.includes(platform)) throw Object.assign(new ExecError(`unsupported platform "${String(platform).slice(0, 40)}"`), { code: "invalid_platform" });
   return platform;
 }
 

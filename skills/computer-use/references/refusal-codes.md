@@ -47,6 +47,8 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 | `not_granted` | the session's capability grant (`CODEWHALE_CU_GRANT`) does not include this tool | work inside the grant; the host narrowed it deliberately |
 | `consent_required` | no user decision exists for this app on the local computer | ask the user, then record it: `consent {action:"allow"\|"deny", app:"…"}` |
 | `app_denied` | the user denied this app — the deny covers every spelling of it | do not work around it; only they can `consent {action:"revoke"}` |
+| `launch_refused` | `open_application` named an interpreter, shell, package runner or script host | launch the application itself by its own name; never start a command runner through the launcher |
+| `invalid_platform` | a registry entry or an ssh host reported a platform other than darwin, linux, win32 or harmonyos | re-register the computer; do not retry the same entry |
 | `consent_needs_user` | a consent allow/revoke, a `confirm`, `app_script`, or computer register/spawn was called without the user's own decision | ask the user; the host shows them the exact call — never retry it as a model call or a `run_actions` step |
 | `consent_declined` | the user declined the host's prompt for that call | do not retry; continue without it or ask them |
 | `foreground_consent_required` | an older installed server requires a separate foreground decision | follow that installed server's permission flow; current source reuses the approved app grant |

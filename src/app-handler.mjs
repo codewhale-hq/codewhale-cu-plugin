@@ -6,6 +6,7 @@ import url from "node:url";
 import { exec } from "./remote-runtime.mjs";
 import { withSignal, throwIfAborted } from "./exec.mjs";
 import { checkAppScript } from "./app-script-policy.mjs";
+import { launchRefusal } from "./launch-policy.mjs";
 import * as consent from "./consent.mjs";
 
 export const ALLOWED = new Set([
@@ -190,6 +191,10 @@ function namedApps(tool, args) {
  */
 function policyRefusal(tool, args, computerId) {
   let targets = namedApps(tool, args);
+  if (tool === "open_application") {
+    const refusal = launchRefusal(args);
+    if (refusal) return refusal;
+  }
   if (tool === "app_script") {
     const policy = checkAppScript(args.script, args.language);
     if (policy.refused) return { code: "script_refused", message: `app_script refused: ${policy.refused}` };
