@@ -52,17 +52,34 @@ let pruned = false;
 
 /** The one recordings directory: desktop and browser captures, zoom crops,
  * recordings and trajectories all live under it. */
-export function recordingsDir() {
-  const dir = path.resolve(process.env.CODEWHALE_CU_RECORDINGS_DIR || path.join(stateDir(), "recordings"));
-  if (!process.env.CODEWHALE_CU_RECORDINGS_DIR) {
-    try {
-      if (process.platform !== "win32") {
-        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-        if (fs.statSync(dir).mode & 0o077) fs.chmodSync(dir, 0o700);
-      }
-      if (!pruned) { pruned = true; pruneCaptures(dir); }
-    } catch { return dir; }
+let warnedPrivacy = false;
+
+function makePrivate(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const stat = fs.lstatSync(dir);
+    if (!stat.isDirectory() || !(stat.mode & 0o077)) return;
+    if (stat.uid !== process.getuid()) throw new Error("the directory belongs to another user");
+    const fd = fs.openSync(dir, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+    try { fs.fchmodSync(fd, stat.mode & 0o700); } finally { fs.closeSync(fd); }
+  } catch (error) {
+    if (warnedPrivacy) return;
+    warnedPrivacy = true;
+    process.stderr.write(`codewhale-cu: ${dir} was not made private (${error.message})\n`);
   }
+}
+
+export function recordingsDir() {
+  const chosen = process.env.CODEWHALE_CU_RECORDINGS_DIR;
+  const dir = path.resolve(chosen || path.join(stateDir(), "recordings"));
+  try {
+    if (chosen) {
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      return dir;
+    }
+    if (process.platform !== "win32") makePrivate(dir);
+    if (!pruned) { pruned = true; pruneCaptures(dir); }
+  } catch {}
   return dir;
 }
 
