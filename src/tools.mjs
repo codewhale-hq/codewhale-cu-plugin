@@ -81,7 +81,7 @@ export const TOOLS = [
   },
   {
     name: "computer_spawn",
-    description: "Spawn a task-owned disposable computer. transport=docker provisions an isolated Linux desktop container registered under `computer`; every other tool works on it unchanged. The spawned computer is destroyed by computer_remove, when the session ends, or after its lifetime (six hours by default; the receipt says). Prefer it over local when the task does not need the user's own session.",
+    description: "Spawn a task-owned disposable computer. transport=docker provisions an isolated Linux desktop container registered under `computer`; every other tool works on it unchanged. The spawned computer is destroyed by computer_remove or when the session ends, and stops when its lifetime ends (six hours by default; the receipt says). Prefer it over local when the task does not need the user's own session.",
     inputSchema: {
       type: "object",
       required: ["computer", "transport"],

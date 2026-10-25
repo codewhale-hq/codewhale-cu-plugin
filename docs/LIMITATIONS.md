@@ -127,9 +127,9 @@ window on their session, or see their apps. What it is not:
   container has a private IPC namespace and a 1 GB `/dev/shm`, all
   capabilities dropped, `no-new-privileges`, 4 GB of memory (swap included),
   2 CPUs (fewer if the daemon has fewer), 2048 processes and a six-hour
-  lifetime, after which it exits; the stopped container stays until the
-  session ends or the next spawn reaps it, and the registry entry fails closed
-  until `computer remove` clears it. `CODEWHALE_CU_SPAWN_MEMORY`, `_CPUS`, `_PIDS` and `_TTL_S` change
+  lifetime, after which it stops; the stopped container is removed by the
+  session's end or by this session's next spawn, and the registry entry fails
+  closed until `computer remove` clears it. `CODEWHALE_CU_SPAWN_MEMORY`, `_CPUS`, `_PIDS` and `_TTL_S` change
   the limits (an invalid value keeps the default). Network egress is on, as
   before; `CODEWHALE_CU_SPAWN_NETWORK=none` starts the container with no
   network. The container still shares the host kernel — it is a workspace
@@ -137,11 +137,15 @@ window on their session, or see their apps. What it is not:
 - **Abrupt death can leave a container, briefly.** `remove` and graceful
   session end (stdin close, SIGTERM/SIGINT/SIGHUP) reap what this session
   spawned; a SIGKILL'd host cannot run its teardown. Spawned containers carry
-  `codewhale.cu.spawned/session/computer/owner_pid` labels
-  (`docker ps --filter label=codewhale.cu.spawned=1`). The next spawn removes
-  containers whose owner process is gone on this host; one whose pid has been
-  reused by another process, one owned by another host sharing the daemon, or
-  one started before these labels existed, is left alone.
+  `codewhale.cu.spawned/session/computer/owner_pid/owner_host/owner_start`
+  labels (`docker ps --filter label=codewhale.cu.spawned=1`). The next spawn
+  removes containers whose owner is gone: the owner pid is dead, or a process
+  with that pid started at a different time (a reused pid), on the same host.
+  Host identity is a hash of the hostname, the machine id and the pid
+  namespace, so another machine, or a process in another pid namespace,
+  sharing the daemon is left alone even when the hostname and pid collide. A
+  container started before these labels existed is left alone. On Windows the
+  start time is not read, so only a dead owner pid releases a container there.
 - **Registry entries can outlive their container.** If a host dies after
   spawning but before teardown, the entry remains and fails closed on next
   use (the route check and `docker exec` both fail) — remove it.

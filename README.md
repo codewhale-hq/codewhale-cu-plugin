@@ -460,7 +460,7 @@ receipts keep working; `tools/list` advertises the merged set only.
   task-owned disposable Linux desktop container: it is registered
   `owned:true`, becomes active, takes every tool unchanged through the
   same agent protocol as ssh, and is destroyed by `remove` or when the
-  MCP session ends. A computer is an execution environment — prefer a
+  MCP session ends, and stops after its lifetime (six hours by default). A computer is an execution environment — prefer a
   spawned desktop for work that does not need the user's own session,
   and keep `local` for the tasks that do.
 - **Safety** — `stop_computer_control` kill switch; permission probes that

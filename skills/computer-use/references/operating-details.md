@@ -13,7 +13,8 @@ The registry holds two kinds:
   transport:"docker"}` provisions a disposable Linux desktop container,
   registers it, and makes it active. Every tool works on it unchanged; the
   user's own machine is never touched. It is destroyed by `computer
-  {action:"remove"}` or when the session ends. **Prefer a spawned computer
+  {action:"remove"}` or when the session ends, and stops after its lifetime
+  (six hours by default). **Prefer a spawned computer
   for any work that does not need the user's own session** — it is the
   isolated workspace, not a workaround for sharing theirs politely.
 - **Registered computers are someone's.** `local` is the machine the plugin

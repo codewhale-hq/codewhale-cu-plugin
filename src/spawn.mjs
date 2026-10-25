@@ -11,7 +11,9 @@
 // issued against containers carrying our spawn label — a hand-registered
 // docker entry pointing at a user's container cannot be destroyed here.
 import crypto from "node:crypto";
+import fs from "node:fs";
 import os from "node:os";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { run, ExecError, trim } from "./exec.mjs";
 import { PLUGIN_ROOT, SESSION_ID, b64 } from "./transport.mjs";
@@ -22,6 +24,7 @@ export const SESSION_LABEL = "codewhale.cu.session";
 export const COMPUTER_LABEL = "codewhale.cu.computer";
 export const OWNER_LABEL = "codewhale.cu.owner_pid";
 export const HOST_LABEL = "codewhale.cu.owner_host";
+export const START_LABEL = "codewhale.cu.owner_start";
 export const DEFAULT_IMAGE = process.env.CODEWHALE_CU_SPAWN_IMAGE || "codewhale-cu-linux";
 
 const CONTAINER_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -67,14 +70,44 @@ function processAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (error) { return error.code !== "ESRCH"; }
 }
 
-export async function reapOrphanedSpawns(command = docker, alive = processAlive, host = os.hostname()) {
-  const listed = await command(["ps", "-a", "--filter", `label=${SPAWN_LABEL}=1`, "--format", `{{.Names}}|{{.Label "${OWNER_LABEL}"}}|{{.Label "${HOST_LABEL}"}}`], { timeoutMs: 10_000, signal: null });
+function processStartSeconds(pid) {
+  if (process.platform === "win32") return null;
+  const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: 5_000, env: { ...process.env, LC_ALL: "C" } });
+  const ms = r.status === 0 ? Date.parse(r.stdout.trim()) : NaN;
+  return Number.isFinite(ms) ? Math.round(ms / 1000) : null;
+}
+
+let cachedHostIdentity;
+export function hostIdentity() {
+  if (cachedHostIdentity) return cachedHostIdentity;
+  const reads = [
+    () => os.hostname(),
+    () => fs.readFileSync("/etc/machine-id", "utf8"),
+    () => fs.readlinkSync("/proc/self/ns/pid"),
+    () => (process.platform === "darwin" ? /"IOPlatformUUID" = "([^"]+)"/.exec(spawnSync("ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"], { encoding: "utf8", timeout: 5_000 }).stdout ?? "")?.[1] ?? "" : ""),
+  ];
+  const parts = reads.map((read) => { try { return String(read()).trim(); } catch { return ""; } });
+  cachedHostIdentity = crypto.createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 32);
+  return cachedHostIdentity;
+}
+
+const startedAt = () => Math.round(Date.now() / 1000 - process.uptime());
+
+export async function reapOrphanedSpawns(command = docker, alive = processAlive, host = hostIdentity(), startOf = processStartSeconds) {
+  const listed = await command(["ps", "-a", "--filter", `label=${SPAWN_LABEL}=1`, "--format", `{{.Names}}|{{.Label "${OWNER_LABEL}"}}|{{.Label "${HOST_LABEL}"}}|{{.Label "${START_LABEL}"}}|{{.Label "${SESSION_LABEL}"}}|{{.State}}`], { timeoutMs: 10_000, signal: null });
   if (listed.code !== 0) return [];
   const reaped = [];
   for (const line of listed.stdout.split("\n")) {
-    const [container, owner, ownerHost] = line.trim().split("|");
+    const [container, owner, ownerHost, ownerStart, session, state] = line.trim().split("|");
     const pid = Number(owner);
-    if (!container || !CONTAINER_RE.test(container) || !PID_RE.test(owner ?? "") || pid > 2147483647 || ownerHost !== host || alive(pid)) continue;
+    if (!container || !CONTAINER_RE.test(container) || !PID_RE.test(owner ?? "") || pid > 2147483647 || ownerHost !== host) continue;
+    let ownerGone = !alive(pid);
+    if (!ownerGone && /^[1-9][0-9]{0,11}$/.test(ownerStart ?? "")) {
+      const started = startOf(pid);
+      ownerGone = started != null && Math.abs(started - Number(ownerStart)) > 5;
+    }
+    const ours = session === SESSION_ID && state === "exited";
+    if (!ownerGone && !ours) continue;
     const r = await command(["rm", "-f", container], { timeoutMs: 15_000, signal: null });
     if (r.code === 0) reaped.push(container);
   }
@@ -138,7 +171,8 @@ export async function spawnDockerComputer({ id, image = DEFAULT_IMAGE } = {}) {
       "--label", `${SESSION_LABEL}=${SESSION_ID}`,
       "--label", `${COMPUTER_LABEL}=${id}`,
       "--label", `${OWNER_LABEL}=${process.pid}`,
-      "--label", `${HOST_LABEL}=${os.hostname()}`,
+      "--label", `${HOST_LABEL}=${hostIdentity()}`,
+      "--label", `${START_LABEL}=${startedAt()}`,
       image, "sleep", lifetimeSeconds,
     ], { timeoutMs: 30_000 });
     const deadline = Date.now() + 30_000;
