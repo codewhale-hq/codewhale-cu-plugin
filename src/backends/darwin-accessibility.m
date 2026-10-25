@@ -1184,7 +1184,7 @@ static id execute(NSDictionary *p) {
     return cuPostKey(args,[args[@"input_app_ref"][@"pid"] intValue]);
   }
   cuCheckCancelled();
-  if([tool isEqual:@"input_capabilities"]) return @{@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"window_record":@(cuResolveBgPointer()?1:0)};
+  if([tool isEqual:@"input_capabilities"]) return @{@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"focused_control":@1,@"window_record":@(cuResolveBgPointer()?1:0)};
   if([tool isEqual:@"front_lease_watchdog"]) {
     long long remaining = [args[@"deadline"] longLongValue] - (long long)([NSDate new].timeIntervalSince1970 * 1000);
     if(remaining > 0 && remaining < 30000) usleep((useconds_t)remaining * 1000);
@@ -1444,7 +1444,7 @@ static id execute(NSDictionary *p) {
     return done;
   }
   NSRunningApplication *inputApp=nil;
-  if([@[@"type",@"key_event",@"bg_key",@"mouse_event",@"scroll",@"hit_test",@"bg_pointer"] containsObject:tool]) {
+  if([@[@"type",@"key_event",@"bg_key",@"mouse_event",@"scroll",@"hit_test",@"bg_pointer",@"focused_control"] containsObject:tool]) {
     if(![args[@"input_app_ref"] isKindOfClass:NSDictionary.class]) @throw [NSException exceptionWithName:@"focus" reason:@"open_application first to bind the input destination" userInfo:nil];
     inputApp=resolve(args[@"input_app_ref"]);
     if(!inputApp || inputApp.terminated) @throw [NSException exceptionWithName:@"focus" reason:@"input application is no longer running; open_application again" userInfo:nil];
@@ -1457,6 +1457,24 @@ static id execute(NSDictionary *p) {
     cuFrontLeaseRestoreIfHeld();
   if(mutates) { cuCheckCancelled(); cuLockInput(); }
   if(!AXIsProcessTrusted()) @throw [NSException exceptionWithName:@"permission" reason:@"Accessibility permission is missing for Codewhale Computer Use (or the direct host)." userInfo:nil];
+  if([tool isEqual:@"focused_control"]) {
+    AXUIElementRef appEl=AXUIElementCreateApplication(inputApp.processIdentifier);
+    AXUIElementSetMessagingTimeout(appEl,2.0);
+    axPrepare(appEl);
+    CFTypeRef value=NULL;
+    AXError err=AXUIElementCopyAttributeValue(appEl,kAXFocusedUIElementAttribute,&value);
+    CFRelease(appEl);
+    if(err==kAXErrorNoValue || err==kAXErrorAttributeUnsupported || err==kAXErrorNotImplemented || (err==kAXErrorSuccess && !value)) return @{@"control":NSNull.null};
+    if(err!=kAXErrorSuccess) @throw [NSException exceptionWithName:@"focused_control" reason:[NSString stringWithFormat:@"focused_control_unknown: the focused control could not be read (%d)",err] userInfo:nil];
+    id focused=CFBridgingRelease(value);
+    AXUIElementRef el=(__bridge AXUIElementRef)focused;
+    id role=attr(el,@"AXRole"), title=attr(el,@"AXTitle"), desc=attr(el,@"AXDescription");
+    BOOL hasTitle=[title isKindOfClass:NSString.class] && [title length];
+    BOOL hasDesc=[desc isKindOfClass:NSString.class] && [desc length];
+    return @{@"control":@{@"role":[role isKindOfClass:NSString.class]?role:NSNull.null,
+                          @"label":hasTitle?title:(hasDesc?desc:NSNull.null),
+                          @"description":hasDesc?desc:NSNull.null}};
+  }
   if([tool isEqual:@"type"]) {
     id focused = cuFocusedElement(inputApp.processIdentifier);
     NSDictionary *tt = args[@"target"];

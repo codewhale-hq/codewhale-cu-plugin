@@ -959,7 +959,7 @@ async function inputOwnerCheck(computer, name, prepared, ownerOf) {
 // covers it. Coordinate targets are matched against the latest observation;
 // a point with no observed labelled control there is not recognized.
 const IRREVERSIBLE_LABEL = /\b(pay(ment)?|buy|purchase|place\s+(your\s+)?order|submit\s+order|confirm\s+(order|purchase|payment)|order\s+now|check\s?out|send|transfer|delete|erase|empty\s+trash|move\s+to\s+(the\s+)?trash)\b/i;
-const CONFIRM_TOOLS = new Set(["left_click", "double_click", "triple_click", "perform_action", "invoke_menu", "key"]);
+const CONFIRM_TOOLS = new Set(["left_click", "double_click", "triple_click", "left_mouse_down", "perform_action", "invoke_menu", "key"]);
 // Entering text into a field labelled "Send to" activates nothing.
 const TEXT_ROLE = /text|edit|entry|search|combo|field/i;
 const CONTAINER_ROLE = /window|application|group|scroll|split|toolbar|area|document|pane|frame|list|table|outline|sheet|dialog|browser|menubar|^menu$|AXMenu$/i;
@@ -1025,16 +1025,17 @@ function confirmationCheck(computer, name, args, control = activatedControl(comp
 // An untargeted Return, Enter or space presses whatever holds keyboard focus.
 // Backends that can read the focused control (focused_control) have it judged
 // like a click on that control; others keep the observation-based check.
-const ACTIVATING_KEY = /^(return|enter|kp_enter|space)$/i;
+const ACTIVATING_KEY = /^(return|enter|kpenter|keypadenter|space|spacebar)$/;
+const activatingKey = (part) => part === " " || ACTIVATING_KEY.test(part.toLowerCase().replace(/[\s_-]+/g, ""));
 
 async function focusedControlCheck(computer, name, args, focusedOf) {
   if (args.target != null || computer.owned === true || typeof focusedOf !== "function") return;
-  const pressed = name === "key" || name === "hold_key" ? String(args.text ?? "return").split("+").pop().trim()
-    : name === "type" && (args.press_enter === true || /[\r\n]/.test(String(args.text ?? ""))) ? "return" : null;
-  if (pressed === null || !ACTIVATING_KEY.test(pressed)) return;
+  const pressed = name === "key" || name === "hold_key" ? String(args.text ?? "return").split("+").some(activatingKey)
+    : name === "type" && (args.press_enter === true || /[\r\n]/.test(String(args.text ?? "")));
+  if (!pressed) return;
   const ctl = await focusedOf();
   const label = [ctl?.label, ctl?.description].find((v) => typeof v === "string" && v.trim());
-  if (!label || TEXT_ROLE.test(String(ctl.role ?? ""))) return;
+  if (!label || TEXT_ROLE.test(String(ctl.role ?? "")) || CONTAINER_ROLE.test(String(ctl.role ?? ""))) return;
   confirmationCheck(computer, name, args, { label, last: label, app: ctl.app ?? null }, true);
 }
 
@@ -1383,7 +1384,7 @@ async function callTool(params, bindWhen = null) {
     }
     const gateResult = await consentCheck(computer, name, args);
     if (gateResult?.implicit) args = { ...args, app_ref: gateResult.implicit };
-    confirmationCheck(computer, name, args);
+    confirmationCheck(computer, name, args, undefined, CONFIRM_TOOLS.has(name) || (name === "type" && args.target?.type === "element" && (args.press_enter === true || /[\r\n]/.test(String(args.text ?? "")))));
     if (name === "run_actions") {
       return await runActions(computer, args, switched);
     }

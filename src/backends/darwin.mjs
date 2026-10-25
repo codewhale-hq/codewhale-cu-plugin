@@ -144,6 +144,7 @@ export function nativeErrorCode(message) {
   if (/refused the window frame change/i.test(m)) return "frame_refused";
   if (/no accessibility geometry/i.test(m)) return "window_target_not_found";
   if (/application not found|no running application/i.test(m)) return "app_not_found";
+  if (/^focused_control_unknown:/.test(m)) return "focused_control_unknown";
   return null;
 }
 
@@ -928,6 +929,15 @@ export function create({ exec }) {
       return { ...r, verified: r?.verified === true, note: r?.note ?? "the after frame is the app's own readback; cross-check with list_windows before relying on it" };
     },
     list_windows: listWindows,
+    focused_control: async () => {
+      if (!state.inputApp) return null;
+      if (!state.focusedControl) {
+        state.focusedControl = (await native("input_capabilities"))?.focused_control === 1;
+        if (!state.focusedControl) return null;
+      }
+      const r = await native("focused_control", {});
+      return r?.control ? { ...r.control, app: { ...state.inputApp } } : null;
+    },
     open_application: openApplication,
     get_app_state: async ({ app_ref, detail, depth, window_id, query, role, include_ocr = false, ocr_region } = {}) => {
       const t0 = Date.now();
