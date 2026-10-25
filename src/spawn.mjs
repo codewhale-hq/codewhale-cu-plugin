@@ -91,10 +91,13 @@ export function hostIdentity() {
   return cachedHostIdentity;
 }
 
-const startedAt = () => Math.round(Date.now() / 1000 - process.uptime());
+const startedAt = () => processStartSeconds(process.pid);
 
 export async function reapOrphanedSpawns(command = docker, alive = processAlive, host = hostIdentity(), startOf = processStartSeconds) {
-  const listed = await command(["ps", "-a", "--filter", `label=${SPAWN_LABEL}=1`, "--format", `{{.Names}}|{{.Label "${OWNER_LABEL}"}}|{{.Label "${HOST_LABEL}"}}|{{.Label "${START_LABEL}"}}|{{.Label "${SESSION_LABEL}"}}|{{.State}}`], { timeoutMs: 10_000, signal: null });
+  const listAll = (format) => command(["ps", "-a", "--filter", `label=${SPAWN_LABEL}=1`, "--format", format], { timeoutMs: 10_000, signal: null });
+  const fields = `{{.Names}}|{{.Label "${OWNER_LABEL}"}}|{{.Label "${HOST_LABEL}"}}|{{.Label "${START_LABEL}"}}|{{.Label "${SESSION_LABEL}"}}`;
+  let listed = await listAll(`${fields}|{{.State}}`);
+  if (listed.code !== 0) listed = await listAll(`${fields}|`);
   if (listed.code !== 0) return [];
   const reaped = [];
   for (const line of listed.stdout.split("\n")) {
@@ -172,7 +175,7 @@ export async function spawnDockerComputer({ id, image = DEFAULT_IMAGE } = {}) {
       "--label", `${COMPUTER_LABEL}=${id}`,
       "--label", `${OWNER_LABEL}=${process.pid}`,
       "--label", `${HOST_LABEL}=${hostIdentity()}`,
-      "--label", `${START_LABEL}=${startedAt()}`,
+      ...(startedAt() == null ? [] : ["--label", `${START_LABEL}=${startedAt()}`]),
       image, "sleep", lifetimeSeconds,
     ], { timeoutMs: 30_000 });
     const deadline = Date.now() + 30_000;
