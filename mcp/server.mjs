@@ -794,7 +794,6 @@ async function consentForRef(computer, ref) {
   return { verdict: widened, ref: resolved };
 }
 
-/** Every identity field a launch or kill names; the backends pick any one of them, so the ledger must judge each. */
 function launchIdentityRefs(args) {
   if (args.pid != null && !(Number.isSafeInteger(args.pid) && args.pid > 0)) throw new ServerError("bad_args", "pid must be a positive integer");
   for (const field of ["bundle_id", "name"]) {
