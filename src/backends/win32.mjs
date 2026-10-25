@@ -222,7 +222,8 @@ export function create(opts = {}) {
         .replace(/_x([0-9A-Fa-f]{4})_/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
         .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&"));
       const text = (messages.join("") || raw).slice(0, 1600);
-      throw Object.assign(new ExecError(`powershell.exe exited ${r.code}: ${text}`, r), { code: inputCode(text) });
+      const beforeInput = /\b(element_stale|element_disabled|element_read_only)\b|cursor_move_failed(?!: Windows refused the pointer move after)/.test(text);
+      throw Object.assign(new ExecError(`powershell.exe exited ${r.code}: ${text}`, r), { code: inputCode(text), ...(o.input === true && !beforeInput ? { inputMayHaveBeenSent: true } : {}) });
     }
     return r;
   }
