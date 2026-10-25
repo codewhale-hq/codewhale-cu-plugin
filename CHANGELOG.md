@@ -2,6 +2,8 @@
 
 ## 0.12.1 — unreleased
 
+- A runner that cannot read the focused control says so. When the desktop helper or ssh agent is too old to report it (or the backend lacks it) and a key press would have been judged, the receipt carries `focus_gate: "unavailable"`, so the model and the user learn that a Return on a focused button is not being checked. The macOS native read of the focused control has still never run against a live app (Accessibility is not granted to the build host); the macOS gate is checked with fake helpers only.
+
 - Re-registering an ssh computer no longer inherits fields across users or ports. User, port, known-hosts file, agent path and platform hint carry over only when host, user and port all match; before, the same host with another user or port kept them, and a stale `platformHint` could make the launch policy and the owner checks apply another platform's rules.
 
 - Windows input that fails partway reports that input may have been sent. A PowerShell failure on an input script, such as typing that dies after some characters, now sets `outcome_unknown` so the caller does not replay it, unless the failure came before any input (`cursor_move_failed` before a press, `element_stale`, `element_disabled`, `element_read_only`). HarmonyOS `list_displays` ignores a failure to delete its probe directory instead of failing a probe that worked. The Windows code is source-only: it was checked against injected runners and has never run on Windows.

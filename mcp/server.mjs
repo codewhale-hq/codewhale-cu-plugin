@@ -1099,12 +1099,12 @@ async function focusedControlCheck(computer, name, args, focusedOf) {
 }
 
 /** focused_control over the wire; a runner without it (macOS, older helpers) keeps the observation-based check. */
-function remoteFocusedControl(remoteCall) {
+function remoteFocusedControl(remoteCall, sink) {
   return async () => {
     const r = await remoteCall({ tool: "focused_control", args: {} }, { timeoutMs: 30_000 });
     if (r?.ok) return r.data ?? null;
     const code = r?.error?.code ?? "remote_error";
-    if (code === "unsupported_on_platform" || code === "tool_not_allowed") return null;
+    if (code === "unsupported_on_platform" || code === "tool_not_allowed") { sink.focusGate = "unavailable"; return null; }
     throw new ServerError(code, `key refused: ${r?.error?.message ?? "the focused control could not be read"}`);
   };
 }
@@ -1537,7 +1537,7 @@ async function callTool(params, bindWhen = null) {
       };
       const wireArgs = await prepareArgs(computer, name, args, resolve, sink);
       if (computer.transport === "local" || computer.transport === "ssh") await inputOwnerCheck(computer, name, wireArgs, remoteInputOwner(computer, remoteCall));
-      await focusedControlCheck(computer, name, wireArgs, remoteFocusedControl(remoteCall));
+      await focusedControlCheck(computer, name, wireArgs, remoteFocusedControl(remoteCall, sink));
       throwIfAborted();
       await assertCurrentRoute(computer, binding);
       // Re-check the kill switch: a stop that arrived while the executor was
@@ -1603,6 +1603,7 @@ async function callTool(params, bindWhen = null) {
       const prepared = await prepareArgs(computer, name, args, resolve, sink);
       if (computer.transport === "local" && typeof backend.input_owner === "function") await inputOwnerCheck(computer, name, prepared, (query) => backend.input_owner(query));
       if (typeof backend.focused_control === "function") await focusedControlCheck(computer, name, prepared, () => backend.focused_control());
+      else if (prepared.target == null && activationCount(name, prepared)) sink.focusGate = "unavailable";
       throwIfAborted();
       await assertCurrentRoute(computer, binding);
       if (controlStopped && !READ_ONLY_TOOLS.has(name)) throw new ServerError("control_stopped", "stop_computer_control is active; no further actions are permitted this session");
@@ -1715,7 +1716,7 @@ async function callTool(params, bindWhen = null) {
       const grant = grantReport();
       if (grant) data.grant = grant;
     }
-    const content = [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, ...(sink.reacquired ? { target_reacquired: true } : {}), ...data, ...(sink.rasterId ? { target_raster_id: sink.rasterId } : {}) })) }];
+    const content = [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, ...(sink.reacquired ? { target_reacquired: true } : {}), ...(sink.focusGate ? { focus_gate: sink.focusGate } : {}), ...data, ...(sink.rasterId ? { target_raster_id: sink.rasterId } : {}) })) }];
     if (imageBlock) content.push(imageBlock);
     if ((name === "screenshot" && (data?.file || data?.path) && data?.pixels?.w > 0 && data?.pixels?.h > 0) ||
         (name === "browser_screenshot" && !!data?.file) ||

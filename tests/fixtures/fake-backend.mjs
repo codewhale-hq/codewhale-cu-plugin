@@ -138,6 +138,7 @@ export function create() {
     // The control holding keyboard focus: the control file's "focused" entry, else none.
     async focused_control() {
       record("focused_control", {});
+      if (liveState().focus_unsupported) throw Object.assign(new Error("focused_control is not supported on this platform"), { code: "unsupported_on_platform" });
       try { return JSON.parse(fs.readFileSync(controlFile, "utf8")).focused ?? null; } catch { return null; }
     },
     async app_script(args) { record("app_script", args); return { result: "fake", language: args.language ?? "applescript" }; },

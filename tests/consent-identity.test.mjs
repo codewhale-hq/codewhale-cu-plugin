@@ -317,3 +317,14 @@ test("a whole-screen capture is refused while a deny covers the app in front", {
   s.setState({ apps: [{ name: "Notes", pid: 9, bundle_id: "com.apple.Notes", frontmost: true }] });
   assert.equal((await s.tool("screenshot", {})).ok, true, "a deny on an app that is not in front does not block a capture");
 });
+
+test("a runner that cannot read the focused control says the focus gate is unavailable", async (t) => {
+  const s = await boot(t, { env: { CODEWHALE_CU_TEST_REMOTE: "1" }, state: { owner: null, focus_unsupported: true } });
+  s.setControl({ focused: { role: "AXButton", label: "Delete account", app: { name: "FakeApp", pid: 4242 } } });
+  const pressed = await s.tool("key", { text: "return" });
+  assert.equal(pressed.ok, true, JSON.stringify(pressed));
+  assert.equal(pressed.focus_gate, "unavailable");
+  const plain = await s.tool("key", { text: "tab" });
+  assert.equal(plain.ok, true);
+  assert.equal(plain.focus_gate, undefined);
+});
