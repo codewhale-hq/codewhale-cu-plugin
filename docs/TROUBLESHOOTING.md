@@ -70,4 +70,5 @@ Updates retain the previous bundle under the installation directory's
 `.codewhale-cu-backups/` folder. Quit Computer Use, move the current bundle
 aside, and restore the saved bundle as **Codewhale Computer Use.app**. Open
 it, check permissions and start a fresh task. Old sessions and stopped input
-are not replayed. Backups are kept until you choose to remove them.
+are not replayed. Only the two newest backups are kept (`CODEWHALE_CU_BACKUPS_KEEP`
+raises that); copy one elsewhere if you need an older build.

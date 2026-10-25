@@ -333,7 +333,8 @@ permission means the user must grant it once). Linux and Windows recording is
 unavailable pending session-owned cleanup; use screenshots. HarmonyOS uses
 snapshot-series (no native CLI recorder —
 the receipt says so). `recording_status` / `recording_list` report bytes and
-paths. Screenshots land in the same directory.
+paths. Screenshots land in the same directory; image files there older than
+14 days are deleted, so copy one elsewhere to keep it.
 
 ## Scripting apps (macOS)
 

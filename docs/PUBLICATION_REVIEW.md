@@ -32,7 +32,7 @@ is clear without the private history. Test and native evidence are recorded in
 | Windows semantic targets are refused because a scoped UIA path cannot be guaranteed | Confirmed; keep the refusal until exact window targeting is implemented and independently verified. The model instruction implying working Windows background mutation was removed. |
 | Windows screenshot ignores region/display selectors | Open; honor or explicitly refuse these selectors before Windows qualification. |
 | Windows pipe squatting and Linux held-input survival after daemon death | Device/security hypotheses, not reproduced findings. Require explicit ownership tests and an implementation appropriate to each OS before release. |
-| Rollback backups accumulate | Existing retention is deliberate: preserve rollback copies until the user removes them. A retention policy needs to preserve a verified rollback and disclose cleanup. |
+| Rollback backups accumulate | Fixed in source: after a successful install or update the app keeps the two newest backups and deletes older ones (`CODEWHALE_CU_BACKUPS_KEEP`); the CHANGELOG discloses the cleanup. Screenshots older than 14 days are pruned too (`CODEWHALE_CU_RETENTION_DAYS`). |
 
 The review found the existing Mac input preemption, scoped observations,
 session leases, human-only Pause/Stop authority and verified-update chain worth

@@ -5,14 +5,62 @@ import path from "node:path";
 import { ExecError } from "./exec.mjs";
 import { stateDir } from "./registry.mjs";
 
+const DAY_MS = 86_400_000;
+const PRUNE_EVERY_MS = 6 * 3_600_000;
+const PRUNE_LIMIT = 5_000;
+const CAPTURE_FILE = /\.(png|jpe?g)$/i;
+
+export function captureRetentionDays(env = process.env) {
+  const raw = env.CODEWHALE_CU_RETENTION_DAYS;
+  if (raw === undefined || raw === "") return 14;
+  const days = Number(raw);
+  return Number.isFinite(days) && (days === 0 || days >= 1) ? days : 0;
+}
+
+const realFolder = (folder) => { try { return fs.lstatSync(folder).isDirectory(); } catch { return false; } };
+
+export function pruneCaptures(dir, { days = captureRetentionDays(), now = Date.now() } = {}) {
+  const removed = [];
+  if (!(days > 0) || !Number.isFinite(days) || !Number.isFinite(now) || !realFolder(dir)) return removed;
+  const marker = path.join(dir, ".pruned");
+  try {
+    const age = now - fs.statSync(marker).mtimeMs;
+    if (age > -60_000 && age < PRUNE_EVERY_MS) return removed;
+  } catch {}
+  const cutoff = now - days * DAY_MS;
+  for (const folder of [dir, path.join(dir, "captures")]) {
+    if (!realFolder(folder)) continue;
+    let names;
+    try { names = fs.readdirSync(folder); } catch { continue; }
+    for (const name of names) {
+      if (removed.length >= PRUNE_LIMIT) break;
+      if (!CAPTURE_FILE.test(name)) continue;
+      const file = path.join(folder, name);
+      try {
+        const stat = fs.lstatSync(file);
+        if (!stat.isFile() || stat.mtimeMs >= cutoff) continue;
+        fs.unlinkSync(file);
+        removed.push(file);
+      } catch { continue; }
+    }
+  }
+  try { fs.writeFileSync(marker, `${new Date(now).toISOString()}\n`, { mode: 0o600 }); } catch { return removed; }
+  return removed;
+}
+
+let pruned = false;
+
 /** The one recordings directory: desktop and browser captures, zoom crops,
  * recordings and trajectories all live under it. */
 export function recordingsDir() {
   const dir = path.resolve(process.env.CODEWHALE_CU_RECORDINGS_DIR || path.join(stateDir(), "recordings"));
-  if (!process.env.CODEWHALE_CU_RECORDINGS_DIR && process.platform !== "win32") {
+  if (!process.env.CODEWHALE_CU_RECORDINGS_DIR) {
     try {
-      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      if (fs.statSync(dir).mode & 0o077) fs.chmodSync(dir, 0o700);
+      if (process.platform !== "win32") {
+        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+        if (fs.statSync(dir).mode & 0o077) fs.chmodSync(dir, 0o700);
+      }
+      if (!pruned) { pruned = true; pruneCaptures(dir); }
     } catch { return dir; }
   }
   return dir;

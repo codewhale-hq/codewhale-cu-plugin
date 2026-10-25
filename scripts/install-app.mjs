@@ -20,7 +20,7 @@ import url from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { APP_ID, APP_NAME, defaultLaunch, writeRegistration, registrationPath, runInfoPath, launchApp, hello } from "../src/app-socket.mjs";
 import { MAC_BUNDLE, LINUX_DIR, WIN_DIR, desktopEntry, macSigningIdentity, signMacCode } from "./build-app.mjs";
-import { replaceMacBundle } from "../app/install-macos.mjs";
+import { replaceMacBundle, pruneBackups } from "../app/install-macos.mjs";
 
 const ROOT = path.dirname(path.dirname(url.fileURLToPath(import.meta.url)));
 const INSTALL_HOME = os.homedir();
@@ -179,6 +179,7 @@ function installWindows({ dist, login }) {
     }
     try { fs.renameSync(staged, p.dest); }
     catch (error) { if (backup) fs.renameSync(backup, p.dest); throw error; }
+    if (backup) pruneBackups(path.dirname(backup), undefined, backup);
   } finally { fs.rmSync(staging, { recursive: true, force: true }); }
   fs.mkdirSync(path.dirname(p.shortcut), { recursive: true });
   winShortcut(p.shortcut, p.dest);

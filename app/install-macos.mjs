@@ -3,6 +3,34 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 
+const BACKUP_NAME = /^(\d{13})-[0-9a-f-]{36}(\.app)?$/;
+
+export function backupsToKeep(env = process.env) {
+  const keep = Number(env.CODEWHALE_CU_BACKUPS_KEEP);
+  return Number.isInteger(keep) && keep >= 1 ? keep : 2;
+}
+
+export function pruneBackups(dir, keep = backupsToKeep(), protect = null) {
+  const removed = [];
+  if (!Number.isInteger(keep) || keep < 1) return removed;
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return removed; }
+  const ours = names.map((name) => ({ name, match: BACKUP_NAME.exec(name) })).filter((entry) => entry.match)
+    .sort((a, b) => Number(b.match[1]) - Number(a.match[1]) || (a.name < b.name ? 1 : -1));
+  const kept = new Set(protect ? [path.basename(protect)] : []);
+  for (const { name } of ours) if (kept.size < keep) kept.add(name);
+  for (const { name } of ours) {
+    if (kept.has(name)) continue;
+    const target = path.join(dir, name);
+    try {
+      if (fs.lstatSync(target).isSymbolicLink()) continue;
+      fs.rmSync(target, { recursive: true, force: true });
+      removed.push(target);
+    } catch { continue; }
+  }
+  return removed;
+}
+
 /** Publish a verified bundle in one rename, retaining the previous install. */
 export function replaceMacBundle(source, destination, { prepare = () => {}, verify = verifySignature } = {}) {
   const parent = path.dirname(destination);
@@ -24,6 +52,7 @@ export function replaceMacBundle(source, destination, { prepare = () => {}, veri
     }
     try { fs.renameSync(next, destination); }
     catch (error) { if (backup) fs.renameSync(backup, destination); throw error; }
+    if (backup) pruneBackups(path.dirname(backup), undefined, backup);
     return { backup };
   } finally { fs.rmSync(staging, { recursive: true, force: true }); }
 }
