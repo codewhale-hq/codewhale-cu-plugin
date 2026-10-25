@@ -771,6 +771,12 @@ async function resolveAppIdentity(computer, ref) {
 
 const IMPLICIT_FRONTMOST_TOOLS = new Set(["get_app_state", "find_elements", "wait_for", "list_windows", "set_window_frame", "recording_start"]);
 
+const pinnedIdentity = (app) => ({
+  pid: app.pid,
+  ...(typeof app.bundle_id === "string" && app.bundle_id ? { bundle_id: app.bundle_id } : {}),
+  ...(typeof app.name === "string" && app.name ? { name: app.name } : {}),
+});
+
 async function frontmostApp(computer) {
   const res = await callTool({ name: "list_apps", arguments: { computer: computer.id } });
   const body = JSON.parse(res.content[0].text);
@@ -786,11 +792,17 @@ async function frontmostApp(computer) {
  * identity known (for the refusal's app field and alias merging).
  */
 async function consentForRef(computer, ref) {
-  const direct = consent.decisionFor(computer.id, consent.appKeys(ref));
-  if (direct.state !== "undecided") return { verdict: direct, ref };
-  const resolved = await resolveAppIdentity(computer, ref);
-  if (!resolved) return { verdict: direct, ref };
-  const widened = consent.decisionFor(computer.id, consent.appKeys(resolved));
+  const identityKeys = (identity) => consent.appKeys({ bundle_id: identity.bundle_id, name: identity.name });
+  let known = ref;
+  if (!identityKeys(ref).length) {
+    known = await resolveAppIdentity(computer, ref);
+    if (!known) return { verdict: { state: "undecided" }, ref };
+  }
+  const direct = consent.decisionFor(computer.id, identityKeys(known));
+  if (direct.state !== "undecided") return { verdict: direct, ref: known };
+  const resolved = await resolveAppIdentity(computer, { bundle_id: known.bundle_id, name: known.name });
+  if (!resolved) return { verdict: direct, ref: known };
+  const widened = consent.decisionFor(computer.id, identityKeys(resolved));
   return { verdict: widened, ref: resolved };
 }
 
@@ -842,14 +854,14 @@ async function consentCheck(computer, name, args) {
     if (IMPLICIT_FRONTMOST_TOOLS.has(name) && args.app_ref === undefined && (computer.platform ?? process.platform) === "darwin"
         && !(name === "find_elements" && args.state_id != null) && (name !== "recording_start" || args.window_id != null)) {
       if (bound) {
-        if (Number.isInteger(bound.pid) && bound.pid > 0) implicit = { pid: bound.pid };
+        if (Number.isInteger(bound.pid) && bound.pid > 0) implicit = pinnedIdentity(bound);
       } else {
         const front = await frontmostApp(computer);
         if (!front) {
           throw new ServerError("consent_required",
             "No application is named, bound or identifiably frontmost, and Computer Use does not act on an unnamed app. Pass app_ref (name, bundle_id or pid), or open_application first.");
         }
-        implicit = { pid: front.pid };
+        implicit = pinnedIdentity(front);
         refs.push(front);
       }
     }
@@ -901,12 +913,17 @@ async function consentCheck(computer, name, args) {
 const KEYBOARD_INPUT_TOOLS = new Set(["type", "key", "hold_key"]);
 const POINTER_INPUT_TOOLS = new Set(["left_click", "double_click", "triple_click", "right_click", "middle_click", "mouse_move", "scroll", "left_mouse_down"]);
 
-/** Every ledger key that identifies this owner: its window class, its process's other window classes, its process name and its pid. */
-function ownerKeys(owner) {
-  const keys = new Set();
-  for (const name of [owner.name, owner.comm, ...(Array.isArray(owner.aliases) ? owner.aliases : [])]) for (const key of consent.appKeys({ name })) keys.add(key);
-  for (const key of consent.appKeys({ pid: owner.pid })) keys.add(key);
-  return [...keys];
+function ownerVerdict(computerId, owner) {
+  const primary = new Set();
+  for (const name of [owner.name, owner.comm]) for (const key of consent.appKeys({ name })) primary.add(key);
+  for (const key of consent.appKeys({ pid: owner.pid })) primary.add(key);
+  const aliased = new Set();
+  for (const name of Array.isArray(owner.aliases) ? owner.aliases : []) for (const key of consent.appKeys({ name })) aliased.add(key);
+  const byProcess = consent.decisionFor(computerId, [...primary], { pidName: owner.name ?? null });
+  if (byProcess.state === "denied") return byProcess;
+  const alias = aliased.size ? consent.decisionFor(computerId, [...aliased], { pidName: null }) : { state: "undecided" };
+  if (alias.state === "denied") return alias;
+  return byProcess.state === "allowed" ? byProcess : alias;
 }
 
 /**
@@ -941,7 +958,7 @@ async function inputOwnerCheck(computer, name, prepared, ownerOf) {
     const owner = await ownerOf({ kind: check.kind, ...(at ? { point: at } : {}) });
     if (owner === undefined) return; // the runner gates input on the bound app instead
     if (!owner) continue; // the desktop itself: no application receives this input
-    const verdict = consent.decisionFor(computer.id, ownerKeys(owner));
+    const verdict = ownerVerdict(computer.id, owner);
     const desc = owner.name ?? (owner.pid ? `pid ${owner.pid}` : "the application");
     const arg = owner.name ?? `pid:${owner.pid}`;
     if (verdict.state === "denied") {

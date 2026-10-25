@@ -685,7 +685,7 @@ $name = $null; if ($proc) { $name = $proc.ProcessName }
           : "no window has keyboard focus, so the application that would receive these keys cannot be named"), { code: "input_owner_unknown" });
       }
       if (!w.name || !Number.isInteger(w.pid) || w.pid <= 0) throw Object.assign(new ExecError("the process that owns this window could not be identified"), { code: "input_owner_unknown" });
-      return { name: w.name, comm: w.name, pid: w.pid, title: w.title, window: `0x${Number(w.hwnd).toString(16)}`, ...(w.title ? { aliases: [w.title] } : {}) };
+      return { name: w.name, comm: w.name, pid: w.pid, title: w.title, window: `0x${Number(w.hwnd).toString(16)}`, ...(w.title && /^ApplicationFrameHost$/i.test(w.name) ? { aliases: [w.title] } : {}) };
     },
     focused_control: async () => {
       const j = await psJson(`${UIA_PRELUDE}

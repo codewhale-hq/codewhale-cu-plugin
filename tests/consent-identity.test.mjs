@@ -108,3 +108,64 @@ test("identities that agree still open; malformed identities are refused at the 
   const odd = await s.tool("kill_app", { pid: 4242, name: ["Terminal"] });
   assert.equal(odd.error?.code, "bad_args");
 });
+
+const CHROME = { name: "chrome", comm: "chrome", pid: 77, title: "Calculator", aliases: ["Calculator"] };
+
+test("a window name that matches an allowed app does not override a deny on the process", async (t) => {
+  const s = await boot(t, { state: { owner: CHROME } });
+  await s.tool("consent", { action: "deny", app: "chrome" });
+  await s.tool("consent", { action: "allow", app: "Calculator" });
+  const typed = await s.tool("type", { text: "hello" });
+  assert.equal(typed.error?.code, "app_denied");
+  assert.deepEqual(s.calls("type"), []);
+});
+
+test("a window name that matches a denied app tightens an allowed process", async (t) => {
+  const s = await boot(t, { state: { owner: CHROME } });
+  await s.tool("consent", { action: "deny", app: "Calculator" });
+  await s.tool("consent", { action: "allow", app: "chrome" });
+  const typed = await s.tool("type", { text: "hello" });
+  assert.equal(typed.error?.code, "app_denied");
+});
+
+test("a window name still stands in for the process when the process has no decision", async (t) => {
+  const s = await boot(t, { state: { owner: { ...CHROME, name: "ApplicationFrameHost", comm: "ApplicationFrameHost" } } });
+  await s.tool("consent", { action: "allow", app: "Calculator" });
+  const typed = await s.tool("type", { text: "hello" });
+  assert.equal(typed.ok, true, JSON.stringify(typed));
+});
+
+test("a pid the user approved does not carry over to the app that inherits the number", async (t) => {
+  const s = await boot(t);
+  await s.tool("consent", { action: "allow", app: "FakeApp" });
+  const terminal = { name: "Terminal", comm: "Terminal", pid: 4242 };
+  s.setState({ apps: [{ ...terminal, bundle_id: "com.apple.Terminal", frontmost: true }], owner: terminal });
+  const typed = await s.tool("type", { text: "hello" });
+  assert.equal(typed.error?.code, "consent_required");
+  assert.match(typed.error.message, /Terminal/);
+  const byPid = await s.tool("get_app_state", { app_ref: { pid: 4242 } });
+  assert.equal(byPid.error?.code, "consent_required");
+  assert.match(byPid.error.message, /Terminal/);
+  assert.deepEqual(s.calls("type"), []);
+  assert.deepEqual(s.calls("get_app_state"), []);
+});
+
+test("a pid reference follows the process now at that pid, and an unresolvable pid is not trusted", async (t) => {
+  const s = await boot(t);
+  await s.tool("consent", { action: "allow", app: "FakeApp" });
+  const ok = await s.tool("get_app_state", { app_ref: { pid: 4242 } });
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+  s.setState({ apps: [] });
+  const gone = await s.tool("get_app_state", { app_ref: { pid: 4242 } });
+  assert.equal(gone.error?.code, "consent_required");
+});
+
+test("an unnamed observation on macOS is pinned to the whole identity, not the pid alone", { skip: process.platform !== "darwin" }, async (t) => {
+  const s = await boot(t);
+  await s.tool("consent", { action: "allow", app: "FakeApp" });
+  assert.equal((await s.tool("get_app_state", {})).ok, true);
+  assert.deepEqual(s.calls("get_app_state").at(-1).args.app_ref, { pid: 4242, bundle_id: "com.fake.app", name: "FakeApp" });
+  assert.equal((await s.tool("open_application", { name: "FakeApp" })).ok, true);
+  assert.equal((await s.tool("get_app_state", {})).ok, true);
+  assert.deepEqual(s.calls("get_app_state").at(-1).args.app_ref, { pid: 4242, bundle_id: "com.fake.app", name: "FakeApp" });
+});

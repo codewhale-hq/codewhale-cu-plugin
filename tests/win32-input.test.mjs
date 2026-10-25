@@ -177,3 +177,15 @@ test("win32: a pointer position with no window under it cannot be attributed, so
   }
   await assert.rejects(backend.input_owner({ kind: "keyboard" }), (e) => e.code === "input_owner_unknown");
 });
+
+test("win32: a window title is not an identity, except for the shared UWP frame host", async (t) => {
+  const window = (name, title) => JSON.stringify({ window: { pid: 77, hwnd: 5, class: "Window", title, name } });
+  fakePowershell(t, { stdout: window("msedge", "Notepad") });
+  const backend = win32.create({ exec: { persistentInputOwner: true } });
+  const browser = await backend.input_owner({ kind: "keyboard" });
+  assert.equal(browser.name, "msedge");
+  assert.equal(browser.aliases, undefined);
+  process.env.CU_FAKE_PS_STDOUT = window("ApplicationFrameHost", "Calculator");
+  const uwp = await backend.input_owner({ kind: "keyboard" });
+  assert.deepEqual(uwp.aliases, ["Calculator"]);
+});

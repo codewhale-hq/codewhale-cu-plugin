@@ -120,10 +120,16 @@ function persistedEntries(computerId) {
  * allow, and "always allow" followed by a session deny yields deny. Returns
  * {state: allowed|denied|undecided, via, persisted}.
  */
-export function decisionFor(computerId, keys) {
+const comparable = (name) => (typeof name === "string" ? name.trim().replace(/\.app$/i, "").toLowerCase() : null);
+
+export function decisionFor(computerId, keys, { pidName } = {}) {
   let best = null;
   const consider = (entry, key, persisted) => {
     if (!entry || (entry.decision !== "allow" && entry.decision !== "deny")) return;
+    if (pidName !== undefined && key.startsWith("pid:") && entry.decision === "allow") {
+      const approved = comparable(entry.name);
+      if (!approved || approved !== comparable(pidName)) return;
+    }
     // A session entry may itself be backed by disk (remember:true writes
     // both layers and marks the session copy) — durability is honest, not
     // just "which map won".
