@@ -41,6 +41,27 @@ test("Linux and Windows accept an absolute URL only, and Windows refuses a netwo
   assert.equal(code({ name: "explorer", url: "file://attacker.example/share/a.exe" }, "win32"), "bad_args");
 });
 
+test("a Windows file URL must be a local drive path, in every spelling that reaches a share", () => {
+  for (const url of ["file:////evil.example/share/a.exe", "file://\\\\evil.example\\share\\a.exe", "file:///\\\\evil.example\\share", "file://localhost//evil/s", "file://%6Cocalhost/share/a.exe", "file://\uFF2C\uFF2F\uFF23\uFF21\uFF2C\uFF28\uFF2F\uFF33\uFF34/share/a.exe", "file://evil.example/share/a.exe", "file:///C:/Users/x/%5Cevil"]) {
+    assert.equal(code({ name: "explorer", url }, "win32"), "bad_args", url);
+  }
+  for (const url of ["file:///C:/Users/x/a.pdf", "file://localhost/D:/docs/a.pdf"]) assert.equal(code({ name: "explorer", url }, "win32"), null, url);
+});
+
+test("long names are refused before any pattern runs, and path spellings do not hide an interpreter", () => {
+  const started = Date.now();
+  assert.equal(code({ name: ".".repeat(100000) + "x" }, "linux"), "bad_args");
+  assert.equal(code({ bundle_id: ".".repeat(100000) + "x" }, "darwin"), "bad_args");
+  assert.ok(Date.now() - started < 1000);
+  for (const name of ["/usr/bin/node/", "/bin/sh/", "/usr/bin/env/", "/usr/bin/osascript/", "/usr/bin/node/.", "/bin/sh/./"]) assert.equal(code({ name }, "darwin"), "launch_refused", name);
+  for (const name of ["node18", "nodejs18", "python3.13t", "java17", "tclsh8.6", "wish", "pwsh-7", "bash-5.2", "ruby-3.3"]) assert.equal(code({ name }, "linux"), "launch_refused", name);
+  for (const name of ["setup.msi", "run.vbs", "x.js", "x.bat", "install.ps1", "tool.py", "/Users/x/run.command"]) assert.equal(code({ name }, name.startsWith("/") ? "darwin" : "win32"), "launch_refused", name);
+});
+
+test("schemes that hand a URL to a shell-like handler are refused", () => {
+  for (const url of ["ssh://host/", "telnet://host/", "applescript://com.apple.scripteditor?action=new", "shell:startup"]) assert.equal(code({ name: "Safari", url }, "darwin"), "bad_args", url);
+});
+
 test("a remote computer opens only http, https, mailto and file URLs", () => {
   for (const url of ["https://example.test/", "http://localhost:8080/", "mailto:a@example.test", "file:///tmp/a.pdf"]) assert.equal(code({ name: "firefox", url }, "linux", { remote: true }), null, url);
   for (const url of ["ftp://example.test/a", "ms-settings:", "tel:123456", "/etc/passwd", "slack://open", "x-apple.systempreferences:"]) assert.equal(code({ name: "firefox", url }, "linux", { remote: true }), "bad_args", url);

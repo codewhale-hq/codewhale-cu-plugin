@@ -352,7 +352,7 @@ export const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        name: { type: "string" }, bundle_id: { type: "string" }, url: { type: "string", description: "Absolute URL to open in the app; use file:/// for a document. Linux and Windows accept nothing else." },
+        name: { type: "string" }, bundle_id: { type: "string" }, url: { type: "string", description: "Absolute URL to open in the app; use file:/// for a document (file:///C:/... on Windows). macOS also accepts an absolute path; a remote computer opens only http, https, mailto and file URLs; schemes that run code are refused." },
         pid: { type: "integer", description: "Bind to this exact process. Use when two processes share a bundle id (list_apps shows both); it takes precedence over name and bundle_id and never launches anything." },
         activate: { type: "boolean", description: "Bring to foreground; defaults to false — background is the default on every platform. On macOS false keeps process-bound keyboard/accessibility control and refuses raw pointer gestures (they would borrow key focus); on Windows it launches the app minimized; on Linux it restores the previously focused window after launch. True explicitly brings this approved app forward using its existing app permission; no second foreground approval is needed. A recorded foreground denial still blocks it. Pointer input still goes to the app's window, never the user's cursor; yield to the user's activity. Neither mode is an isolated computer." },
         computer: computerParam,
