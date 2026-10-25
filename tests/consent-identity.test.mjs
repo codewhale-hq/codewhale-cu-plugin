@@ -169,3 +169,52 @@ test("an unnamed observation on macOS is pinned to the whole identity, not the p
   assert.equal((await s.tool("get_app_state", {})).ok, true);
   assert.deepEqual(s.calls("get_app_state").at(-1).args.app_ref, { pid: 4242, bundle_id: "com.fake.app", name: "FakeApp" });
 });
+
+async function bound(s, name) {
+  await s.tool("consent", { action: "allow", app: name });
+  const opened = await s.tool("open_application", { name });
+  assert.equal(opened.ok, true, JSON.stringify(opened));
+}
+
+test("a launch that fails after dispatch keeps the old binding judged, and its target too", async (t) => {
+  const s = await boot(t, { state: { owner: null } });
+  await bound(s, "FakeApp");
+  await s.tool("consent", { action: "allow", app: "OtherApp" });
+  s.setState({ apps: [FAKE], owner: null, open_error: { code: "launch_failed" } });
+  const failed = await s.tool("open_application", { name: "OtherApp" });
+  assert.equal(failed.error?.code, "launch_failed");
+  await s.tool("consent", { action: "deny", app: "FakeApp" });
+  const typed = await s.tool("type", { text: "hello" });
+  assert.equal(typed.error?.code, "app_denied");
+  assert.deepEqual(s.calls("type"), []);
+  await s.tool("consent", { action: "revoke", app: "FakeApp" });
+  await s.tool("consent", { action: "allow", app: "FakeApp" });
+  await s.tool("consent", { action: "deny", app: "OtherApp" });
+  const second = await s.tool("key", { text: "tab" });
+  assert.equal(second.error?.code, "app_denied");
+  assert.deepEqual(s.calls("key"), []);
+});
+
+test("a later launch that succeeds settles the binding again", async (t) => {
+  const s = await boot(t, { state: { owner: null } });
+  await bound(s, "FakeApp");
+  await s.tool("consent", { action: "allow", app: "OtherApp" });
+  s.setState({ apps: [FAKE], owner: null, open_error: { code: "launch_failed" } });
+  assert.equal((await s.tool("open_application", { name: "OtherApp" })).ok, false);
+  s.setState({ apps: [FAKE], owner: null });
+  assert.equal((await s.tool("open_application", { name: "FakeApp" })).ok, true);
+  await s.tool("consent", { action: "deny", app: "OtherApp" });
+  const typed = await s.tool("type", { text: "hello" });
+  assert.equal(typed.ok, true, JSON.stringify(typed));
+});
+
+test("a launch that reports no resolved app leaves its target judged too", async (t) => {
+  const s = await boot(t, { state: { owner: null } });
+  await bound(s, "FakeApp");
+  await s.tool("consent", { action: "allow", app: "OtherApp" });
+  s.setControl({ open_without_resolved: true });
+  assert.equal((await s.tool("open_application", { name: "OtherApp" })).ok, true);
+  await s.tool("consent", { action: "deny", app: "OtherApp" });
+  const typed = await s.tool("type", { text: "hello" });
+  assert.equal(typed.error?.code, "app_denied");
+});

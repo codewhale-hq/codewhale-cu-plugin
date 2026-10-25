@@ -46,6 +46,7 @@ const latestStateByComputer = new Map();
 const lastRasters = new Map();
 /** computerId -> app_ref the computer's input is bound to (set by open_application) */
 const boundApps = new Map();
+const unsettledBinds = new Map();
 /** computerId -> route-bound session resources; the registry owns configuration. */
 const backendCache = new Map();
 const ROUTE_INSPECTION_TOOLS = new Set([
@@ -200,6 +201,7 @@ async function retireBinding(id) {
   const binding = backendCache.get(id);
   invalidateObservations(id);
   boundApps.delete(id);
+  unsettledBinds.delete(id);
   // A route change means the computer behind the id changed: grants made for
   // the old destination must not ride to the new one.
   consent.dropSession(id);
@@ -716,6 +718,13 @@ async function waitFor(computer, args, switched) {
 // Spawned computers are exempt: a task-owned desktop holds nothing of the
 // user's, and remote machines are covered by the transport's own trust.
 
+function noteUnsettledBind(computerId, args) {
+  let refs = [];
+  try { refs = launchIdentityRefs(args); } catch { return; }
+  if (!refs.length) return;
+  unsettledBinds.set(computerId, [...(unsettledBinds.get(computerId) ?? []), ...refs]);
+}
+
 /** Tools whose implicit target is the bound app when no explicit app_ref or element is given. */
 const BOUND_TARGET_TOOLS = new Set([
   "get_app_state", "find_elements", "wait_for", "list_windows", "screenshot", "zoom",
@@ -850,7 +859,7 @@ async function consentCheck(computer, name, args) {
       if (st?.computerId === computer.id) refs.push(st.app_ref);
     }
     const bound = boundApps.get(computer.id);
-    if (!refs.length && bound && BOUND_TARGET_TOOLS.has(name)) refs.push(bound);
+    if (!refs.length && bound && BOUND_TARGET_TOOLS.has(name)) refs.push(bound, ...(unsettledBinds.get(computer.id) ?? []));
     if (IMPLICIT_FRONTMOST_TOOLS.has(name) && args.app_ref === undefined && (computer.platform ?? process.platform) === "darwin"
         && !(name === "find_elements" && args.state_id != null) && (name !== "recording_start" || args.window_id != null)) {
       if (bound) {
@@ -1600,12 +1609,14 @@ async function callTool(params, bindWhen = null) {
     // Every successful launch retires captured pixels, including backends
     // that report only launch status rather than a resolved app identity.
     if (name === "open_application") lastRasters.delete(computer.id);
+    if (name === "open_application" && !data?.resolved) noteUnsettledBind(computer.id, args);
 
     // Binding a different app retires this computer's element cache: a bare
     // index must never silently address the previous app's observation —
     // under a concurrent user that mistake clicks the wrong window.
     if (name === "open_application" && data?.resolved) {
       boundApps.set(computer.id, data.resolved);
+      unsettledBinds.delete(computer.id);
       // The decision that let this open through covers the resolved identity
       // under its other spellings too — a later bundle-id or name request for
       // the same app must not prompt again.
@@ -1688,7 +1699,7 @@ async function callTool(params, bindWhen = null) {
     // A failed open_application cleared the backend's input binding before it
     // attempted anything — the tracked bound app must not claim otherwise.
     if (name === "open_application" && dispatched) {
-      boundApps.delete(computer.id);
+      noteUnsettledBind(computer.id, args);
       lastRasters.delete(computer.id);
     }
     // Local input may have landed before cancellation or timeout too.
