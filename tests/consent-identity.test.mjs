@@ -328,3 +328,30 @@ test("a runner that cannot read the focused control says the focus gate is unava
   assert.equal(plain.ok, true);
   assert.equal(plain.focus_gate, undefined);
 });
+
+const NOTES = { name: "Notes", pid: 9, bundle_id: "com.apple.Notes", frontmost: true };
+
+test("an app being bound does not turn a display or region capture into an app capture", { skip: process.platform !== "darwin" }, async (t) => {
+  const s = await boot(t, { state: { apps: [{ ...FAKE, frontmost: false }, NOTES] } });
+  await bound(s, "FakeApp");
+  await s.tool("consent", { action: "deny", app: "Notes" });
+  for (const args of [{ display: 1 }, { region: [0, 0, 10, 10] }]) {
+    const r = await s.tool("screenshot", args);
+    assert.equal(r.error?.code, "app_denied", JSON.stringify(args));
+  }
+  const recording = await s.tool("recording", { action: "start" });
+  assert.equal(recording.error?.code, "app_denied");
+  assert.deepEqual(s.calls("screenshot"), []);
+  assert.deepEqual(s.calls("recording_start"), []);
+  const followed = await s.tool("screenshot", {});
+  assert.equal(followed.ok, true, JSON.stringify(followed));
+});
+
+test("on Linux a window index does not scope a recording to an app", async (t) => {
+  const s = await boot(t, { env: { NODE_OPTIONS: `--require ${path.join(ROOT, "tests", "fixtures", "platform-linux.cjs")}` } });
+  for (const args of [{}, { window_id: 0 }, { window_id: 1 }]) {
+    const r = await s.tool("recording", { action: "start", ...args });
+    assert.equal(r.error?.code, "consent_required", JSON.stringify(args));
+  }
+  assert.deepEqual(s.calls("recording_start"), []);
+});

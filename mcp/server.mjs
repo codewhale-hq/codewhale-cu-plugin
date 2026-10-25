@@ -875,7 +875,10 @@ async function consentCheck(computer, name, args) {
       }
     }
   }
-  const wholeScreen = !refs.length && args.app_ref == null && (name === "screenshot" || name === "zoom" || (name === "recording_start" && args.window_id == null));
+  const wholeScreen = args.app_ref == null && (
+    (name === "screenshot" && (!refs.length || args.display != null || args.region != null))
+    || (name === "zoom" && !refs.length)
+    || (name === "recording_start" && (args.window_id == null || (computer.platform ?? process.platform) !== "darwin")));
   if (wholeScreen && !consent.anyAllowed(computer.id)) {
     throw new ServerError("consent_required",
       `No application on this computer has the user's approval yet, and a whole-screen capture shows every app on it. Ask the user which application to work in, then record their answer with consent {action:"allow", app:"<name>"}; or capture one app with app_ref.`);
