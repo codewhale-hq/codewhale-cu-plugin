@@ -150,6 +150,42 @@ if (-not $cur.Current.IsEnabled) { throw 'element_disabled: observed element is 
 `;
 }
 
+const OWNER_TYPE = `Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class CUOwner {
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT point);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int count);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder text, int count);
+  static string Describe(IntPtr hwnd) {
+    if (hwnd == IntPtr.Zero) return "";
+    uint pid; GetWindowThreadProcessId(hwnd, out pid);
+    var title = new StringBuilder(512); GetWindowText(hwnd, title, title.Capacity);
+    var cls = new StringBuilder(256); GetClassName(hwnd, cls, cls.Capacity);
+    return pid + "|" + hwnd.ToInt64() + "|" + cls + "|" + title;
+  }
+  public static string Foreground() { return Describe(GetForegroundWindow()); }
+  public static string At(int x, int y) {
+    POINT p; p.X = x; p.Y = y;
+    IntPtr h = WindowFromPoint(p);
+    if (h == IntPtr.Zero) return "";
+    IntPtr root = GetAncestor(h, 2);
+    return Describe(root == IntPtr.Zero ? h : root);
+  }
+}
+'@;
+$ErrorActionPreference = 'Stop';
+`;
+
+function inputCode(message) {
+  return /\b(element_stale|element_disabled|element_read_only|focused_control_unknown|cursor_move_failed)\b/.exec(message)?.[1];
+}
+
 export function create(opts = {}) {
   // Allow tests (and other embedders) to inject a runner so no real
   // powershell.exe is spawned. Production uses the imported runner.
@@ -175,8 +211,9 @@ export function create(opts = {}) {
   /** ps() but truthful: timeout, nonzero exit, and spawn failure all throw. */
   async function psOk(script, o = {}) {
     const r = await ps(script, o);
-    if (r.aborted) throw Object.assign(new ExecError("computer request cancelled", r), { code: "cancelled" });
-    if (r.timedOut) throw new ExecError(`powershell timed out after ${o.timeoutMs ?? 25_000}ms`, r);
+    const mayHaveSent = o.input === true ? { inputMayHaveBeenSent: true } : {};
+    if (r.aborted) throw Object.assign(new ExecError("computer request cancelled", r), { code: "cancelled", ...mayHaveSent });
+    if (r.timedOut) throw Object.assign(new ExecError(`powershell timed out after ${o.timeoutMs ?? 25_000}ms`, r), mayHaveSent);
     if (r.code !== 0) {
       const raw = (r.stderr || r.stdout).trim();
       // EncodedCommand serializes errors as CLIXML; surface the error strings,
@@ -184,7 +221,8 @@ export function create(opts = {}) {
       const messages = [...raw.matchAll(/<S S="Error">([\s\S]*?)<\/S>/g)].map(m => m[1]
         .replace(/_x([0-9A-Fa-f]{4})_/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
         .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&"));
-      throw new ExecError(`powershell.exe exited ${r.code}: ${(messages.join("") || raw).slice(0, 1600)}`, r);
+      const text = (messages.join("") || raw).slice(0, 1600);
+      throw Object.assign(new ExecError(`powershell.exe exited ${r.code}: ${text}`, r), { code: inputCode(text) });
     }
     return r;
   }
@@ -215,6 +253,22 @@ export function create(opts = {}) {
     for (const key of keys) heldKeys.delete(key);
   }
 
+  async function readCursor() {
+    const j = await psJson(`${USER32_PRELUDE}
+$p = New-Object User32+POINT;
+[void][User32]::GetCursorPos([ref]$p);
+Write-Output ('{"x": ' + $p.X + ', "y": ' + $p.Y + '}');`);
+    return { x: j.x, y: j.y };
+  }
+
+  async function releaseAfter(failure, options) {
+    try { await releaseInput(options); }
+    catch (cleanup) {
+      if (!failure) throw cleanup;
+      failure.cleanupError = cleanup;
+    }
+  }
+
   async function withKeys(keys, action) {
     throwIfAborted();
     for (const code of keys) heldKeys.add(code);
@@ -226,7 +280,7 @@ export function create(opts = {}) {
       try { await releaseInput({ buttons: [], keys }); }
       catch (cleanup) {
         throw Object.assign(new ExecError(`Keyboard input failed: ${failure.message}; release failed: ${cleanup.message}`, failure.result), {
-          code: failure.code, cause: failure, cleanupError: cleanup,
+          code: failure.code, cause: failure, cleanupError: cleanup, inputMayHaveBeenSent: failure.inputMayHaveBeenSent,
         });
       }
       throw failure;
@@ -244,7 +298,7 @@ export function create(opts = {}) {
 
   /** Self-contained User32 invocation: prelude + script, fails truthfully. */
   async function withUser32(script, opts) {
-    return psOk(`${USER32_PRELUDE}\n${script}`, opts);
+    return psOk(`${USER32_PRELUDE}\n${script}`, { ...opts, input: true });
   }
 
   return {
@@ -488,35 +542,41 @@ Write-Output '{"ok": true}';`;
     right_click: ({ target }) => clickAt(1, target.x, target.y, 1),
     middle_click: ({ target }) => clickAt(2, target.x, target.y, 1),
     mouse_move: async ({ target }) => {
-      await withUser32(`[User32]::SetCursorPos(${Math.round(target.x)}, ${Math.round(target.y)}) | Out-Null; Write-Output '{"ok": true}'`);
+      await withUser32(`if (-not [User32]::SetCursorPos(${Math.round(target.x)}, ${Math.round(target.y)})) { throw 'cursor_move_failed: Windows refused the pointer move' }; Write-Output '{"ok": true}'`);
       return { action_sent: true, at: { x: target.x, y: target.y } };
     },
     left_click_drag: async ({ from_target: from, to }) => {
       requireInputOwner();
       throwIfAborted();
       heldButtons.add("LEFT");
+      let failure;
       try {
-      await withUser32(`[User32]::SetCursorPos(${Math.round(from.x)}, ${Math.round(from.y)}) | Out-Null;
+      await withUser32(`if (-not [User32]::SetCursorPos(${Math.round(to.x)}, ${Math.round(to.y)})) { throw 'cursor_move_failed: Windows refused the pointer move before the button press' };
+if (-not [User32]::SetCursorPos(${Math.round(from.x)}, ${Math.round(from.y)})) { throw 'cursor_move_failed: Windows refused the pointer move before the button press' };
 Start-Sleep -Milliseconds 80;
 [User32]::mouse_event([User32]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero);
 Start-Sleep -Milliseconds 80;
-[User32]::SetCursorPos(${Math.round(to.x)}, ${Math.round(to.y)}) | Out-Null;
+if (-not [User32]::SetCursorPos(${Math.round(to.x)}, ${Math.round(to.y)})) { throw 'cursor_move_failed: Windows refused the pointer move after the button press' };
 Start-Sleep -Milliseconds 80;
 [User32]::mouse_event([User32]::LEFTUP, 0, 0, 0, [UIntPtr]::Zero);
 Write-Output '{"ok": true}';`, { timeoutMs: 20_000 });
       heldButtons.delete("LEFT");
       return { action_sent: true, from, to };
-      } finally { await releaseInput({ buttons: ["LEFT"], keys: [] }); }
+      } catch (error) {
+        failure = error;
+        if (/after the button press/.test(error.message)) error.inputMayHaveBeenSent = true;
+        throw error;
+      } finally { await releaseAfter(failure, { buttons: ["LEFT"], keys: [] }); }
     },
     left_mouse_down: async ({ target }) => {
       requireInputOwner();
       // Ternary must select ONLY the optional move prefix; the LEFTDOWN press
       // always runs, so a targeted press both moves and presses.
-      const move = target ? `[User32]::SetCursorPos(${Math.round(target.x)}, ${Math.round(target.y)}) | Out-Null;\n` : "";
+      const move = target ? `if (-not [User32]::SetCursorPos(${Math.round(target.x)}, ${Math.round(target.y)})) { throw 'cursor_move_failed: Windows refused the pointer move' };\n` : "";
       throwIfAborted();
       heldButtons.add("LEFT");
       try { await withUser32(`${move}[User32]::mouse_event([User32]::LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero); Write-Output '{"ok": true}'`); }
-      catch (err) { await releaseInput({ buttons: ["LEFT"], keys: [] }); throw err; }
+      catch (err) { await releaseAfter(err, { buttons: ["LEFT"], keys: [] }); throw err; }
       return { action_sent: true };
     },
     left_mouse_up: async () => {
@@ -530,7 +590,7 @@ Write-Output '{"ok": true}';`, { timeoutMs: 20_000 });
       // the argument: its signed 0xFFFFFFFF literal cannot mask negatives.
       const data = (direction === "down" ? -1 : direction === "up" ? 1 : 0) * notches * 120;
       const hdata = (direction === "right" ? 1 : direction === "left" ? -1 : 0) * notches * 120;
-      await withUser32(`[User32]::SetCursorPos(${Math.round(target.x)}, ${Math.round(target.y)}) | Out-Null;
+      await withUser32(`if (-not [User32]::SetCursorPos(${Math.round(target.x)}, ${Math.round(target.y)})) { throw 'cursor_move_failed: Windows refused the pointer move' };
 Start-Sleep -Milliseconds 60;
 [User32]::mouse_event([User32]::WHEEL, 0, 0, ${data >>> 0}, [UIntPtr]::Zero);
 [User32]::mouse_event([User32]::HWHEEL, 0, 0, ${hdata >>> 0}, [UIntPtr]::Zero);
@@ -581,7 +641,7 @@ $val = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${b64}'))
 $vp = $cur.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern);
 if ($vp.Current.IsReadOnly) { throw 'element_read_only' }
 $vp.SetValue($val);
-@{ ok = $true; verified = ($vp.Current.Value -ceq $val) } | ConvertTo-Json -Compress;`, { timeoutMs: 45_000 });
+@{ ok = $true; verified = ($vp.Current.Value -ceq $val) } | ConvertTo-Json -Compress;`, { timeoutMs: 45_000, input: true });
       if (!j.ok) throw new ExecError("set_value failed");
       return { action_sent: true, strategy: "a11y", verified: j.verified === true };
     },
@@ -593,7 +653,7 @@ $vp.SetValue($val);
       if (!chosen) throw new ExecError("unsupported UIA action");
       await psOk(`${resolve}
 $pattern = $cur.GetCurrentPattern([System.Windows.Automation.${chosen[0]}Pattern]::Pattern);
-$pattern.${chosen[1]}();`, { timeoutMs: 45_000 });
+$pattern.${chosen[1]}();`, { timeoutMs: 45_000, input: true });
       return { action_sent: true, strategy: "a11y", action };
     },
     read_clipboard: async () => {
@@ -607,13 +667,36 @@ $pattern.${chosen[1]}();`, { timeoutMs: 45_000 });
 Write-Output '{"ok": true}';`, { timeoutMs: 10_000 });
       return { written: String(text ?? "").length };
     },
-    cursor_position: async () => {
-      const j = await psJson(`${USER32_PRELUDE}
-$p = New-Object User32+POINT;
-[void][User32]::GetCursorPos([ref]$p);
-Write-Output ('{"x": ' + $p.X + ', "y": ' + $p.Y + '}');`);
-      return { x: j.x, y: j.y };
+    async input_owner({ kind, point } = {}) {
+      if (kind !== "keyboard" && kind !== "pointer") throw new ExecError('input_owner kind must be "keyboard" or "pointer"');
+      const at = kind === "pointer" ? (point ?? await readCursor()) : null;
+      if (kind === "pointer" && (!Number.isFinite(Number(at.x)) || !Number.isFinite(Number(at.y)))) throw new ExecError("input_owner needs finite pointer coordinates");
+      const j = await psJson(`${OWNER_TYPE}
+$d = ${kind === "keyboard" ? "[CUOwner]::Foreground()" : `[CUOwner]::At(${Math.round(Number(at.x))}, ${Math.round(Number(at.y))})`};
+if (-not $d) { Write-Output '{"window":null}'; return }
+$p = $d.Split('|', 4);
+$proc = Get-Process -Id ([int]$p[0]) -ErrorAction SilentlyContinue;
+$name = $null; if ($proc) { $name = $proc.ProcessName }
+@{ window = @{ pid = [int]$p[0]; hwnd = [int64]$p[1]; 'class' = $p[2]; title = $p[3]; name = $name } } | ConvertTo-Json -Compress -Depth 4;`, { timeoutMs: 20_000 });
+      const w = j.window;
+      if (!w) {
+        if (kind === "pointer") return null;
+        throw Object.assign(new ExecError("no window has keyboard focus, so the application that would receive these keys cannot be named"), { code: "input_owner_unknown" });
+      }
+      if (!w.name || !Number.isInteger(w.pid) || w.pid <= 0) throw Object.assign(new ExecError("the process that owns this window could not be identified"), { code: "input_owner_unknown" });
+      return { name: w.name, comm: w.name, pid: w.pid, title: w.title, window: `0x${Number(w.hwnd).toString(16)}`, ...(w.title ? { aliases: [w.title] } : {}) };
     },
+    focused_control: async () => {
+      const j = await psJson(`${UIA_PRELUDE}
+try { $el = [System.Windows.Automation.AutomationElement]::FocusedElement } catch { throw 'focused_control_unknown: ' + $_.Exception.Message }
+if ($null -eq $el) { Write-Output '{"control":null}'; return }
+$c = $el.Current;
+@{ control = @{ role = ($c.ControlType.ProgrammaticName -replace '^ControlType\\.', ''); label = [string]$c.Name; description = [string]$c.HelpText; pid = $c.ProcessId } } | ConvertTo-Json -Compress -Depth 4;`, { timeoutMs: 20_000 });
+      if (!j.control) return null;
+      const { pid, ...control } = j.control;
+      return { ...control, app: { pid } };
+    },
+    cursor_position: readCursor,
     recordingStart: async () => {
       throw Object.assign(new ExecError("Recording is unavailable on this platform until the recorder has session-owned cleanup. Use screenshots instead."), { code: "owned_recording_unavailable" });
     },
@@ -639,14 +722,16 @@ Write-Output ('{"x": ' + $p.X + ', "y": ' + $p.Y + '}');`);
     const held = button === 1 ? "RIGHT" : button === 2 ? "MIDDLE" : "LEFT";
     throwIfAborted();
     heldButtons.add(held);
+    let failure;
     try {
-    await withUser32(`[User32]::SetCursorPos(${Math.round(x)}, ${Math.round(y)}) | Out-Null;
+    await withUser32(`if (-not [User32]::SetCursorPos(${Math.round(x)}, ${Math.round(y)})) { throw 'cursor_move_failed: Windows refused the pointer move' };
 Start-Sleep -Milliseconds 60;
 ${seq.join("\n")}
 Write-Output '{"ok": true}';`, { timeoutMs: 20_000 });
     heldButtons.delete(held);
     return { action_sent: true, at: { x: Number(x), y: Number(y) }, button, clicks };
-    } finally { await releaseInput({ buttons: [held], keys: [] }); }
+    } catch (error) { failure = error; throw error; }
+    finally { await releaseAfter(failure, { buttons: [held], keys: [] }); }
   }
 }
 

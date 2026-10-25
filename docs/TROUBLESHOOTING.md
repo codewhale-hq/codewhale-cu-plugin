@@ -36,7 +36,7 @@ resume the helper through MCP or operate its own safety panel.
 | --- | --- |
 | `browser_unavailable` says Chromium "runs as root without its sandbox" | Run the Computer Use server as a non-root user. Codewhale does not add `--no-sandbox`. To use a launcher you control, set `CODEWHALE_CU_BROWSER_APP` to it. |
 | Keystrokes refused with `popup_open` (Linux) | A menu or popup item is open in the target app. Send `key escape`, observe, then retry. |
-| Input refused with `input_owner_unknown` (Linux) | No window manager is publishing its stacking order, or the Wayland compositor is not sway or Hyprland, or windows of two apps overlap at the point. Run a window manager (openbox works on Xvfb), use X11, or move the overlapping window. |
+| Input refused with `input_owner_unknown` (Linux, Windows) | No window manager is publishing its stacking order, or the Wayland compositor is not sway or Hyprland, or windows of two apps overlap at the point. Run a window manager (openbox works on Xvfb), use X11, or move the overlapping window. |
 | `consent_required` for input you aimed at a different app | Input goes to the app behind the window that receives it. That app needs its own decision; the receipt names it. |
 | `kill_app` reports `still_running` | The app asked to save or refused to quit. Ask the user; use `force:true` only if unsaved work can be discarded. |
 | Permission stays missing | Confirm the app name in Settings. Quit and reopen after changing Screen Recording. Use a current signed build. |
