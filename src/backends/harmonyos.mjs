@@ -171,7 +171,7 @@ export function create({ exec }) {
           const shot = path.join(dir, "probe.jpeg");
           await snapshot(shot);
           displayPixels = jpegSize(fs.readFileSync(shot)) ?? { w: null, h: null };
-        } finally { fs.rmSync(dir, { recursive: true, force: true }).catch(() => {}); }
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
       }
       return [{ index: 1, name: "device", pixels: displayPixels, points: displayPixels, scale: 1, main: true }];
     },
