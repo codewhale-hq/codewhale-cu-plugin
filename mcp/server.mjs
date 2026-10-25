@@ -718,7 +718,7 @@ async function waitFor(computer, args, switched) {
 /** Tools whose implicit target is the bound app when no explicit app_ref or element is given. */
 const BOUND_TARGET_TOOLS = new Set([
   "get_app_state", "find_elements", "wait_for", "list_windows", "screenshot", "zoom",
-  "recording_start", "preview", "invoke_menu",
+  "recording_start", "preview", "invoke_menu", "set_window_frame",
   "type", "key", "hold_key",
   "left_click", "double_click", "triple_click", "right_click", "middle_click",
   "left_click_drag", "mouse_move", "left_mouse_down", "left_mouse_up", "scroll",
@@ -768,6 +768,16 @@ async function resolveAppIdentity(computer, ref) {
   return hit ? { name: hit.name ?? null, pid: hit.pid ?? null, bundle_id: hit.bundle_id ?? null } : null;
 }
 
+const IMPLICIT_FRONTMOST_TOOLS = new Set(["get_app_state", "find_elements", "wait_for", "list_windows", "set_window_frame", "recording_start"]);
+
+async function frontmostApp(computer) {
+  const res = await callTool({ name: "list_apps", arguments: { computer: computer.id } });
+  const body = JSON.parse(res.content[0].text);
+  if (res.isError || body.ok === false) throw new ServerError(body.error?.code ?? "observe_failed", body.error?.message ?? "the running applications could not be listed");
+  const hit = Array.isArray(body.apps) ? body.apps.find((a) => a.frontmost === true && Number.isInteger(a.pid) && a.pid > 0) : null;
+  return hit ? { name: hit.name ?? null, pid: hit.pid, bundle_id: hit.bundle_id ?? null } : null;
+}
+
 /**
  * Check the ledger for one app reference: direct keys first, then — only when
  * undecided — the resolved running-app identity so a grant made under one
@@ -786,13 +796,15 @@ async function consentForRef(computer, ref) {
 /**
  * The consent gate, run inside dispatch before any backend call. Returns
  * {grant} describing the decision that let the call through (used to merge
- * aliases after open_application resolves the real identity), or null when
- * the call targets no app. Throws ServerError consent_required / app_denied /
+ * aliases after open_application resolves the real identity) and {implicit},
+ * the app_ref a macOS call with no named app is pinned to, or null when the
+ * call targets no app. Throws ServerError consent_required / app_denied /
  * foreground_denied.
  */
 async function consentCheck(computer, name, args) {
   if (computer.transport !== "local" || computer.owned === true) return null;
   const refs = [];
+  let implicit = null;
   if (name === "open_application" || name === "kill_app") {
     // Both name the target app with name/bundle_id/pid args — a denied app
     // must not be terminable any more than it must be bindable.
@@ -812,12 +824,26 @@ async function consentCheck(computer, name, args) {
         try { refs.push(resolveElement(args[key], computer).state.app_ref); } catch { /* the element gate reports its own staleness */ }
       }
     }
-    if (args.state_id != null) {
+    if (name === "find_elements" && args.state_id != null) {
       const st = appStates.get(args.state_id);
       if (st?.computerId === computer.id) refs.push(st.app_ref);
     }
     const bound = boundApps.get(computer.id);
     if (!refs.length && bound && BOUND_TARGET_TOOLS.has(name)) refs.push(bound);
+    if (IMPLICIT_FRONTMOST_TOOLS.has(name) && args.app_ref === undefined && (computer.platform ?? process.platform) === "darwin"
+        && !(name === "find_elements" && args.state_id != null) && (name !== "recording_start" || args.window_id != null)) {
+      if (bound) {
+        if (Number.isInteger(bound.pid) && bound.pid > 0) implicit = { pid: bound.pid };
+      } else {
+        const front = await frontmostApp(computer);
+        if (!front) {
+          throw new ServerError("consent_required",
+            "No application is named, bound or identifiably frontmost, and Computer Use does not act on an unnamed app. Pass app_ref (name, bundle_id or pid), or open_application first.");
+        }
+        implicit = { pid: front.pid };
+        refs.push(front);
+      }
+    }
   }
   let grant = null;
   for (const ref of refs) {
@@ -853,7 +879,7 @@ async function consentCheck(computer, name, args) {
         { scope: "app" });
     }
   }
-  return grant ? { grant } : null;
+  return grant || implicit ? { ...(grant ? { grant } : {}), ...(implicit ? { implicit } : {}) } : null;
 }
 
 // ---------- input ownership ----------
@@ -1351,6 +1377,7 @@ async function callTool(params, bindWhen = null) {
       if (policy.refused) throw new ServerError("script_refused", `app_script refused: ${policy.refused}. Do not rewrite the script to get around this; use the computer-use tools, or ask the user.`);
     }
     const gateResult = await consentCheck(computer, name, args);
+    if (gateResult?.implicit) args = { ...args, app_ref: gateResult.implicit };
     confirmationCheck(computer, name, args);
     if (name === "run_actions") {
       return await runActions(computer, args, switched);

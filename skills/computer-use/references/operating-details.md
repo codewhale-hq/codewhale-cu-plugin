@@ -50,7 +50,8 @@ Do not operate them or approve the host's pending authorization yourself.
 
 The app, not the tool, is the unit of trust on `local`. The first call that
 targets an application — `open_application`, an `app_ref`, an element or
-`state_id`, or an action on the bound app — refuses `consent_required`
+`state_id`, an action on the bound app, or on macOS an observation that
+names no app and so would use the frontmost one — refuses `consent_required`
 until the user has decided. Ask them, then record the answer:
 
 - `consent {action:"allow"|"deny", app:"Safari"}` — `app` accepts a name, a

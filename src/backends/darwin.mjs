@@ -924,7 +924,7 @@ export function create({ exec }) {
       if (!Number.isSafeInteger(window_id) || window_id < 0) {
         throw Object.assign(new ExecError("set_window_frame needs window_id (a non-negative window index from list_windows)"), { code: "bad_args" });
       }
-      const r = await native("set_window_frame", { app_ref, window_id, frame });
+      const r = await native("set_window_frame", { app_ref: app_ref === undefined ? state.inputApp ?? undefined : app_ref, window_id, frame });
       return { ...r, verified: r?.verified === true, note: r?.note ?? "the after frame is the app's own readback; cross-check with list_windows before relying on it" };
     },
     list_windows: listWindows,

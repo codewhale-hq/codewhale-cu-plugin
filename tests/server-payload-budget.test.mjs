@@ -96,7 +96,7 @@ test("an over-budget raster degrades to its receipt and keeps the transport aliv
 
   // The whole point: the connection is still usable afterwards.
   assert.equal(server_alive(cu.server), true);
-  const after = await cu.call("get_app_state", {});
+  const after = await cu.call("list_apps", {});
   assert.equal(after.receipt.ok, true, "every other tool survives an over-budget capture");
 
   // Geometry stays bound, so coordinate targets still resolve off the receipt.

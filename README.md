@@ -332,7 +332,8 @@ panel hides it when it closes, so no panel outlives its session.
 
 On `local`, the app — not the tool — is the unit of trust. The first call
 that targets an application (`open_application`, an `app_ref`, an element or
-`state_id`, or an action on the bound app) refuses `consent_required` until
+`state_id`, an action on the bound app, or an observation that names no app and
+so would use the frontmost one on macOS) refuses `consent_required` until
 the user decides; the model asks them and records the answer with
 `consent {action:"allow"|"deny", app:"…"}`. Decisions cover the session by
 default and persist with `remember:true`; `consent {action:"status"}`

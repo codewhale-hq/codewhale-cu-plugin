@@ -108,6 +108,10 @@ if (args[0] === 'file' && args[1] === 'recv') {
         return JSON.parse(response.result.content[0].text);
       } finally { clearTimeout(timer); pending.delete(id); }
     },
+    async allow(app = "Pad") {
+      const result = await this.tool("consent", { action: "allow", app, computer: "pad" });
+      assert.equal(result.ok, true, JSON.stringify(result));
+    },
     async register(target, label = "Fixture") {
       const result = await this.tool("computer_register", { computer: "pad", transport: "hdc", target, label });
       assert.equal(result.ok, true, JSON.stringify(result));
@@ -122,6 +126,7 @@ if (args[0] === 'file' && args[1] === 'recv') {
 }
 
 const point = { type: "coordinate", x: 10, y: 10 };
+const frontmostPad = "list_apps: async () => ({apps:[{name:'Pad',pid:7,bundle_id:'fixture.pad',frontmost:true}]}),";
 
 // The real SSH executor has no filesLocal flag. These handles exist only in
 // replies from this command fixture; no image or provider is created locally.
@@ -339,6 +344,7 @@ test("failed cleanup and catalog rollback cannot resurrect the retired backend",
       const id = ++instance;
       const record = method => fs.appendFileSync(process.env.ROUTE_LOG, JSON.stringify({method,id}) + '\\n');
       return {
+        ${frontmostPad}
         get_app_state: async () => ({found:true, elements:[], instance:id}),
         key: async () => { record('key'); return {action_sent:true}; },
         releaseInput: async () => {
@@ -356,6 +362,7 @@ test("failed cleanup and catalog rollback cannot resurrect the retired backend",
   `);
   f.control({ failCleanup: false });
   assert.equal((await f.tool("computer_register", { computer: "pad", transport: "local" })).ok, true);
+  await f.allow();
   assert.equal((await f.tool("get_app_state", { computer: "pad" })).instance, 1);
   f.control({ failRelease: true });
   assert.equal((await f.tool("computer_register", { computer: "pad", transport: "hdc", target: "B" })).error.code, "release_failed");
@@ -372,6 +379,7 @@ test("failed cleanup and catalog rollback cannot resurrect the retired backend",
   assert.equal(f.calls().filter(call => call.method === "key").length, 0);
   f.control({ failCleanup: false });
   assert.equal((await f.tool("key", { text: "ENTER" })).error.code, "computer_observation_required");
+  await f.allow();
   assert.equal((await f.tool("get_app_state")).instance, 2);
   assert.equal((await f.tool("key", { text: "ENTER" })).ok, true);
   assert.deepEqual(f.calls().filter(call => call.method === "key").map(call => call.id), [2]);
@@ -384,6 +392,7 @@ test("a route change during element revalidation refuses dispatch to the old bac
     export function create() {
       const element = {index:0, path:[0], role:'Button', label:'OK', position:{x:0,y:0}, size:{w:20,h:20}};
       return {
+        ${frontmostPad}
         get_app_state: async () => ({found:true, elements:[element]}),
         resolve_element: async () => {
           const file = process.env.CODEWHALE_CU_STATE_DIR + '/computers.json';
@@ -399,6 +408,7 @@ test("a route change during element revalidation refuses dispatch to the old bac
     }
   `);
   await f.tool("computer_register", { computer: "pad", transport: "local" });
+  await f.allow();
   const state = await f.tool("get_app_state", { computer: "pad" });
   const action = await f.tool("perform_action", { target: { type: "element", state_id: state.state_id, index: 0 }, action: "click" });
   assert.equal(action.error.code, "computer_route_changed");
@@ -413,6 +423,7 @@ const dispatchFailureBackend = `
   export function create() {
     const record = method => fs.appendFileSync(process.env.ROUTE_LOG, JSON.stringify({method}) + '\\n');
     return {
+      ${frontmostPad}
       get_app_state: async () => ({found:true,elements:[]}),
       key: async () => {
         record('dispatched');
@@ -458,6 +469,7 @@ for (const mode of ["backend", "reply", "connection"]) {
         ? { computer: "pad", transport: "local" }
         : { computer: "pad", transport: "ssh", host: "fixture-a.test", installAgent: false });
       assert.equal(registration.ok, true, JSON.stringify(registration));
+      if (local) await f.allow();
       assert.equal((await f.tool("get_app_state", { computer: "pad" })).ok, true);
       const pending = f.tool("key", { text: "ENTER" });
       let failed;

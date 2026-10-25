@@ -160,7 +160,7 @@ export const TOOLS = [
   },
   {
     name: "list_windows",
-    description: "List application windows. On macOS, app_ref selects the app; omission follows the app selected by open_application, or the frontmost app before a selection. On Linux (X11), app_ref.name selects the app by exact name. Other platforms list all windows and reject app_ref selectors.",
+    description: "List application windows. On macOS, app_ref selects the app; omission follows the app selected by open_application, or the frontmost app before a selection, which needs the same user approval as naming it. On Linux (X11), app_ref.name selects the app by exact name. Other platforms list all windows and reject app_ref selectors.",
     inputSchema: {
       type: "object",
       properties: {
@@ -344,7 +344,7 @@ export const TOOLS = [
   {
     name: "set_window_frame",
     description: "Move or resize one window by exact geometry and read the result back. frame is in screen points, the same space list_windows reports: {x,y,w,h}. window_id is the zero-based window index from list_windows. Some windows refuse (fullscreen, tiled); the receipt carries the app's own before/after readback and `verified`.",
-    inputSchema: { type: "object", required: ["window_id", "frame"], properties: { app_ref: { type: "object", properties: { pid: { type: "integer" }, name: { type: "string" }, bundle_id: { type: "string" } }, additionalProperties: false, description: "defaults to the bound app" }, window_id: { type: "integer", minimum: 0, description: "zero-based window index from list_windows" }, frame: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" } }, required: ["x", "y", "w", "h"], additionalProperties: false }, computer: computerParam }, additionalProperties: false },
+    inputSchema: { type: "object", required: ["window_id", "frame"], properties: { app_ref: { type: "object", properties: { pid: { type: "integer" }, name: { type: "string" }, bundle_id: { type: "string" } }, additionalProperties: false, description: "defaults to the bound app, or the frontmost app when none is bound (it needs the same user approval)" }, window_id: { type: "integer", minimum: 0, description: "zero-based window index from list_windows" }, frame: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" } }, required: ["x", "y", "w", "h"], additionalProperties: false }, computer: computerParam }, additionalProperties: false },
   },
   {
     name: "open_application",

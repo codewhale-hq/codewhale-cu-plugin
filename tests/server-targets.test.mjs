@@ -105,7 +105,8 @@ after(() => {
 
 test("app-state arguments distinguish an omitted reference from an explicit null", async () => {
   await tool("get_app_state", {});
-  assert.equal(Object.hasOwn(calls("get_app_state").at(-1).args, "app_ref"), false);
+  if (process.platform === "darwin") assert.deepEqual(calls("get_app_state").at(-1).args.app_ref, { pid: 4242 });
+  else assert.equal(Object.hasOwn(calls("get_app_state").at(-1).args, "app_ref"), false);
   await tool("get_app_state", { app_ref: null });
   assert.equal(calls("get_app_state").at(-1).args.app_ref, null);
 });
