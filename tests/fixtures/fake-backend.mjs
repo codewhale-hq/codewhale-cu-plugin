@@ -44,6 +44,8 @@ function tmpPng(prefix) {
 export function create() {
   const callsFile = process.env.FAKE_BACKEND_CALLS;
   const controlFile = process.env.FAKE_BACKEND_CONTROL;
+  const stateFile = process.env.FAKE_BACKEND_STATE;
+  const liveState = () => { try { return JSON.parse(fs.readFileSync(stateFile, "utf8")); } catch { return {}; } };
   const record = (method, args) => {
     try { fs.appendFileSync(callsFile, JSON.stringify({ method, args }) + "\n"); } catch {}
   };
@@ -57,6 +59,8 @@ export function create() {
     platform: "fake",
     async open_application(args = {}) {
       record("open_application", args);
+      const failure = liveState().open_error;
+      if (failure) throw Object.assign(new Error(failure.message ?? "launch failed"), { code: failure.code ?? "launch_failed" });
       boundApp = { name: args.name ?? "FakeApp", pid: args.pid ?? 4242, bundle_id: args.bundle_id ?? "com.fake.app" };
       let ctrl = null;
       try { ctrl = JSON.parse(fs.readFileSync(controlFile, "utf8")); } catch {}
@@ -65,6 +69,8 @@ export function create() {
     },
     async list_apps() {
       record("list_apps", {});
+      const listed = liveState().apps;
+      if (Array.isArray(listed)) return { apps: listed };
       return { apps: [{ name: boundApp?.name ?? "FakeApp", pid: boundApp?.pid ?? 4242, bundle_id: "com.fake.app", frontmost: true }] };
     },
     async left_mouse_down(args = {}) { record("left_mouse_down", args); return { action_sent: true, at: { x: args.target?.x, y: args.target?.y } }; },
@@ -124,7 +130,8 @@ export function create() {
     // server must consult this before any input.
     async input_owner({ kind, point } = {}) {
       record("input_owner", { kind, point });
-      const raw = process.env.FAKE_BACKEND_OWNER;
+      const live = liveState().owner;
+      const raw = live === undefined ? process.env.FAKE_BACKEND_OWNER : typeof live === "string" ? live : JSON.stringify(live);
       if (raw === "unknown") throw Object.assign(new Error("no managed application window has keyboard focus"), { code: "input_owner_unknown" });
       return raw && raw !== "null" ? JSON.parse(raw) : null;
     },

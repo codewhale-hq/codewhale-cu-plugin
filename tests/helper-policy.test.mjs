@@ -47,3 +47,15 @@ test("the helper honors a recorded deny, whoever connects", async () => {
   const other = await handle({ tool: "app_script", args: { script: 'tell application "Notes" to activate' } }, { computerId: "local", sessionId: "raw" });
   assert.notEqual(other.error?.code, "app_denied");
 });
+
+test("the helper judges each named identity: a newer allow on a pid does not hide a deny on the name", async () => {
+  const consent = await import("../src/consent.mjs");
+  fs.writeFileSync(path.join(stateDir, "consent.json"), JSON.stringify({ version: 1, computers: { local: { apps: {
+    "name:terminal": { decision: "deny", at: "2020-01-01T00:00:00.000Z" },
+  } } } }));
+  consent.record("local", ["pid:4242"], "allow");
+  for (const tool of ["open_application", "kill_app"]) {
+    const r = await handle({ tool, args: { pid: 4242, name: "Terminal" } }, { computerId: "local", sessionId: "raw" });
+    assert.equal(r.error?.code, "app_denied", tool);
+  }
+});

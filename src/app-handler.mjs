@@ -176,11 +176,11 @@ export function summarizeSessions({ ownerOf, self } = {}) {
 /** App identities a request names directly, for the consent ledger. */
 function namedApps(tool, args) {
   if (tool !== "open_application" && tool !== "kill_app") return [];
-  const ref = {};
-  if (typeof args.bundle_id === "string" && args.bundle_id.trim()) ref.bundle_id = args.bundle_id.trim();
-  if (typeof args.name === "string" && args.name.trim()) ref.name = args.name.trim();
-  if (Number.isInteger(args.pid) && args.pid > 0) ref.pid = args.pid;
-  return Object.keys(ref).length ? [ref] : [];
+  const refs = [];
+  if (typeof args.bundle_id === "string" && args.bundle_id.trim()) refs.push({ bundle_id: args.bundle_id.trim() });
+  if (typeof args.name === "string" && args.name.trim()) refs.push({ name: args.name.trim() });
+  if (Number.isInteger(args.pid) && args.pid > 0) refs.push({ pid: args.pid });
+  return refs;
 }
 
 /**

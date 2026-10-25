@@ -794,6 +794,19 @@ async function consentForRef(computer, ref) {
   return { verdict: widened, ref: resolved };
 }
 
+/** Every identity field a launch or kill names; the backends pick any one of them, so the ledger must judge each. */
+function launchIdentityRefs(args) {
+  if (args.pid != null && !(Number.isSafeInteger(args.pid) && args.pid > 0)) throw new ServerError("bad_args", "pid must be a positive integer");
+  for (const field of ["bundle_id", "name"]) {
+    if (args[field] != null && typeof args[field] !== "string") throw new ServerError("bad_args", `${field} must be a string`);
+  }
+  const refs = [];
+  if (args.pid != null) refs.push({ pid: args.pid });
+  if (typeof args.bundle_id === "string" && args.bundle_id.trim()) refs.push({ bundle_id: args.bundle_id.trim() });
+  if (typeof args.name === "string" && args.name.trim()) refs.push({ name: args.name.trim() });
+  return refs;
+}
+
 /**
  * The consent gate, run inside dispatch before any backend call. Returns
  * {grant} describing the decision that let the call through (used to merge
@@ -809,11 +822,7 @@ async function consentCheck(computer, name, args) {
   if (name === "open_application" || name === "kill_app") {
     // Both name the target app with name/bundle_id/pid args — a denied app
     // must not be terminable any more than it must be bindable.
-    const ref = {};
-    if (Number.isInteger(args.pid)) ref.pid = args.pid;
-    else if (typeof args.bundle_id === "string" && args.bundle_id) ref.bundle_id = args.bundle_id;
-    else if (typeof args.name === "string" && args.name) ref.name = args.name;
-    if (Object.keys(ref).length) refs.push(ref);
+    refs.push(...launchIdentityRefs(args));
   } else if (name === "app_script") {
     // Every application the script names — System Events and the processes
     // it drives included — is gated like a click on that app.
