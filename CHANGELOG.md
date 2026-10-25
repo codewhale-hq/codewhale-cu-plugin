@@ -2,6 +2,8 @@
 
 ## 0.12.1 — unreleased
 
+- More key spellings are judged on the focused control. The focus gate recognized `return`, `enter`, `kpenter`, `keypadenter`, `space` and `spacebar`, but Linux passes unknown key names to `xdotool`, so `ISO_Enter`, `KP_Space`, `Linefeed` and `3270_Enter` (GTK binds the first two to button activation) were sent without a focus judgment. They are judged now.
+
 - A whole-screen capture needs an approved app. The per-app ledger covered the accessibility tools, but `screenshot` (with or without `region` or `display`) and `recording` start without a window index captured the whole desktop, frontmost app included, with no consent record at all. They now refuse `consent_required` until the user has approved at least one app on that computer. This is a floor, not per-app consent: once any app is approved a whole-screen capture still shows every app, so use `app_ref` to capture one. Whether whole-screen observation should need its own grant is still a founder decision.
 
 - A launch that fails no longer makes the server forget the app it had bound. `open_application` cleared the server's bound app whenever the call had been sent to the runner, but the desktop helper can refuse (paused, stopped, input busy, session limit, its own policy) before the backend rebinds, so the backend kept the old app while the server stopped judging it: keys and clicks then reached an app the user had since denied. The server now keeps the old binding and, until a later launch succeeds, judges the failed launch's target as well, as it does for a launch that reports no resolved app.

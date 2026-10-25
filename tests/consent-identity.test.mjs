@@ -279,3 +279,14 @@ test("naming an app still decides on that app, not on the rest of the ledger", a
   assert.equal(other.error?.code, "consent_required");
   assert.match(other.error.message, /Terminal/);
 });
+
+test("every key spelling a backend accepts for Return or space is judged on the focused control", async (t) => {
+  const s = await boot(t, { state: { owner: null } });
+  s.setControl({ focused: { role: "AXButton", label: "Delete account", app: { name: "FakeApp", pid: 4242 } } });
+  for (const text of ["return", "KP_Enter", "kp-enter", "KP Enter", "ISO_Enter", "KP_Space", "Linefeed", "3270_Enter", "ctrl+Return", "shift+space", " "]) {
+    const r = await s.tool("key", { text });
+    assert.equal(r.error?.code, "confirmation_required", JSON.stringify(text));
+  }
+  assert.deepEqual(s.calls("key"), []);
+  assert.equal((await s.tool("key", { text: "tab" })).ok, true);
+});

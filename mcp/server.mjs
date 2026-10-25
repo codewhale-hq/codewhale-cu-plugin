@@ -1064,7 +1064,7 @@ function confirmationCheck(computer, name, args, control = activatedControl(comp
 // An untargeted Return, Enter or space presses whatever holds keyboard focus.
 // Backends that can read the focused control (focused_control) have it judged
 // like a click on that control; others keep the observation-based check.
-const ACTIVATING_KEY = /^(return|enter|kpenter|keypadenter|space|spacebar)$/;
+const ACTIVATING_KEY = /^(return|enter|kpenter|keypadenter|isoenter|3270enter|linefeed|space|spacebar|kpspace|keypadspace)$/;
 const activatingKey = (part) => part === " " || ACTIVATING_KEY.test(part.toLowerCase().replace(/[\s_-]+/g, ""));
 
 function activationCount(name, args) {
