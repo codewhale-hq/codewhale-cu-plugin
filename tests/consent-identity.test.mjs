@@ -218,3 +218,39 @@ test("a launch that reports no resolved app leaves its target judged too", async
   const typed = await s.tool("type", { text: "hello" });
   assert.equal(typed.error?.code, "app_denied");
 });
+
+const BUTTON = { role: "AXButton", label: "Continue", app: { name: "FakeApp", pid: 4242 } };
+
+test("a repeated Return is not judged by one read of the focused control", async (t) => {
+  const s = await boot(t, { state: { owner: null } });
+  s.setControl({ focused: BUTTON });
+  const single = await s.tool("key", { text: "return" });
+  assert.equal(single.ok, true, JSON.stringify(single));
+  const repeated = await s.tool("key", { text: "return", repeat: 5 });
+  assert.equal(repeated.error?.code, "confirmation_required");
+  assert.match(repeated.error.message, /5 times/);
+  assert.equal(s.calls("key").length, 1, "only the single press reached the backend");
+  const token = repeated.confirm.token;
+  assert.equal((await s.tool("consent", { action: "allow", confirm: token })).ok, true);
+  assert.equal((await s.tool("key", { text: "return", repeat: 5 })).ok, true);
+  assert.equal(s.calls("key").length, 2);
+  assert.equal((await s.tool("key", { text: "return", repeat: 5 })).error?.code, "confirmation_required", "the approval admits one call");
+});
+
+test("several newlines typed while a button holds focus need the same confirmation", async (t) => {
+  const s = await boot(t, { state: { owner: null } });
+  s.setControl({ focused: BUTTON });
+  assert.equal((await s.tool("type", { text: "ok\n" })).ok, true);
+  const many = await s.tool("type", { text: "\n\n\n" });
+  assert.equal(many.error?.code, "confirmation_required");
+  const withEnter = await s.tool("type", { text: "a\nb", press_enter: true });
+  assert.equal(withEnter.error?.code, "confirmation_required");
+  assert.deepEqual(s.calls("type").map((c) => c.args.text), ["ok"]);
+});
+
+test("repeated Return in a text field is not gated", async (t) => {
+  const s = await boot(t, { state: { owner: null } });
+  s.setControl({ focused: { role: "AXTextField", label: "Notes", app: { name: "FakeApp", pid: 4242 } } });
+  assert.equal((await s.tool("key", { text: "return", repeat: 5 })).ok, true);
+  assert.equal((await s.tool("type", { text: "a\n\nb" })).ok, true);
+});
