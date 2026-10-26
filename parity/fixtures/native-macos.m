@@ -233,7 +233,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
   }
 
   [NSApplication sharedApplication];
-  [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+  [NSApp setActivationPolicy:(argc>2 && strcmp(argv[2],"--background")==0)?NSApplicationActivationPolicyAccessory:NSApplicationActivationPolicyRegular];
   Fixture *fx = [Fixture new];
   NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Main"];
   NSMenuItem *appItem = [[NSMenuItem alloc] initWithTitle:@"Fixture" action:nil keyEquivalent:@""];

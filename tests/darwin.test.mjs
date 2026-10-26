@@ -754,9 +754,8 @@ test('macOS type passes the native verification receipt through untouched', asyn
   const nativeReceipt = { action_sent: true, chars: 5, strategy: 'unicode-events', keyboard_delivery: 'process', verified: false, focused_role: null, verification_required: 'screenshot' };
   const { backend } = stubBackend(t, (r) => (r.tool === 'type' ? nativeReceipt : null));
   await backend.open_application({ name: 'TextEdit' });
-  const { preview_error, ...receipt } = await backend.type({ text: 'hello' });
+  const receipt = await backend.type({ text: 'hello' });
   assert.deepEqual(receipt, nativeReceipt);
-  assert.ok(preview_error, 'preview refresh failure is reported, not swallowed');
 });
 
 // ---------- dogfood 2026-09-17: app_not_found, live preview, sessions, kill ----------
@@ -810,7 +809,7 @@ test('open_application on an unknown name, bundle or pid fails as app_not_found'
     (e) => e.code === 'app_not_found', 'a dead pid is app_not_found');
 });
 
-test('preview goes live after a real capture; mute and session close tear it down', async (t) => {
+test('preview stays hidden until requested; mute and session close tear it down', async (t) => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cu-preview-state-'));
   t.after(() => fs.rmSync(stateDir, { recursive: true, force: true }));
   withEnv(t, {
@@ -839,10 +838,14 @@ test('preview goes live after a real capture; mute and session close tear it dow
   const captures = () => calls.filter((c) => c.tool === 'window_info').length;
 
   await backend.open_application({ name: 'TextEdit' });
+  await nap(150);
+  assert.equal(captures(), 0, 'binding does not capture the app for a preview');
+  assert.ok(!calls.some((c) => c.tool === 'preview_notify'), 'binding keeps the panel hidden');
+  await backend.preview({ enabled: true });
   await nap(400);
   const live = captures();
-  assert.ok(live >= 2, `the panel refreshes on a timer while bound (${live} captures)`);
-  assert.ok(calls.some((c) => c.tool === 'preview_notify' && c.args?.enabled === true), 'binding shows the panel');
+  assert.ok(live >= 2, `the panel refreshes on a timer while enabled (${live} captures)`);
+  assert.ok(calls.some((c) => c.tool === 'preview_notify' && c.args?.enabled === true), 'an explicit request shows the panel');
 
   await backend.preview({ enabled: false });
   assert.ok(calls.some((c) => c.tool === 'preview_notify' && c.args?.enabled === false), 'mute hides the panel');
@@ -885,8 +888,9 @@ test('CODEWHALE_CU_PREVIEW_REFRESH_MS=0 keeps the panel a single frame', async (
     async runInputLease() { throw new Error('not used'); },
   } });
   await backend.open_application({ name: 'TextEdit' });
+  await backend.preview({ enabled: true });
   await nap(350);
-  assert.equal(calls.filter((c) => c.tool === 'window_info').length, 1, 'exactly the bind capture, no timer');
+  assert.equal(calls.filter((c) => c.tool === 'window_info').length, 1, 'exactly the requested capture, no timer');
 });
 
 test('list_sessions in direct mode reports this process as the only session', async (t) => {

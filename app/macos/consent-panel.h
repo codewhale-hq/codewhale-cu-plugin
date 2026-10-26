@@ -33,6 +33,8 @@ static NSString *cuConsentClean(id value, NSUInteger limit) {
 @property(retain) NSTextField *authNote;
 @property(retain) NSButton *denyButton;
 @property(retain) NSButton *allowButton;
+@property(retain) LAContext *authContext;
+@property(retain) NSDictionary *host;
 @property(assign) BOOL authenticating;
 @property(assign) BOOL answered;
 @property(assign) BOOL ownsClose;
@@ -65,33 +67,33 @@ static NSString *cuConsentClean(id value, NSUInteger limit) {
 }
 - (void)present:(NSDictionary *)prompt {
   self.promptID=prompt[@"id"];
+  self.host=[prompt[@"host"] isKindOfClass:NSDictionary.class]?prompt[@"host"]:nil;
   self.answered=NO; self.authenticating=NO;
   self.expires=[NSDate dateWithTimeIntervalSince1970:[prompt[@"expiresAt"] doubleValue]/1000.0];
   NSString *headline=cuConsentClean(prompt[@"headline"],240);
   NSString *reason=cuConsentClean(prompt[@"reason"],90);
   self.reason=reason.length?reason:@"approve this Computer Use request";
-  NSMutableArray *rows=[NSMutableArray new];
+  NSMutableArray *rows=[NSMutableArray array];
   NSArray *lines=[prompt[@"lines"] isKindOfClass:NSArray.class]?prompt[@"lines"]:@[];
   for(id line in lines) { if(rows.count>=8) break; NSString *clean=cuConsentClean(line,240); if(clean.length) [rows addObject:clean]; }
   LAContext *probe=[[LAContext new] autorelease]; NSError *unavailable=nil;
   BOOL canAuthenticate=[probe canEvaluatePolicy:LAPolicyDeviceOwnerAuthentication error:&unavailable];
 
-  NSTextField *title=cuLabel(@"Computer Use needs your approval",15,NSFontWeightSemibold);
-  NSTextField *head=cuLabel(headline,13,NSFontWeightSemibold);
+  NSTextField *head=cuLabel(headline,17,NSFontWeightSemibold);
   NSTextField *details=cuLabel([rows componentsJoinedByString:@"\n"],12,NSFontWeightRegular); details.textColor=NSColor.secondaryLabelColor;
   details.hidden=rows.count==0;
-  NSTextField *note=cuLabel(@"Allow only if you asked for this. Deny, Escape, closing this window or no answer refuses it.",12,NSFontWeightRegular); note.textColor=NSColor.secondaryLabelColor;
-  self.authNote=cuLabel(canAuthenticate?@"Allowing asks for Touch ID or your Mac password, so only you can approve it.":@"This Mac has no password or Touch ID set up, so Computer Use approvals are refused. Set a password in System Settings, then try again.",12,NSFontWeightRegular);
+  NSTextField *note=cuLabel(@"Allow only if you asked your agent to do this.",12,NSFontWeightRegular); note.textColor=NSColor.secondaryLabelColor;
+  self.authNote=cuLabel(canAuthenticate?@"Confirm with Touch ID or your Mac password.":@"Set up a Mac password in System Settings before allowing computer access.",12,NSFontWeightRegular);
   self.authNote.textColor=canAuthenticate?NSColor.secondaryLabelColor:NSColor.systemRedColor;
   self.countdown=cuLabel(@"",11,NSFontWeightRegular); self.countdown.textColor=NSColor.secondaryLabelColor;
   self.denyButton=cuButton(@"Deny",self,@selector(deny:)); self.denyButton.keyEquivalent=@"\r";
   self.denyButton.accessibilityLabel=@"Deny this request";
-  self.allowButton=cuButton(@"Allow…",self,@selector(allow:)); self.allowButton.enabled=canAuthenticate;
+  self.allowButton=cuButton([self.host[@"persistent"] boolValue]?@"Trust until revoked…":@"Allow…",self,@selector(allow:)); self.allowButton.enabled=canAuthenticate;
   self.allowButton.accessibilityLabel=@"Allow this request, after Touch ID or your password";
   NSStackView *buttons=cuStack(@[self.denyButton,self.allowButton],NSUserInterfaceLayoutOrientationHorizontal,8);
-  NSStackView *body=cuStack(@[title,head,details,cuSeparator(),note,self.authNote,self.countdown,buttons],NSUserInterfaceLayoutOrientationVertical,10);
+  NSStackView *body=cuStack(@[head,details,cuSeparator(),note,self.authNote,self.countdown,buttons],NSUserInterfaceLayoutOrientationVertical,12);
   if(!self.panel) {
-    self.panel=[[[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,460,300) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO] autorelease];
+    self.panel=[[[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,460,300) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskNonactivatingPanel backing:NSBackingStoreBuffered defer:NO] autorelease];
     self.panel.releasedWhenClosed=NO; self.panel.delegate=self; self.panel.hidesOnDeactivate=NO;
     self.panel.level=NSFloatingWindowLevel; self.panel.title=@"Computer Use";
     self.panel.collectionBehavior=NSWindowCollectionBehaviorMoveToActiveSpace|NSWindowCollectionBehaviorFullScreenAuxiliary;
@@ -107,33 +109,36 @@ static NSString *cuConsentClean(id value, NSUInteger limit) {
   [self.timer invalidate];
   self.timer=[NSTimer scheduledTimerWithTimeInterval:0.5 target:self selector:@selector(tick:) userInfo:nil repeats:YES];
   [self tick:nil];
-  [self.panel makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES];
+  if(self.answered) return;
+  [self.panel orderFrontRegardless];
   [self.panel makeFirstResponder:self.denyButton];
   NSAccessibilityPostNotificationWithUserInfo(self.panel,NSAccessibilityAnnouncementRequestedNotification,@{NSAccessibilityAnnouncementKey:[@"Computer Use needs your approval. " stringByAppendingString:headline],NSAccessibilityPriorityKey:@(NSAccessibilityPriorityHigh)});
 }
 - (void)tick:(NSTimer *)timer {
   NSTimeInterval remaining=[self.expires timeIntervalSinceNow];
-  if(remaining<=0) { if(!self.answered && !self.authenticating) [self finish:@"deny" auth:@"none"]; return; }
+  if(remaining<=0) { if(!self.answered) [self finish:@"deny" auth:@"none"]; return; }
   NSInteger seconds=(NSInteger)ceil(remaining);
-  self.countdown.stringValue=[NSString stringWithFormat:@"Refused automatically in %ld:%02ld",(long)(seconds/60),(long)(seconds%60)];
+  self.countdown.stringValue=[NSString stringWithFormat:@"Request expires in %ld:%02ld",(long)(seconds/60),(long)(seconds%60)];
 }
-- (void)deny:(id)sender { if(!self.authenticating) [self finish:@"deny" auth:@"none"]; }
-- (void)cancelOperation:(id)sender { if(!self.authenticating) [self finish:@"deny" auth:@"none"]; }
-- (BOOL)windowShouldClose:(NSWindow *)sender { if(!self.answered && !self.authenticating) [self finish:@"deny" auth:@"none"]; return self.answered; }
+- (void)deny:(id)sender { [self finish:@"deny" auth:@"none"]; }
+- (void)cancelOperation:(id)sender { [self finish:@"deny" auth:@"none"]; }
+- (BOOL)windowShouldClose:(NSWindow *)sender { if(!self.answered) [self finish:@"deny" auth:@"none"]; return self.answered; }
 - (void)allow:(id)sender {
   if(self.answered || self.authenticating || !self.allowButton.enabled) return;
-  self.authenticating=YES; self.allowButton.enabled=NO; self.denyButton.enabled=NO;
+  self.authenticating=YES; self.allowButton.enabled=NO;
   NSString *prompt=[self.promptID copy];
   LAContext *context=[LAContext new];
+  self.authContext=context;
   context.localizedFallbackTitle=@"Use Password";
   [context evaluatePolicy:LAPolicyDeviceOwnerAuthentication localizedReason:self.reason reply:^(BOOL success,NSError *error) {
     dispatch_async(dispatch_get_main_queue(),^{
-      self.authenticating=NO;
       if(![prompt isEqualToString:self.promptID] || self.answered) { [prompt release]; [context release]; return; }
+      self.authenticating=NO;
+      self.authContext=nil;
       if(success && [self.expires timeIntervalSinceNow]>0) [self finish:@"allow" auth:@"local"];
       else if(!success && (error.code==LAErrorUserCancel || error.code==LAErrorSystemCancel || error.code==LAErrorAppCancel)) {
         self.denyButton.enabled=YES; self.allowButton.enabled=YES;
-        self.authNote.stringValue=@"Nothing was approved. Press Allow to try again, or Deny.";
+        self.authNote.stringValue=@"Access was not allowed. Try again or choose Deny.";
       } else [self finish:@"deny" auth:success?@"expired":@"failed"];
       [prompt release]; [context release];
     });
@@ -141,6 +146,16 @@ static NSString *cuConsentClean(id value, NSUInteger limit) {
 }
 - (void)finish:(NSString *)decision auth:(NSString *)auth {
   if(self.answered) return;
+  if([decision isEqual:@"allow"] && [auth isEqual:@"local"] && [self.host[@"persistent"] boolValue]) {
+    if(!cuTrustHost(self.host)) {
+      cuSendJSON(cuTrustSnapshot());
+      self.authNote.stringValue=@"Trust could not be saved in Keychain. Nothing was approved. Check Keychain access, then try again.";
+      self.authNote.textColor=NSColor.systemRedColor;
+      self.allowButton.enabled=YES;
+      return;
+    }
+    cuSendJSON(cuTrustSnapshot());
+  }
   self.answered=YES;
   NSString *identifier=self.promptID?:@"";
   cuSendJSON(@{@"command":@"consent_decision",@"consent":identifier,@"decision":decision,@"auth":auth});
@@ -148,6 +163,8 @@ static NSString *cuConsentClean(id value, NSUInteger limit) {
 }
 - (void)closePanel {
   [self.timer invalidate]; self.timer=nil;
+  [self.authContext invalidate]; self.authContext=nil;
+  self.authenticating=NO;
   self.ownsClose=YES; [self.panel orderOut:nil]; self.ownsClose=NO;
 }
 @end

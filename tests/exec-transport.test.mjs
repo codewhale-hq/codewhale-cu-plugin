@@ -5,11 +5,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import net from "node:net";
+import crypto from "node:crypto";
 import { run, runOk, runInputLease, ExecError, have, trim, withSignal } from "../src/exec.mjs";
 import { safeRemotePath, b64, localExec, hdcExec, executorFor } from "../src/transport.mjs";
-import { appRequest, appSessionRequest, ensureApp, writeRegistration } from "../src/app-socket.mjs";
+import { appRequest, appSessionRequest, ensureApp, writeRegistration, setAppHostIdentity } from "../src/app-socket.mjs";
 
-test("a missing registered bundle gives a repair path without falling back to host input",async t=>{
+test("a missing helper gives a setup or repair path without falling back to macOS host input",async t=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),"cu-missing-app-"));
   const keys=["CODEWHALE_CU_STATE_DIR","CODEWHALE_CU_APP_SOCKET","CODEWHALE_CU_APP"];
   const previous=keys.map(key=>process.env[key]);
@@ -19,6 +20,8 @@ test("a missing registered bundle gives a repair path without falling back to ho
     keys.forEach((key,index)=>{if(previous[index]===undefined) delete process.env[key]; else process.env[key]=previous[index];});
     fs.rmSync(directory,{recursive:true,force:true});
   });
+  if(process.platform==="darwin") await assert.rejects(ensureApp({launch:false}),error=>error.code==="app_setup_required"&&/https:\/\/codewhale.net\/computer-use/.test(error.message));
+  else assert.equal((await ensureApp({launch:false})).via,"direct");
   writeRegistration({path:path.join(directory,"missing.app"),launch:["must-not-launch"]});
   await assert.rejects(ensureApp({launch:false}),error=>error.code==="app_missing"&&/Reinstall/.test(error.message)&&/app\.json/.test(error.message));
 });
@@ -211,15 +214,47 @@ test("hdc pullFile rejects traversal and shell metacharacters before execution",
   }
 });
 
-test("a helper request that was written reports an unknown outcome when it times out or is cancelled", {skip:process.platform==="win32"}, async t => {
+test("helper authentication precedes actions and only a written action failure has an unknown outcome", {skip:process.platform==="win32"}, async t => {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),"cu-silent-helper-"));
   const saved=process.env.CODEWHALE_CU_APP_SOCKET;
   process.env.CODEWHALE_CU_APP_SOCKET=path.join(dir,"app.sock");
   const received=[];
-  // Accepts and reads the request, then never answers (a wedged helper).
-  const server=net.createServer(socket=>socket.on("data",data=>received.push(String(data))));
+  const sockets=new Set(), sessions=new Map();
+  const domain="net.codewhale.computer-use.host.v1";
+  const ledgerKey=Buffer.alloc(32,7);
+  const seed=Buffer.from(crypto.hkdfSync("sha256",ledgerKey,Buffer.alloc(0),domain,32));
+  const expectedKey=crypto.createPublicKey(crypto.createPrivateKey({key:Buffer.concat([Buffer.from("302e020100300506032b657004220420","hex"),seed]),format:"der",type:"pkcs8"})).export({format:"der",type:"spki"}).toString("base64");
+  setAppHostIdentity({ledgerKey,label:"Fixture\nhost"});
+  let authenticate=false;
+  const server=net.createServer(socket=>{
+    sockets.add(socket);
+    socket.on("close",()=>sockets.delete(socket));
+    socket.on("data",data=>{
+      received.push(String(data));
+      if(!authenticate) return;
+      const req=JSON.parse(data);
+      if(req.tool==="open_session") {
+        const session={leaseToken:crypto.randomUUID(),challenge:crypto.randomBytes(32).toString("hex"),host:req.host};
+        sessions.set(req.sessionId,session);
+        socket.write(JSON.stringify({ok:true,hostTrustProtocol:1,leaseToken:session.leaseToken,challenge:req.sessionId==="bad-challenge"?"invalid":session.challenge})+"\n");
+      } else if(req.tool==="authenticate_session") {
+        const session=sessions.get(req.sessionId);
+        const key=crypto.createPublicKey({key:Buffer.from(req.publicKey,"base64"),format:"der",type:"spki"});
+        const message=Buffer.from([domain,req.sessionId,req.leaseToken,session.challenge,req.publicKey].join("\0"));
+        assert.equal(req.publicKey,session.host.publicKey);
+        assert.equal(req.leaseToken,session.leaseToken);
+        assert.equal(crypto.verify(null,message,key,Buffer.from(req.proof,"base64")),true);
+        session.authenticated=req.sessionId!=="refused-auth";
+        socket.end(JSON.stringify(session.authenticated?{ok:true}:{ok:false,error:{code:"host_authentication_required",message:"fixture refusal"}})+"\n");
+      } else {
+        assert.equal(sessions.get(req.sessionId)?.authenticated,true);
+        socket.end(JSON.stringify({ok:true,data:{authenticated:true}})+"\n");
+      }
+    });
+  });
   await new Promise(resolve=>server.listen(process.env.CODEWHALE_CU_APP_SOCKET,resolve));
   t.after(async()=>{
+    for(const socket of sockets) socket.destroy();
     server.close();
     if(saved===undefined) delete process.env.CODEWHALE_CU_APP_SOCKET; else process.env.CODEWHALE_CU_APP_SOCKET=saved;
     fs.rmSync(dir,{recursive:true,force:true});
@@ -233,6 +268,16 @@ test("a helper request that was written reports an unknown outcome when it times
   assert.equal(received.length,2,"each request reached the helper before its failure");
   // Opening the session lease sends no input: its timeout is not outcome-unknown.
   await assert.rejects(appSessionRequest({tool:"left_click",args:{},sessionId:"silent-lease"},{timeoutMs:80,signal:null}),error=>error.code==="app_timeout"&&error.requestDispatched===undefined);
+  authenticate=true;
+  const signed=await appSessionRequest({tool:"list_apps",args:{},sessionId:"signed-lease"},{timeoutMs:1_000,signal:null});
+  assert.equal(signed.data.authenticated,true);
+  assert.deepEqual(sessions.get("signed-lease").host,{publicKey:expectedKey,label:"Fixture host",persistent:true});
+  await appSessionRequest({tool:"close_session",sessionId:"signed-lease"},{timeoutMs:1_000,signal:null});
+  await assert.rejects(appSessionRequest({tool:"left_click",args:{},sessionId:"refused-auth"},{timeoutMs:1_000,signal:null}),error=>error.code==="host_authentication_required"&&error.requestDispatched===undefined);
+  await assert.rejects(appSessionRequest({tool:"left_click",args:{},sessionId:"bad-challenge"},{timeoutMs:1_000,signal:null}),error=>error.code==="app_bad_reply"&&error.requestDispatched===undefined);
+  const refused=received.map(line=>JSON.parse(line)).filter(req=>["refused-auth","bad-challenge"].includes(req.sessionId));
+  assert.equal(refused.some(req=>req.tool==="left_click"),false);
+  assert.equal(refused.some(req=>req.sessionId==="bad-challenge"&&req.tool==="authenticate_session"),false);
   // Nothing written: an unreachable helper is a plain failure, safe to retry.
   process.env.CODEWHALE_CU_APP_SOCKET=path.join(dir,"absent.sock");
   await assert.rejects(appRequest({tool:"left_click",args:{}},{timeoutMs:1_000,signal:null}),error=>error.code==="app_unavailable"&&error.requestDispatched===undefined);

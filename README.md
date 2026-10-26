@@ -25,9 +25,10 @@ menu-bar app.
   Accessibility actions and process-directed typing remain available. Actions
   that need a keyboard-focus lease refuse before delivery; use browser
   control, a separate computer, or explicit foreground selection of the
-  approved app for those tasks. That app's existing approval covers foreground
-  selection without another prompt; human-input yielding and Pause/Stop remain.
-- **Stay in control.** See selected apps and their input modes. Pause cancels
+  selected app for those tasks. Existing authorization covers foreground
+  selection unless the person excluded it; human-input yielding and Pause/Stop remain.
+- **Stay in control.** See selected apps and their input modes. The 0.13.0
+  candidate adds a compact Codewhale controller while an app is in use. Pause cancels
   queued work and releases held input; Stop ends existing sessions. Only the
   person using the menu-bar controls can allow input again.
 - **Update deliberately.** The app checks for stable releases on request.
@@ -42,7 +43,7 @@ menu-bar app.
 
 ## Install
 
-Three doors, same destination — pick one:
+Install the helper and connect your host, or build from source:
 
 1. **Mac app (easiest).** Download the disk image from the latest stable
    [GitHub release](https://github.com/codewhale-hq/codewhale-cu-plugin/releases),
@@ -50,11 +51,13 @@ Three doors, same destination — pick one:
    whale menu-bar icon, grant what it asks (Accessibility, then Screen
    Recording), and run the background check. No terminal, no Node, no
    compiler needed.
-2. **Inside Codewhale.** Computer Use ships built in: review, trust and
-   enable it through Codewhale's plugin panel. Current macOS Engine builds
-   include the native helper; you do not need a second app installation.
-   Run `request_access` and follow its actual permission owner and setup hint.
-   An installed Computer Use app remains the control owner when present.
+2. **Inside Codewhale.** Install, review and enable Computer Use as an ordinary
+   plugin through **Connectors**, using a stable published plugin release.
+   Plugin updates are independent of Engine updates. On macOS, install the
+   separate Computer Use app above; it owns permissions and the human controls.
+   The portable `computer-use.tar.gz` asset for this installation path is
+   planned for the 0.13.0 release and is not yet published. Run `request_access`
+   and follow its setup hint; a missing helper returns `app_setup_required`.
 3. **From source.** Clone, test, install:
    ```bash
    git clone https://github.com/codewhale-hq/codewhale-cu-plugin
@@ -66,13 +69,30 @@ Three doors, same destination — pick one:
    Needs Node 20+ and, on a Mac, Xcode Command Line Tools. Then wire your
    host from the table in [Developer quick start](#developer-quick-start).
 
-**Verify (every door).** Ask your host for `request_access`. It identifies the
+**Verify.** Ask your host for `request_access`. It identifies the
 computer, helper/version, available tools and missing permissions without
 sending input. `via: "app"` means grants belong to the Computer Use app;
 `via: "direct"` means they belong to the hosting app or terminal. Follow that
-receipt's `appHint`, not a second install ceremony. An installed but disconnected
-helper is an error, never permission to bypass it. Permission recovery is in
+receipt's `appHint`. macOS requires the separately installed helper; direct
+mode is an explicit developer override. A missing or disconnected helper is
+never permission to bypass its controls. Permission recovery is in
 [Setup and troubleshooting](docs/TROUBLESHOOTING.md).
+
+**Trust Codewhale once (0.13.0 source candidate).** The first request to read
+or operate this Mac opens the helper's native approval panel. Choose
+**Trust until revoked…** and confirm with Touch ID or your Mac password, or
+choose **Deny**. Codewhale proves its installation pairing on later connections,
+so changing apps, tasks or models does not ask again. Hosts without a persistent
+pairing key receive approval for that connection only. OS permissions and
+specific consequential actions remain separate decisions.
+
+This needs both an updated MCP plugin and a helper advertising host trust.
+Update the plugin through Connectors and the native app through its updater,
+then restart their connections. Older clients can retain their own consent
+cards or per-app gates. A signed candidate passed human approval, reconnect after
+helper restart, background input/capture and human revocation on one maintainer
+Mac. The revised controller and release packaging still need qualification.
+These candidate features are not claims about the published 0.12.0 app.
 
 **Choose your surface.** Apps on this Mac use Computer Use; your signed-in Chrome
 uses [Codewhale for Chrome](https://github.com/codewhale-hq/codewhale-plugin-marketplace/tree/main/plugins/chromewhale);
@@ -97,7 +117,7 @@ parity](docs/CUA_PARITY.md) records the upstream reference and proof gaps.
 **Status.** Release status is recorded in [CHANGELOG.md](CHANGELOG.md). The
 notarized Mac app is published on this repository's
 [GitHub releases](https://github.com/codewhale-hq/codewhale-cu-plugin/releases)
-(stable release: v0.12.0; this checkout prepares 0.12.1); remaining
+(stable release: v0.12.0; this checkout prepares 0.13.0); remaining
 gates are tracked in [the release checklist](docs/RELEASE_CHECKLIST.md). The
 [setup page](https://codewhale.net/computer-use) offers the notarized disk
 image directly.
@@ -237,12 +257,11 @@ needs its own. The app fixes that:
 - **How the server uses it** — every call on the local computer goes through
   the app when it is running. If it is installed but not running, the server
   launches it (via LaunchServices on macOS, so it is its own responsible
-  process) and waits for it. If it is not installed, calls run directly in
-  the server process as before. `request_access` reports which mode is active
-  (`via: "app"` or `"direct"`) and, in direct mode, how to install the app.
-  A registered helper takes priority over Codewhale's embedded native helper;
-  if the registered helper cannot start, input fails closed. Without a
-  standalone registration, Codewhale can use its embedded permission identity.
+  process) and waits for it. On macOS, a missing helper returns
+  `app_setup_required` with instructions to install and open the separate app;
+  a registered helper that cannot start fails closed. `request_access` reports
+  which mode is active (`via: "app"` or `"direct"`). Linux and Windows can run
+  directly in the server process when no helper is installed.
   `CODEWHALE_CU_APP=off` is an explicit developer override for direct mode,
   never an agent workaround for the person's Pause or Stop choice.
 - **First launch** — open the whale menu to review permission status. Only the
@@ -274,8 +293,9 @@ Builds use `CODEWHALE_CU_SIGN_IDENTITY` when configured, otherwise an available
 Developer ID or Apple Development identity, and fall back to ad-hoc signing.
 Ad-hoc updates can require a new grant. Installation preserves the selected
 identity and verifies the finished bundle. Building the native macOS helper
-requires Xcode Command Line Tools on a Mac; the Codewhale distribution embeds
-the compiled helper. Do not edit installed resources without re-signing.
+requires Xcode Command Line Tools on a Mac; the separate Computer Use app
+download includes the compiled helper. Do not edit installed resources without
+re-signing.
 
 ### Background control and visible cursor on macOS
 
@@ -283,7 +303,9 @@ Use `open_application` with `activate: false` to select the input destination
 without bringing it forward. Keyboard events go to that process and semantic
 actions use Accessibility — both are quiet: no cursor movement, no activation.
 Unqualified `get_app_state`, `list_windows`, and `screenshot` follow that app,
-including behind other windows. Explicit display/region captures remain available once the user has approved at least one app on the computer.
+including behind other windows. Under the 0.13.0 helper, explicit display/region
+captures require host approval and are refused when an app exclusion could expose
+private content. Prefer an app-scoped capture.
 Text insertion prefers writable accessibility selection over process key events.
 For an authorized workflow that requires keyboard focus, explicitly select
 `activate: true`; receipts then say `keyboard_delivery: "foreground-guarded"`.
@@ -301,7 +323,7 @@ with the actual unit and value change in the receipt. Unsupported gestures,
 including raw double/triple/middle click, drag and hover, remain unavailable in
 background mode. There is no automatic foreground fallback.
 
-When the authorized task needs focus in an approved app, select `activate: true`
+When the authorized task needs focus in an allowed app, select `activate: true`
 for foreground control without a second approval prompt. Raw clicks, hover, drag and wheel then go to the bound
 app's window as window-routed event records (`strategy: "window-record"`,
 `pointer_moved: false`) — the agent has its own pointer, drawn in the preview,
@@ -321,6 +343,13 @@ The binding receipt exposes `input_scope`, `shared_pointer: false`,
 `pointer_route: "window-record"` and `isolated_desktop: false`. The preview title distinguishes background app
 control from shared-desktop control. It is a view of the app, not a sandbox.
 
+The 0.13.0 candidate uses a compact Codewhale controller naming the app, with
+a direct Stop computer use button and Pause in its menu. Stop ends all current
+computer sessions. Idle shows Ready; Settings holds remembered access, previous
+connections and the optional background diagnostic. It is Codewhale's own UI, not an assertion that macOS shows an
+identical system indicator. It does not capture the screen. The screenshot
+preview is off by default.
+
 Only when the user asks to watch, enable `preview` with `enabled: true` to show a small, nonactivating window
 containing the controlled app and a cyan cursor labeled Codewhale. The preview
 refreshes on a timer while a session is bound (`CODEWHALE_CU_PREVIEW_REFRESH_MS`,
@@ -331,51 +360,48 @@ panel hides it when it closes, so no panel outlives its session.
 
 ### Consent and shared-machine manners on the local computer
 
-On `local`, the app — not the tool — is the unit of trust. The first call
-that targets an application (`open_application`, an `app_ref`, an element or
-`state_id`, an action on the bound app, or an observation that names no app and
-so would use the frontmost one on macOS) refuses `consent_required` until
-the user decides. A whole-screen `screenshot`, `zoom` or `recording` start, which names
-no app, refuses until the user has approved at least one app on that computer
-(and, on macOS, while the app in front is one they denied);
-after that it is not per-app (it shows everything on the screen), so capture
-one app with `app_ref` when the rest of the screen should stay private; the model asks them and records the answer with
-`consent {action:"allow"|"deny", app:"…"}`. Decisions cover the session by
-default and persist with `remember:true`; `consent {action:"status"}`
-shows the ledger and `revoke` clears it. A denial is a wall: the ledger
-folds name, bundle id and pid together, so a denied app fails `app_denied`
-under every spelling and cannot be opened, driven, or killed through this
-surface. The same app approval covers explicit `open_application activate:true`
-without recording a global foreground grant. A recorded foreground denial still
-blocks it; revoking the app grant removes foreground access too. Spawned
-computers are exempt (a task-owned desktop holds nothing of the user's);
-remote computers are covered by their transport's trust; `app_script` keeps
-macOS's own Automation consent.
+The 0.13.0 Mac helper owns local admission. A native decision grants this
+Codewhale installation permission to use the Mac until the person revokes it
+in Computer Use. The agent can then choose apps needed for the task without
+per-app, per-task or per-model prompts. Other hosts without a persistent key
+receive connection-scoped approval. Discovery and `consent {action:"status"}`
+do not themselves ask for access. The latter reports the helper's actual trust
+and exclusions. An installed older plugin may still use the legacy per-app
+ledger until it is updated.
 
-Recording an allow, confirming an irreversible action, running `app_script`,
-and registering or spawning a computer are the user's own decisions, never a
-model call (`consent {action:"revoke"}` narrows access without a prompt). The
-Codewhale host attests each one the user approved on its card; another host can
-ask through MCP elicitation. On macOS, under a host with neither (Claude
-Desktop, for example), when the Computer Use helper is running
-(`consentProtocol: 1`), `consent {action:"allow"}` and `app_script` on `local`
-open a helper-owned approval panel where Allow requires Touch ID or the user's
-login password and Deny needs no authentication; the helper's daemon enforces
-app allows and single-use `app_script` approvals for every local socket client.
-An interim `/usr/bin/osascript` dialog for hosts without the helper is off by
-default and runs only when `CODEWHALE_CU_NATIVE_PROMPT=1` is set in the server
-environment. While a prompt is open, every other tool call this server would
-run refuses `consent_pending` (and a second decision that arrives while one is
-open is refused rather than queued), except `stop_computer_control`, which
-cancels the prompt, and `consent {action:"status"}` and plain `list_apps`. A
-2-second quiet gap separates consecutive prompts, a decline or timeout silences
-prompts for 10 seconds, and at most five open per minute
-(`consent_rate_limited`). Without the Codewhale host's ledger key an allow
-cannot persist, so `remember:true` lasts this session there and the prompt says
-so. Off macOS without elicitation, and unattested under the Codewhale host,
-such a call refuses `consent_needs_user`. See
-[docs/LIMITATIONS.md](docs/LIMITATIONS.md) for verification limits and what the
-interim dialog does not stop.
+Codewhale supplies its stable secret on the plugin's private stdin channel.
+The plugin derives an Ed25519 identity and signs a fresh helper lease challenge;
+the native helper stores only the approved public key and exclusions in Keychain.
+This proves possession of the same installation key, not the vendor identity or
+code signature of a running app. It is not an OS sandbox: same-user code able
+to read Codewhale's secret store can impersonate that installation. Details and
+qualification limits are in [Limitations](docs/LIMITATIONS.md).
+
+App and foreground exclusions still win. On the current helper, app
+`consent deny` or `revoke` narrows access; it cannot clear a native exclusion.
+Whole-host revocation is a human control in Computer Use. The agent must not
+retry a denial under another name, session or tool. macOS Accessibility, Screen
+Recording and Automation permissions remain separate OS decisions.
+
+Whole-screen captures can show unrelated apps; use scoped observations and
+captures for the task. A host with app exclusions cannot take an unscoped
+whole-screen capture or use a browser route that cannot enforce those exclusions.
+Trust does not start a recording or preview. Spawned task computers and remote
+computers retain their existing transport rules.
+
+`app_script` needs a fresh approval for the exact script; the helper enforces
+its single-use token and app exclusions.
+Irreversible-action confirmations and computer registration or spawning still
+need a host-attested decision or MCP elicitation. Without a supported decision
+path the call refuses `consent_needs_user`.
+
+For macOS hosts without the helper, an interim `osascript` dialog is available
+only with `CODEWHALE_CU_NATIVE_PROMPT=1`; it is off by default. An installed but
+disconnected helper is never bypassed. While a helper prompt is open, other
+input and observation are refused with `consent_pending`; Stop cancels it.
+Prompts are rate-limited, and declining or timing out does not authorize a retry.
+See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for the decision paths and their
+verification limits.
 
 In explicitly selected foreground mode for an approved app, whenever a shared surface is taken —
 a front lease for window-record input,
@@ -451,8 +477,8 @@ The per-action wire names (`left_click`, `read_clipboard`, `recording_start`,
 `computer_list`, `hold_key`, …) remain callable as aliases, so pinned hosts and
 receipts keep working; `tools/list` advertises the merged set only.
 
-- **Observe & resolve** — `list_apps` (regular apps by default; `all:true`
-  for helpers), `list_windows`, `list_displays`,
+- **Observe & resolve** — `list_apps` (regular running apps by default;
+  `all:true` for helpers, `installed:true` for the launchable app catalog), `list_windows`, `list_displays`,
   `switch_display`, `get_app_state` (accessibility/UIA/uitest tree with
   element indices + `state_id`), `screenshot` (display/region, raster-bound
   coordinates), `zoom` (close-up crop of the last raster), `cursor_position`,
@@ -556,13 +582,18 @@ recorder.
 
 ## Verification status
 
-**Source (this snapshot).** `npm test` is green on macOS: 515 tests, 494
-passed, 0 failed, 21 platform skips; the Linux Docker box runs the same 515 with
-471 passed, 0 failed, 44 skips (per-release counts ride with the
-[release notes](CHANGELOG.md)). The GitHub Actions workflow runs the same
-suite plus the receipt hygiene check on macOS, Ubuntu and Windows runners. Source
-tests exercise the protocol, routing, session and injected-runner paths;
-they perform no native input and do not qualify a distributed app.
+**0.13.0 candidate.** A signed build passed native human approval, Unicode
+input/click/scroll/app capture, reconnect through a new MCP process after helper
+restart, and human revocation on one maintainer Mac. All 115 observer samples
+had no pointer or foreground changes. The subsequently simplified native UI
+and release packaging still need qualification. Focused source checks alone
+do not qualify an installed app. Final
+counts and release receipts belong in the [release notes](CHANGELOG.md) and
+[release checklist](docs/RELEASE_CHECKLIST.md).
+
+Earlier source-suite and live receipts below cover their named versions.
+Protocol, routing, session and injected-runner tests perform no native input
+and do not qualify a distributed app.
 
 **Live-verified: macOS 0.8.0 acceptance (one maintainer Mac, arm64,
 2026-09-17).** A muse-driven pass over the installed 0.8.0 plugin plus
@@ -699,10 +730,12 @@ Proven levels are separated: local live (this Mac: darwin) > mocked transport
 implemented to their documented tool interfaces but only verifiable on those
 platforms).
 
-Codewhale embeds a copy of this repository's runtime tree as its built-in
-Computer Use plugin; this repository is the upstream source. Changing this
-checkout or the standalone helper does not update an installed Codewhale
-binary.
+This repository supplies the independently installed Computer Use plugin and
+native helper. Codewhale installs and updates the plugin through Connectors
+from a stable published release; the helper has its own verified app updater.
+The 0.13.0 candidate plans a portable `computer-use.tar.gz` release asset for
+the existing plugin installer. Changing this checkout updates neither installed
+component. Plugin and helper updates do not require rebuilding Engine.
 
 ## Support and contributing
 

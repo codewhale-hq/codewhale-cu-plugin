@@ -203,10 +203,8 @@ export function leaseAccounting(r) {
 
 export function create({ exec }) {
   const runL = (cmd, args, opts) => exec.run(cmd, args, opts);
-  // The preview panel is on by default: while a session is bound to an app,
-  // every action updates the floating capture and its drawn cursor so the
-  // person can watch without the real pointer moving. `preview(enabled:false)`
-  // mutes it for the session.
+  // The preview panel stays hidden until requested. Once enabled, actions
+  // update its floating capture and drawn cursor without moving the real pointer.
   // The preview panel is live while a session is bound and working: after the
   // first successful capture a timer keeps refreshing it, so the person
   // watches the app instead of a frozen still. A session with no bind, preview
@@ -214,7 +212,7 @@ export function create({ exec }) {
   // until its next action — hosts keep idle sessions open for hours.
   // CODEWHALE_CU_PREVIEW_REFRESH_MS=0 disables the loop (tests, headless); the
   // floors keep a hostile value tolerable.
-  const state = { activeDisplay: 1, lastRaster: null, inputApp: null, foregroundInput: false, previewEnabled: true, pointer: null, heldDrag: null };
+  const state = { activeDisplay: 1, lastRaster: null, inputApp: null, foregroundInput: false, previewEnabled: false, pointer: null, heldDrag: null };
   // Shared-surface politeness: front leases, real-pointer gestures,
   // foreground keys and activations wait for a gap in the user's hardware
   // input rather than interleave with their typing. The helper reads the
@@ -798,7 +796,7 @@ export function create({ exec }) {
     // identity unmatchable.
     state.inputApp = { pid: p.pid, ...(p.bundle_id ? { bundle_id: p.bundle_id } : {}), ...(p.name ? { name: p.name } : {}) };
     state.foregroundInput = !!activate;
-    // Surface the watch panel on bind; a capture failure (e.g. missing Screen
+    // Refresh an enabled watch panel on bind; a capture failure (e.g. missing Screen
     // Recording) must never block the bind itself. The first successful
     // capture also starts the refresh loop so the panel stays live while the
     // session works.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // A disposable AppKit app behind the user's work; effects come from its own
 // oracle, foreground/pointer samples from an independent observer with a 10 ms polling interval.
-// Default trial: no activation, shared pointer input, recording, or user app cleanup.
+// After human approval, the default trial has no activation, shared pointer input, recording, or user app cleanup.
 // --switch-mid-action adds a SEPARATE trial that intentionally activates an
 // owned decoy while a process-directed held key is pending on the target.
 import assert from "node:assert/strict";
@@ -19,7 +19,11 @@ const bundleAt = process.argv.indexOf("--bundle");
 const bundle = bundleAt >= 0 ? path.resolve(process.argv[bundleAt + 1]) : null;
 const switchMidAction = process.argv.includes("--switch-mid-action");
 const installedHelper = process.argv.includes("--installed-helper");
+const persistentHost = process.argv.includes("--persistent-host");
+const waitForRevoke = process.argv.includes("--wait-for-revoke");
 if (installedHelper && !bundle) throw new Error("--installed-helper requires --bundle with the installed app path");
+if (waitForRevoke && !persistentHost) throw new Error("--wait-for-revoke requires --persistent-host");
+const hostLedgerKey = persistentHost ? crypto.randomBytes(32) : null;
 const root = bundle ? path.join(bundle, "Contents", "Resources", "plugin") : repoRoot;
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "cu-background-"));
 const outAt = process.argv.indexOf("--out");
@@ -27,9 +31,19 @@ const output = outAt >= 0 ? path.resolve(process.argv[outAt + 1]) : path.join(sc
 const receipt = { source: execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim(),
   dirty: !!execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf8" }).trim(),
   sourceHashes: Object.fromEntries(["mcp/server.mjs", "src/backends/darwin.mjs", "src/backends/darwin-accessibility.m"].map(rel=>[rel,crypto.createHash("sha256").update(fs.readFileSync(path.join(root,rel))).digest("hex")])),
-  startedAt: new Date().toISOString(), route: installedHelper ? "installed-helper-mcp" : bundle ? "packaged-daemon-mcp" : "direct-source-mcp", checks: [], actions: [], samples: [] };
+  startedAt: new Date().toISOString(), route: installedHelper ? "installed-helper-mcp" : bundle ? "packaged-daemon-mcp" : "source-installed-helper-mcp", approvalScope: persistentHost ? "host" : "connection", persistenceVerified: false, checks: [], consents: [], actions: [], samples: [] };
+if (hostLedgerKey) {
+  const seed = Buffer.from(crypto.hkdfSync("sha256", hostLedgerKey, Buffer.alloc(0), "net.codewhale.computer-use.host.v1", 32));
+  const encoded = Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), seed]);
+  const publicKey = crypto.createPublicKey(crypto.createPrivateKey({ key: encoded, format: "der", type: "pkcs8" })).export({ format: "der", type: "spki" });
+  seed.fill(0); encoded.fill(0);
+  receipt.pairing = { label: "Codewhale release check", fingerprint: crypto.createHash("sha256").update(publicKey).digest("hex").slice(0, 16), helperKeyLabel: publicKey.toString("base64").slice(44, 56), cleanupRequired: false };
+}
 const children = [];
 const ownedApps = [];
+const clients = [];
+let persistentApproved = false;
+let helperProcess = null;
 let sampling = true;
 const start = (cmd, args, options) => { const child = spawn(cmd, args, options); children.push(child); return child; };
 const compile = (source, name) => {
@@ -52,36 +66,39 @@ const parseLines = (stream, consume) => {
 try {
   const probe = start(compile("parity/darwin-probe.m", "probe"), ["--watch"], { stdio: ["ignore", "pipe", "inherit"] });
   parseLines(probe.stdout, sample => { if (sampling) receipt.samples.push(sample); });
-  const initial = await until(() => {
+  let initial = await until(() => {
     if(probe.exitCode !== null || probe.signalCode !== null) throw new Error(`Desktop observer exited: ${probe.signalCode ?? probe.exitCode}`);
     return receipt.samples[0];
   }, "desktop observer");
-  const oracleFile = path.join(scratch, "state.json");
   const fixtureBinary = compile("parity/fixtures/native-macos.m", "fixture");
-  const fixture = start(fixtureBinary, [oracleFile, "--background"], { stdio: "ignore" });
+  const oracleFile = path.join(scratch, "state.json");
   const oracle = () => { try { return JSON.parse(fs.readFileSync(oracleFile, "utf8")); } catch { return null; } };
-  await until(() => oracle()?.origin, "background fixture");
-  assert.notEqual(initial.frontmost_pid, fixture.pid);
-  receipt.targetPid = fixture.pid;
-  const env = { ...process.env, CODEWHALE_CU_APP: bundle ? "on" : "off", CODEWHALE_CU_STATE_DIR: path.join(scratch, "state"), CODEWHALE_CU_RECORDINGS_DIR: scratch, CODEWHALE_CU_APP_WARM: "off" };
+  const env = { ...process.env, CODEWHALE_CU_APP: "on", CODEWHALE_CU_STATE_DIR: path.join(scratch, "state"), CODEWHALE_CU_RECORDINGS_DIR: scratch, CODEWHALE_CU_APP_WARM: "off" };
   delete env.CODEWHALE_CU_APP_SOCKET;
   delete env.CODEWHALE_CU_TEST_BACKEND;
   delete env.CODEWHALE_CU_TEST_REMOTE;
   delete env.CODEWHALE_CU_APP_BUNDLE;
-  if (installedHelper) {
+  if (installedHelper || !bundle) {
     const { hello } = await import(pathToFileURL(path.join(root, "src/app-socket.mjs")).href);
     const app = await hello();
     assert.equal(app?.id, "net.codewhale.computer-use", "installed helper is running");
-    assert.equal(app.bundle, bundle, "helper is serving the specified installed bundle");
-    assert.equal(app.controlProtocol, 1, "installed helper has human controls");
+    if (bundle) assert.equal(app.bundle, bundle, "helper is serving the specified installed bundle");
+    assert.ok(app.controlProtocol >= 2, "installed helper has current human controls");
+    assert.ok(app.consentProtocol >= 1, "installed helper has native consent");
+    assert.ok(app.hostTrustProtocol >= 1, "installed helper supports host trust");
     env.CODEWHALE_CU_APP_SOCKET = app.socket;
     receipt.helper = app;
   } else if (bundle) {
     env.CODEWHALE_CU_APP_BUNDLE = bundle;
-    start(process.execPath, [path.join(root, "app/daemon.mjs")], { env, stdio: ["ignore", "ignore", "inherit"] });
-    await until(()=>fs.existsSync(path.join(env.CODEWHALE_CU_STATE_DIR,"app-run.json")),"isolated packaged daemon");
+    helperProcess = start(path.join(bundle, "Contents", "MacOS", "codewhale-cu"), [], { env, stdio: ["ignore", "ignore", "inherit"] });
+    receipt.helper = await until(() => {
+      try {
+        const app = JSON.parse(fs.readFileSync(path.join(env.CODEWHALE_CU_STATE_DIR, "app-run.json"), "utf8"));
+        return app.consentProtocol >= 1 && app.controlProtocol >= 2 && app.hostTrustProtocol >= 1 ? app : null;
+      } catch { return null; }
+    }, "isolated packaged helper with native host trust");
   }
-  const startClient = trial => {
+  const startClient = async trial => {
     const server = start(process.execPath, [path.join(root, "mcp/server.mjs")], {
       env,
       stdio: ["pipe", "pipe", "inherit"],
@@ -89,27 +106,80 @@ try {
     let seq = 0;
     const pending = new Map();
     parseLines(server.stdout, message => pending.get(message.id)?.(message));
-    const tool = async (name, args = {}) => {
+    if (hostLedgerKey) {
+      const decisionKey = crypto.randomBytes(32);
+      server.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "codewhale/host_keys", params: { decision_key: decisionKey.toString("hex"), ledger_key: hostLedgerKey.toString("hex") } }) + "\n");
+      decisionKey.fill(0);
+    }
+    const rpc = async (method, params, timeoutMs = 70_000) => {
       const id = ++seq;
       const message = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => { pending.delete(id); reject(new Error(`${name} timeout`)); }, 70_000);
+        const timeout = setTimeout(() => { pending.delete(id); reject(new Error(`${method} timeout`)); }, timeoutMs);
         pending.set(id, result => { clearTimeout(timeout); pending.delete(id); resolve(result); });
-        server.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } }) + "\n");
+        server.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
       });
+      assert.ok(message.result, JSON.stringify(message.error));
+      return message;
+    };
+    await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "Codewhale release check", version: "1.0" } });
+    server.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
+    const tool = async (name, args = {}, setupStage = null) => {
+      const startedAt = new Date().toISOString();
+      const sampleStart = receipt.samples.length;
+      const setup = setupStage ? { trial, stage: setupStage, tool: name, startedAt, sampleStart, scope: receipt.approvalScope, persistenceVerified: receipt.persistenceVerified } : null;
+      if (setup && setupStage !== "revoke-poll") receipt.consents.push(setup);
+      let message;
+      try { message = await rpc("tools/call", { name, arguments: args }, setupStage === "host-approval" || name === "open_application" ? 130_000 : 70_000); }
+      catch (error) { if (setup) Object.assign(setup, { finishedAt: new Date().toISOString(), sampleEnd: receipt.samples.length, ok: false, error: error.message }); throw error; }
       const data = JSON.parse(message.result?.content?.find(item => item.type === "text")?.text ?? "null");
-      if (!["get_app_state", "screenshot"].includes(name)) receipt.actions.push({ trial, name, data });
+      if (setup) Object.assign(setup, { finishedAt: new Date().toISOString(), sampleEnd: receipt.samples.length, ok: data?.ok, error: data?.error, ...(data?.host ? { host: data.host } : {}) });
+      else if (!["get_app_state", "screenshot"].includes(name)) receipt.actions.push({ trial, name, data });
       assert.ok(data?.ok, `${name}: ${JSON.stringify(data ?? message.error)}`);
       return data;
     };
+    tool.close = async () => {
+      if (server.exitCode !== null || server.signalCode !== null) return;
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => { server.kill("SIGKILL"); reject(new Error("MCP connection did not close cleanly")); }, 5_000);
+        server.once("exit", (code, signal) => { clearTimeout(timeout); code === 0 ? resolve() : reject(new Error(`MCP connection exited: ${signal ?? code}`)); });
+        server.stdin.end();
+      });
+    };
+    clients.push(tool);
+    const before = await tool("consent_status", {}, "host-status-before");
+    const savedApproval = persistentHost && persistentApproved;
+    assert.equal(before.host?.trusted, savedApproval, savedApproval ? "the new MCP connection finds the saved host approval before requesting content" : "the fresh connection starts without approval");
+    assert.equal(before.host?.persisted, savedApproval, savedApproval ? "the helper retained the host approval" : "this pairing has no saved approval");
+    if (!savedApproval) process.stderr.write(`Approve Codewhale release check in the native Computer Use panel for the ${trial} ${persistentHost ? "Trust until revoked" : "connection-only"} trial.\n`);
+    if (persistentHost) receipt.pairing.cleanupRequired = true;
+    await tool("list_apps", { all: true }, savedApproval ? "stored-trust-content" : "host-approval");
+    const approval = await tool("consent_status", {}, "host-status-after");
+    assert.equal(approval.host?.trusted, true, "the helper records the real native approval");
+    assert.equal(approval.host?.persisted, persistentHost, persistentHost ? "the helper persisted the user-approved pairing" : "this run does not verify persistent trust");
+    if (persistentHost) { persistentApproved = true; receipt.pairing.cleanupRequired = true; }
     return tool;
   };
-  const tool = startClient("no-interference");
+  const tool = await startClient("no-interference");
   const observe = () => tool("get_app_state"); // must stay on the bound background app
   const target = (state, predicate) => {
     const element = state.elements.find(predicate);
     assert.ok(element, "expected accessible control");
     return { type: "element", state_id: state.state_id, index: element.index };
   };
+  let quietSince = Date.now();
+  let lastSample = receipt.samples.at(-1);
+  await until(() => {
+    const current = receipt.samples.at(-1);
+    if (!current || current.frontmost_pid !== lastSample?.frontmost_pid || current.pointer.x !== lastSample?.pointer.x || current.pointer.y !== lastSample?.pointer.y) quietSince = Date.now();
+    lastSample = current;
+    return Date.now() - quietSince >= 2_100;
+  }, "desktop is still after native approval");
+  receipt.sampleStart = receipt.samples.length;
+  initial = await until(() => receipt.samples[receipt.sampleStart], "post-approval desktop observer");
+  const fixture = start(fixtureBinary, [oracleFile, "--background"], { stdio: "ignore" });
+  await until(() => oracle()?.origin, "background fixture");
+  receipt.targetPid = fixture.pid;
+  assert.notEqual(initial.frontmost_pid, fixture.pid, "the fixture remains in the background after approval");
   await tool("open_application", { pid: fixture.pid, activate: false });
   let state = await observe();
   assert.equal(state.pid, fixture.pid);
@@ -132,18 +202,19 @@ try {
   receipt.checks.push("default screenshot captures the background app window");
   await tool("stop_computer_control");
   await delay(100);
-  const interference = receipt.samples.filter(sample => sample.frontmost_pid !== initial.frontmost_pid || sample.pointer.x !== initial.pointer.x || sample.pointer.y !== initial.pointer.y);
-  receipt.sampleCount = receipt.samples.length;
+  receipt.sampleEnd = receipt.samples.length;
+  const observed = receipt.samples.slice(receipt.sampleStart, receipt.sampleEnd);
+  const interference = observed.filter(sample => sample.frontmost_pid !== initial.frontmost_pid || sample.pointer.x !== initial.pointer.x || sample.pointer.y !== initial.pointer.y);
+  receipt.sampleCount = observed.length;
   receipt.foregroundPid = initial.frontmost_pid;
   receipt.pointer = initial.pointer;
   receipt.interferenceSamples = interference.length;
-  receipt.foregroundChanges = receipt.samples.filter(sample => sample.frontmost_pid !== initial.frontmost_pid).length;
+  receipt.foregroundChanges = observed.filter(sample => sample.frontmost_pid !== initial.frontmost_pid).length;
   // A physical user move invalidates isolation evidence too; it is never
   // silently attributed to the agent or counted as a passing trial.
-  assert.equal(interference.length, 0, "foreground or cursor changed during the trial; inspect the samples");
-  receipt.checks.push("independent foreground/cursor observer saw no foreground or pointer change");
+  if (interference.length === 0) receipt.checks.push("independent foreground/cursor observer saw no foreground or pointer change");
   if (switchMidAction) {
-    const trial = receipt.switchMidAction = { ok: false, sampleStart: receipt.samples.length, targetPid: fixture.pid };
+    const trial = receipt.switchMidAction = { ok: false, targetPid: fixture.pid };
     // A unique bundle lets the independent actuator verify this exact owned
     // process. AppKit/LaunchServices activation can be refused in background.
     const decoyFile = path.join(scratch, "decoy.json"), decoyBundle = path.join(scratch, "Switch Decoy.app");
@@ -163,7 +234,11 @@ try {
     trial.decoyPid = decoy.pid;
     const contents = value => Object.fromEntries(["entry", "applied", "menu", "selected", "keys", "keys_up", "key_down_count", "key_up_count", "scroll_top", "mouse_events", "second_clicks"].map(key => [key, value[key]]));
     trial.decoyBefore = contents(decoyState());
-    const switchedTool = startClient("switch-mid-action");
+    const switchedTool = await startClient("switch-mid-action");
+    await delay(2_100);
+    trial.sampleStart = receipt.samples.length;
+    trial.baseline = await until(() => receipt.samples[trial.sampleStart], "post-approval switch-trial observer");
+    assert.notEqual(trial.baseline.frontmost_pid, fixture.pid, "the fixture remains in the background after approval");
     await switchedTool("open_application", { pid: fixture.pid, activate: false });
     const selected = await switchedTool("get_app_state");
     assert.equal(selected.pid, fixture.pid);
@@ -197,14 +272,56 @@ try {
     trial.sampleEnd = receipt.samples.length;
     const observed = receipt.samples.slice(trial.sampleStart, trial.sampleEnd);
     trial.sampleCount = observed.length;
-    trial.pointerChanges = observed.filter(sample => sample.pointer.x !== initial.pointer.x || sample.pointer.y !== initial.pointer.y).length;
-    trial.unexpectedForegroundSamples = receipt.samples.slice(trial.sampleStart, trial.observedSwitchIndex).filter(sample => sample.frontmost_pid !== initial.frontmost_pid).length
+    trial.pointerChanges = observed.filter(sample => sample.pointer.x !== trial.baseline.pointer.x || sample.pointer.y !== trial.baseline.pointer.y).length;
+    trial.unexpectedForegroundSamples = receipt.samples.slice(trial.sampleStart, trial.observedSwitchIndex).filter(sample => sample.frontmost_pid !== trial.baseline.frontmost_pid).length
       + receipt.samples.slice(trial.observedSwitchIndex, trial.sampleEnd).filter(sample => sample.frontmost_pid !== decoy.pid).length;
     assert.equal(trial.pointerChanges, 0, "pointer changed during deliberate-switch trial");
     assert.equal(trial.unexpectedForegroundSamples, 0, "input reclaimed focus or an unrelated foreground change occurred");
     trial.ok = true;
     receipt.checks.push("separate deliberate switch during pending held input: target key-up completed, decoy contents and pointer unchanged, focus stayed on decoy");
   }
+  if (persistentHost) {
+    sampling = false;
+    probe.kill("SIGTERM");
+    for (const client of clients) await client.close();
+    if (helperProcess) {
+      const previousPid = receipt.helper.pid;
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("owned helper did not close for persistence verification")), 5_000);
+        helperProcess.once("exit", () => { clearTimeout(timeout); resolve(); });
+        helperProcess.kill("SIGTERM");
+      });
+      helperProcess = start(path.join(bundle, "Contents", "MacOS", "codewhale-cu"), [], { env, stdio: ["ignore", "ignore", "inherit"] });
+      receipt.restartedHelper = await until(() => {
+        try {
+          const app = JSON.parse(fs.readFileSync(path.join(env.CODEWHALE_CU_STATE_DIR, "app-run.json"), "utf8"));
+          return app.pid !== previousPid && app.hostTrustProtocol >= 1 ? app : null;
+        } catch { return null; }
+      }, "owned helper restarted and reloaded Keychain trust");
+    }
+    const reconnected = await startClient("persistent-reconnect");
+    receipt.persistenceVerified = true;
+    receipt.persistenceScope = helperProcess ? "new-mcp-process-restarted-helper" : "new-mcp-process-same-helper";
+    receipt.checks.push(`a new MCP process with the same in-memory host key found persisted trust before a successful app-list request (${receipt.persistenceScope})`);
+    receipt.pairing.cleanup = `Revoke Codewhale release check (Key ${receipt.pairing.helperKeyLabel}) in Computer Use. No private key is saved by this verifier.`;
+    process.stderr.write(`${receipt.pairing.cleanup}\n`);
+    if (waitForRevoke) {
+      await reconnected("open_application", { pid: fixture.pid, activate: false });
+      receipt.revocation = { requestedAt: new Date().toISOString(), observed: false };
+      process.stderr.write("Waiting for your native Revoke action; only consent status will be read.\n");
+      while (!receipt.revocation.observed) {
+        const status = await reconnected("consent_status", {}, "revoke-poll");
+        receipt.revocation.status = status.host;
+        if (status.host?.revoked === true && status.host.trusted === false && status.host.persisted === false) {
+          receipt.revocation.observed = true;
+          receipt.revocation.observedAt = new Date().toISOString();
+          receipt.pairing.cleanupRequired = false;
+        } else await delay(1_000);
+      }
+      receipt.checks.push("status-only observation confirmed the user's native Revoke removed persisted trust");
+    }
+  }
+  assert.equal(interference.length, 0, "foreground or cursor changed during the trial; inspect the samples");
   receipt.ok = true;
 } catch (error) {
   receipt.ok = false;
@@ -212,6 +329,11 @@ try {
   process.exitCode = 1;
 } finally {
   sampling = false;
+  hostLedgerKey?.fill(0);
+  if (receipt.pairing?.cleanupRequired) {
+    receipt.pairing.cleanup = `Revoke Codewhale release check (Key ${receipt.pairing.helperKeyLabel}) in Computer Use. No private key is saved by this verifier.`;
+    process.stderr.write(`${receipt.pairing.cleanup}\n`);
+  }
   // LaunchServices owns the decoy process; its PID comes from the unique,
   // locally created fixture oracle, never a user's app lookup.
   for (const pid of ownedApps) {

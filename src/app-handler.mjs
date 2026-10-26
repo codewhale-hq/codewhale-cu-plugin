@@ -59,9 +59,9 @@ let cleanupPending = false;
 
 /** Human-facing state contains app identity and action names, never task text. */
 export function controlStatus() {
-  return { mode: controlMode, cleanupPending, sessions: [...sessions.values()]
-    .filter((s) => !s.closed && s.target)
-    .map((s) => ({ target: s.target, mode: s.mode, action: s.action ?? null })) };
+  return { mode: controlMode, cleanupPending, sessions: [...sessions.entries()]
+    .filter(([, s]) => !s.closed && (s.displayTarget ?? s.target))
+    .map(([key, s]) => ({ sessionId: key.slice(key.indexOf(":") + 1), target: s.displayTarget ?? s.target, mode: s.mode, action: s.action ?? null })) };
 }
 
 // Called only by the launcher's inherited control channel, never an MCP tool.
@@ -125,6 +125,8 @@ export function releaseSessionInput(sessionId, computerId = "local", { close = f
 }
 
 export function closeSession(sessionId, computerId = "local") {
+  consent.withSession(sessionId, () => consent.dropSession(computerId));
+  for (const [token, entry] of appScriptTokens) if (entry.sessionId === sessionId) appScriptTokens.delete(token);
   return releaseSessionInput(sessionId, computerId, { close: true });
 }
 
@@ -218,7 +220,7 @@ function pruneAppScriptTokens(nowMs) {
 export function issueAppScriptToken(language, script, nowMs = Date.now()) {
   pruneAppScriptTokens(nowMs);
   const token = crypto.randomBytes(16).toString("hex");
-  appScriptTokens.set(token, { hash: scriptDigest(language, script), expiresAt: nowMs + SCRIPT_TOKEN_TTL_MS });
+  appScriptTokens.set(token, { hash: scriptDigest(language, script), expiresAt: nowMs + SCRIPT_TOKEN_TTL_MS, sessionId: consent.currentSession() });
   return token;
 }
 
@@ -227,6 +229,7 @@ export function consumeAppScriptToken(token, language, script, nowMs = Date.now(
   if (typeof token !== "string" || !/^[0-9a-f]{32}$/.test(token)) return false;
   const entry = appScriptTokens.get(token);
   if (!entry) return false;
+  if (entry.sessionId !== consent.currentSession()) return false;
   if (entry.hash !== scriptDigest(language, script)) return false;
   appScriptTokens.delete(token);
   return true;
@@ -289,6 +292,11 @@ export async function resolveConsentApp(ref, { computerId = "local", listApps } 
   const wanted = ["pid", "bundle_id", "name"].filter((field) => ref[field] != null).map((field) => consent.appKeys({ [field]: ref[field] })[0]);
   const running = apps.map((app) => ({ app, keys: new Set(consent.appKeys(app)) }));
   const desc = [ref.name, ref.bundle_id, ref.pid != null ? `pid ${ref.pid}` : null].filter(Boolean).join(", ");
+  if (ref.pid == null && wanted.length === 1 && running.every((entry) => !entry.keys.has(wanted[0]))) {
+    const refusal = launchRefusal(ref, process.platform, { remote: computerId !== "local" });
+    if (refusal) throw Object.assign(new Error(refusal.message), { code: refusal.code });
+    return { resolved: ref, keys: consent.appKeys(ref), running: false };
+  }
   const hits = running.filter((entry) => wanted.every((key) => entry.keys.has(key)));
   if (hits.length !== 1) {
     throw Object.assign(new Error(hits.length
@@ -301,7 +309,7 @@ export async function resolveConsentApp(ref, { computerId = "local", listApps } 
     ...(typeof app.bundle_id === "string" && app.bundle_id ? { bundle_id: app.bundle_id } : {}),
     ...(Number.isInteger(app.pid) && app.pid > 0 ? { pid: app.pid } : {}),
   };
-  return { resolved, keys: consent.appKeys(resolved) };
+  return { resolved, keys: consent.appKeys(resolved), running: true };
 }
 
 function cleanLine(text, limit = 240) {
@@ -346,15 +354,19 @@ export function createConsentController({
     closedAt = now();
     onStateChange();
     if (decision === "allow" && auth === "local") {
-      current.resolve(current.onAllow(now()));
+      current.resolve(consent.withSession(current.sessionId, () => current.onAllow(epochNow())));
     } else {
-      current.resolve({ ok: false, error: { code: "consent_declined", message: DECLINED_MESSAGE } });
+      if (decision === "deny" && auth === "none") consent.withSession(current.sessionId, () => current.onDeny?.());
+      current.resolve({ ok: false, error: { code: decision === "cancel" ? "cancelled" : "consent_declined", message: decision === "cancel" ? "The computer session ended before the user decided." : DECLINED_MESSAGE } });
     }
   }
 
   return {
     get helperConsent() { return helperConsent; },
     get pending() { return active !== null && !active.answered; },
+    cancel(sessionId) {
+      if (active && (sessionId === undefined || active.sessionId === sessionId)) finishActive("cancel", "none");
+    },
     activePromptPayload() {
       if (!active || active.answered) return null;
       return {
@@ -363,6 +375,7 @@ export function createConsentController({
         headline: active.headline,
         reason: active.reason,
         lines: active.lines,
+        ...(active.host ? { host: active.host } : {}),
       };
     },
     handleControlMessage(msg) {
@@ -384,15 +397,20 @@ export function createConsentController({
       }
       return { handled: false, sendStatus: false };
     },
-    deny(req) {
+    async deny(req) {
       if (req?.scope === "foreground") {
         consent.recordForeground("local", "deny", { remember: false });
         return { ok: true, scope: "foreground", decision: "deny" };
       }
-      const keys = Array.isArray(req?.keys) ? req.keys.filter((k) => typeof k === "string") : consent.appKeys(req?.app ?? req);
+      let app = req?.app ?? req;
+      let keys = Array.isArray(req?.keys) ? req.keys.filter((k) => typeof k === "string") : consent.appKeys(app);
       if (!keys.length) return { ok: false, error: { code: "bad_args", message: "consent_deny needs an app identity or scope:\"foreground\"" } };
-      consent.record("local", keys, "deny", { remember: false, name: req?.app?.name ?? req?.name ?? null });
-      return { ok: true, scope: "app", decision: "deny", keys };
+      if (!Array.isArray(req?.keys)) {
+        try { const resolved = await resolveApp(app); app = resolved.resolved; keys = resolved.keys; }
+        catch (error) { return { ok: false, error: { code: error.code ?? "consent_identity_ambiguous", message: error.message } }; }
+      }
+      consent.record("local", keys, "deny", { remember: false, name: app?.name ?? null });
+      return { ok: true, scope: "app", decision: "deny", app, keys };
     },
     revoke(req) {
       if (req?.scope === "foreground") {
@@ -405,11 +423,24 @@ export function createConsentController({
       return { ok: true, scope: "app", keys };
     },
     async request(req, { signal } = {}) {
+      const generation = controlGeneration;
       if (!helperConsent) {
         return { ok: false, error: { code: "consent_needs_user", message: "The running Codewhale Computer Use helper does not support the approval panel; update and restart the Computer Use app." } };
       }
       if (active || liveMarker({ fs, dir: stateDir() })?.state === "open") {
         return { ok: false, error: { code: "consent_pending", message: "A Computer Use approval dialog is already open on this Mac; wait for the person to answer it." } };
+      }
+      const trusted = consent.status("local").host;
+      if (trusted?.trusted && ["allow_app", "allow_foreground"].includes(req?.kind)) {
+        if (req.kind === "allow_foreground") return consent.foregroundDecision("local").state === "allowed"
+          ? { ok: true, decision: "allow", scope: "foreground", persisted: trusted.persisted }
+          : { ok: false, error: { code: "foreground_denied", message: "Foreground control is excluded. The user can change exclusions in Computer Use." } };
+        try {
+          const { resolved, keys } = await resolveApp(req.app);
+          return consent.decisionFor("local", keys).state === "allowed"
+            ? { ok: true, decision: "allow", app: resolved, keys, persisted: trusted.persisted }
+            : { ok: false, error: { code: "app_denied", message: "This app is excluded. The user can change exclusions in Computer Use." } };
+        } catch (error) { return { ok: false, error: { code: error.code ?? "consent_identity_ambiguous", message: error.message } }; }
       }
       const checkRate = () => {
         const t = now();
@@ -423,14 +454,37 @@ export function createConsentController({
         return null;
       };
       const earlyRate = checkRate();
-      if (earlyRate) return earlyRate;
+      if (earlyRate && !(req?.kind === "app_script" && consent.status("local").host?.trusted && earlyRate.error.code === "consent_rate_limited" && earlyRate.error.retry_after_s <= 2)) return earlyRate;
+      if (earlyRate) {
+        await new Promise(resolve => {
+          const finish = () => { clearTimeout(timer); signal?.removeEventListener("abort", finish); resolve(); };
+          const timer = setTimeout(finish, earlyRate.error.retry_after_s * 1000);
+          signal?.addEventListener("abort", finish, { once: true });
+          if (signal?.aborted) finish();
+        });
+      }
 
       let headline;
       let reason;
       let lines = [];
       let onAllow;
+      let onDeny;
+      let host;
       const kind = req?.kind;
-      if (kind === "allow_app") {
+      if (kind === "trust_host") {
+        const label = cleanLine(String(req.host?.label || "This connection"), 80);
+        const publicKey = req.host?.publicKey;
+        if (publicKey != null && (typeof publicKey !== "string" || !/^[A-Za-z0-9+/]{59}=$/.test(publicKey))) {
+          return { ok: false, error: { code: "bad_args", message: "Host pairing needs a valid public key." } };
+        }
+        host = { publicKey: publicKey ?? null, label, persistent: req.host?.persistent === true && publicKey != null, exclusions: Array.isArray(req.host?.exclusions) ? req.host.exclusions : [] };
+        headline = `Let ${label} use your Mac?`;
+        reason = `approve computer access for ${label}`;
+        lines = ["Can read app contents, take screenshots, use the clipboard, and control the keyboard and pointer.", "Changing apps or models will not ask again. You can stop computer use at any time from the menu bar."];
+        lines.push(host.persistent ? "Access stays on until you turn it off in Computer Use settings." : "Access ends when this connection closes.");
+        if (host.exclusions.length) lines.push("Existing app and foreground exclusions will be retained.");
+        onAllow = () => ({ ok: true, decision: "allow", scope: "host", persisted: host.persistent });
+      } else if (kind === "allow_app") {
         let resolvedApp;
         try { resolvedApp = await resolveApp(req.app); } catch (err) {
           return { ok: false, error: { code: err?.code ?? "consent_identity_ambiguous", message: String(err?.message ?? err) } };
@@ -442,7 +496,9 @@ export function createConsentController({
         if (resolved.name != null) lines.push(cleanLine(`App name: ${visible(resolved.name, 120, { what: "the app name" })}`, 240));
         if (resolved.bundle_id != null) lines.push(cleanLine(`Bundle id: ${visible(resolved.bundle_id, 180, { what: "the bundle id" })}`, 240));
         if (resolved.pid != null) lines.push(cleanLine(`Process id: ${Number(resolved.pid)} (this session only)`, 240));
+        if (resolvedApp.running === false) lines.push("App is not running. Access applies only to the name or bundle id shown above.");
         lines.push("Scope: this session only");
+        onDeny = () => consent.record("local", keys, "deny", { remember: false, name: resolved.name ?? null });
         onAllow = () => {
           consent.record("local", keys, "allow", { remember: false, name: resolved.name ?? null });
           return { ok: true, decision: "allow", app: resolved, keys, persisted: false };
@@ -451,6 +507,7 @@ export function createConsentController({
         headline = "Allow Computer Use to share your pointer and keyboard (foreground control).";
         reason = "approve Computer Use foreground control";
         lines = ["Scope: shared desktop (foreground control), this session only"];
+        onDeny = () => consent.recordForeground("local", "deny", { remember: false });
         onAllow = () => {
           consent.recordForeground("local", "allow", { remember: false });
           return { ok: true, decision: "allow", scope: "foreground", persisted: false };
@@ -469,6 +526,12 @@ export function createConsentController({
         for (const ref of policy.targets) {
           if (consent.decisionFor("local", consent.appKeys(ref)).state === "denied") {
             return { ok: false, error: { code: "app_denied", message: `the user denied access to ${ref.name ?? ref.bundle_id ?? `pid ${ref.pid}`} on this computer` } };
+          }
+          if (consent.hostExclusions("local").some(key => key !== "scope:foreground")) {
+            try {
+              const resolved = await resolveApp(ref);
+              if (consent.decisionFor("local", resolved.keys).state !== "allowed") return { ok: false, error: { code: "app_denied", message: "This script targets an excluded app." } };
+            } catch { return { ok: false, error: { code: "app_denied", message: "This script's app identity could not be checked against excluded apps." } }; }
           }
         }
         let escapedScript;
@@ -506,7 +569,7 @@ export function createConsentController({
       }
       const lateRate = checkRate();
       if (lateRate) return lateRate;
-      if (signal?.aborted) {
+      if (signal?.aborted || generation !== controlGeneration || controlMode !== "ready") {
         return { ok: false, error: { code: "cancelled", message: "the request ended before the user decided" } };
       }
 
@@ -532,6 +595,7 @@ export function createConsentController({
         }, promptTimeoutMs);
         active = {
           id,
+          sessionId: consent.currentSession(),
           expiresAt,
           headline: cleanLine(headline, 240),
           reason: cleanLine(reason, 90),
@@ -539,6 +603,8 @@ export function createConsentController({
           answered: false,
           timer,
           onAllow,
+          onDeny,
+          host,
           resolve: (res) => {
             signal?.removeEventListener("abort", onAbort);
             resolve(res);
@@ -578,10 +644,10 @@ function policyRefusal(tool, args, computerId) {
   return null;
 }
 
-async function listBackendApps(instance) {
+async function listBackendApps(instance, installed = false) {
   if (typeof instance?.list_apps !== "function") return null;
   try {
-    const res = await instance.list_apps({ all: true });
+    const res = await instance.list_apps({ all: true, ...(installed ? { installed: true } : {}) });
     return Array.isArray(res) ? res : Array.isArray(res?.apps) ? res.apps : null;
   } catch {
     return null;
@@ -592,16 +658,19 @@ async function decisionForLocalRef(instance, computerId, ref, cachedApps) {
   const keys = consent.appKeys(ref);
   if (!keys.length) return { state: "undecided", ref };
   const direct = consent.decisionFor(computerId, keys);
-  if (direct.state !== "undecided") return { state: direct.state, ref };
+  const restricted = consent.hostExclusions(computerId).some(key => key !== "scope:foreground");
+  if (direct.state === "denied" || (direct.state === "allowed" && direct.via !== "scope:host" && !restricted)) return { state: direct.state, ref };
   const apps = cachedApps.value === undefined ? (cachedApps.value = await listBackendApps(instance)) : cachedApps.value;
-  if (!Array.isArray(apps)) return { state: direct.state, ref };
+  if (!Array.isArray(apps)) return { state: restricted ? "undecided" : direct.state, ref };
   const wantName = ref.name?.trim().replace(/\.app$/i, "").toLowerCase();
   const wantBundle = ref.bundle_id?.trim().toLowerCase();
-  const hit = apps.find((a) =>
-    (ref.pid != null && a.pid === ref.pid) ||
-    (wantBundle && String(a.bundle_id ?? "").trim().toLowerCase() === wantBundle) ||
-    (wantName && String(a.name ?? "").trim().replace(/\.app$/i, "").toLowerCase() === wantName));
-  if (!hit) return { state: direct.state, ref };
+  const matches = (a) => (ref.pid == null || a.pid === ref.pid)
+    && (!wantBundle || String(a.bundle_id ?? "").trim().toLowerCase() === wantBundle)
+    && (!wantName || String(a.name ?? "").trim().replace(/\.app$/i, "").toLowerCase() === wantName);
+  let hits = apps.filter(matches);
+  if (!hits.length && restricted && ref.pid == null) hits = (await listBackendApps(instance, true) ?? []).filter(matches);
+  if (hits.length !== 1) return { state: restricted || hits.length > 1 ? "undecided" : direct.state, ref };
+  const [hit] = hits;
   const resolved = { name: hit.name ?? null, pid: hit.pid ?? null, bundle_id: hit.bundle_id ?? null };
   const widened = consent.decisionFor(computerId, consent.appKeys(resolved));
   return { state: widened.state, ref: resolved };
@@ -618,8 +687,18 @@ function refRefusal(verdict, ref) {
 async function localConsentRefusal(tool, args, computerId, session, instance) {
   if (computerId !== "local") return null;
   if (hasMalformedOrUnsupportedSelector(tool, args)) return null;
+  const appExclusions = consent.hostExclusions(computerId).filter(key => key !== "scope:foreground");
+  if (appExclusions.length && tool.startsWith("browser_")) return { code: "app_denied", message: "Browser automation cannot identify excluded desktop apps. Use an allowed app through its accessibility controls." };
 
   if (tool === "app_script") {
+    if (appExclusions.length) {
+      const policy = checkAppScript(args.script, args.language);
+      const cached = { value: undefined };
+      for (const ref of policy.targets) {
+        const verdict = await decisionForLocalRef(instance, computerId, ref, cached);
+        if (verdict.state !== "allowed") return { code: "app_denied", message: "This script's app identity is excluded or could not be verified." };
+      }
+    }
     if (!consumeAppScriptToken(args.approvalToken, args.language, args.script)) {
       return { code: "consent_required", message: "app_script requires a fresh single-use approval token from the user." };
     }
@@ -674,6 +753,7 @@ async function localConsentRefusal(tool, args, computerId, session, instance) {
     || ((tool === "recordingStart" || tool === "recording_start") && (args.window_id == null || process.platform !== "darwin")));
 
   if (wholeScreen) {
+    if (appExclusions.length) return { code: "app_denied", message: "Whole-screen capture may show an excluded app. Capture one allowed app with app_ref." };
     if (!consent.anyAllowed(computerId)) {
       return { code: "consent_required", message: "No application on this computer has the user's approval yet, and a whole-screen capture shows every app on it." };
     }
@@ -735,7 +815,7 @@ async function localConsentRefusal(tool, args, computerId, session, instance) {
  * Execute one {tool, args} request on this machine's backend. Never throws:
  * every outcome is a receipt object with `ok`.
  */
-export async function handle(req, { computerId = "local", sessionId = "direct", signal, persistentInputOwner = false } = {}) {
+export async function handle(req, { computerId = "local", sessionId = "direct", signal, persistentInputOwner = false, requestConsent, onStateChange = () => {} } = {}) {
   const tool = req?.tool;
   if (!ALLOWED.has(tool)) {
     return { ok: false, error: { code: "tool_not_allowed", message: `tool "${tool}" is not in the remote allow-list` } };
@@ -779,12 +859,29 @@ export async function handle(req, { computerId = "local", sessionId = "direct", 
       if (generation !== controlGeneration || controlMode !== "ready") throw Object.assign(new Error("Computer control was interrupted by the user."), { code: "cancelled" });
       const instance = await backend(computerId, sessionId, persistentInputOwner);
       throwIfAborted();
-      const rawArgs = req.args ?? {};
-      const consentRefusal = await localConsentRefusal(tool, rawArgs, computerId, session, instance);
+      let rawArgs = req.args ?? {};
+      let consentRefusal = await localConsentRefusal(tool, rawArgs, computerId, session, instance);
+      if (consentRefusal?.code === "consent_required" && computerId === "local" && tool === "open_application" && typeof requestConsent === "function" && namedApps(tool, rawArgs).length) {
+        if (rawArgs.activate === true && consent.foregroundDecision(computerId).state === "denied") return { ok: false, platform: process.platform, tool, error: { code: "foreground_denied", message: "the user denied foreground control on this computer" } };
+        const app = Object.fromEntries(["name", "bundle_id", "pid"].filter((field) => rawArgs[field] != null).map((field) => [field, rawArgs[field]]));
+        const approved = await requestConsent({ kind: "allow_app", app }, controller.signal);
+        if (!approved?.ok) return { ok: false, platform: process.platform, tool, error: approved?.error ?? { code: "consent_declined", message: DECLINED_MESSAGE } };
+        throwIfAborted();
+        consentRefusal = await localConsentRefusal(tool, rawArgs, computerId, session, instance);
+      }
+      if (consentRefusal?.code === "consent_required" && computerId === "local" && tool === "app_script" && typeof requestConsent === "function" && !Object.hasOwn(rawArgs, "approvalToken")) {
+        const approved = await requestConsent({ kind: "app_script", language: rawArgs.language, script: rawArgs.script }, controller.signal);
+        if (!approved?.ok) return { ok: false, platform: process.platform, tool, error: approved?.error ?? { code: "consent_declined", message: DECLINED_MESSAGE } };
+        throwIfAborted();
+        rawArgs = { ...rawArgs, approvalToken: approved.approvalToken };
+        consentRefusal = await localConsentRefusal(tool, rawArgs, computerId, session, instance);
+      }
       if (consentRefusal) return { ok: false, platform: process.platform, tool, error: consentRefusal };
       throwIfAborted();
       session.action = tool;
-      if (tool === "open_application") { session.target = null; session.targetRef = null; session.mode = null; dropAppWriters(key); }
+      if (session.target && BOUND_TARGET_TOOLS.has(tool) && !rawArgs.app_ref && !rawArgs.target?.app_ref) session.displayTarget = session.target;
+      onStateChange();
+      if (tool === "open_application") { session.target = null; session.targetRef = null; session.displayTarget = null; session.mode = null; dropAppWriters(key); }
       const holder = heldPointers.get(computerId);
       if (INPUT_MUTATIONS.has(tool) && holder && holder !== key) {
         if (!inputOwnerIdle(holder)) {
@@ -823,12 +920,14 @@ export async function handle(req, { computerId = "local", sessionId = "direct", 
       if (tool === "left_mouse_up" && heldPointers.get(computerId) === key) heldPointers.delete(computerId);
       if (tool === "open_application" && data?.resolved) {
         session.target = { name: String(data.resolved.name ?? "Application").slice(0, 128), pid: data.resolved.pid };
+        session.displayTarget = session.target;
         session.targetRef = data.resolved;
         session.mode = data.shared_pointer || data.activate ? "foreground" : "background";
         if (computerId === "local") {
           consent.alias(computerId, consent.appKeys(data.resolved), { persisted: false, name: data.resolved.name ?? null });
         }
       }
+      if (tool === "get_app_state" && data?.found && Number.isInteger(data.pid) && data.pid > 0) session.displayTarget = { name: String(data.name ?? "Application").slice(0, 128), pid: data.pid };
       return { ok: true, platform: process.platform, tool, data };
     }));
   } catch (err) {
@@ -838,5 +937,6 @@ export async function handle(req, { computerId = "local", sessionId = "direct", 
     session.requests.delete(controller);
     session.action = null;
     session.touched = Date.now();
+    onStateChange();
   }
 }

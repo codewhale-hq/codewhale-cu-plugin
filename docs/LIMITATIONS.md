@@ -1,62 +1,74 @@
 # Limitations
 
-## Native macOS approval panel and interim dialog (0.12.1)
+## Native macOS installation trust (0.13.0 source candidate)
 
-Under a host that neither attests decisions nor supports MCP elicitation, the
-plugin asks for the user's own decisions on macOS in two ways:
+The updated helper asks once when a host first requests local app contents or
+an action. The person can trust the Codewhale installation until revoked,
+using Touch ID or the Mac login password. Its agent can then choose apps for
+the task without per-app, per-task or per-model approval. Hosts without a
+persistent pairing key receive approval for the current connection only.
+Deny, closing the panel or no answer refuses access.
 
-1. **Helper-owned approval panel (`consentProtocol: 1`, default when the
-   Computer Use app is running).** For `consent {action:"allow"}` and
-   `app_script` on `local`, the MCP server asks the helper's daemon over its
-   socket (`consent_request`), and the daemon asks the native menu-bar app over
-   the private FD 3/4 control channel. Allow requires Touch ID or the user's
-   login password (`LAPolicyDeviceOwnerAuthentication`, failing closed when
-   neither is configured), and the daemon enforces its session ledger and
-   single-use `app_script` tokens for every local socket client.
-2. **Interim `/usr/bin/osascript` dialog (default off; enabled only when
-   `CODEWHALE_CU_NATIVE_PROMPT=1` is set in the server environment).** Used
-   only when explicitly opted in for decisions without the helper panel. It is
-   a plugin-session gate, not an OS boundary.
+**This is candidate behavior.** The 0.13.0 native app has been built and signed.
+Its trust flow and compact Codewhale controller still need live qualification.
+Source and injected-runner checks do not establish installed or
+human-interaction results, and a signed candidate is not a published release.
+See [the release checklist](RELEASE_CHECKLIST.md).
 
-Limits:
+- **The identity is an installation key.** Codewhale supplies its stable
+  ledger secret as the first message on the installed plugin's private stdin
+  channel (`codewhale/host_keys`). The plugin derives an Ed25519 key using
+  HKDF-SHA256 with a Computer Use domain. Each helper lease has a fresh
+  challenge bound to its session, lease token and public key. The plugin signs
+  it; no durable private key is sent to the helper. A signature proves key
+  possession, never approval: only the native human decision can enroll it.
+- **It does not authenticate vendor code.** Host labels and reported process
+  ids do not select grants. Pairing proves the same installation key, not a
+  Codewhale code signature or verified executable ancestry. Codewhale's
+  existing secret store normally uses a user-only `0600` file; same-user code
+  able to read it can impersonate the installation. This remains a control
+  boundary for Computer Use, not an OS sandbox against arbitrary same-user
+  code, unrelated tools or a compromised host. Resetting that secret changes
+  the identity and requires new approval.
+- **The helper owns remembered trust.** Its native process stores approved
+  public keys, revocations and app exclusions in Keychain. The daemon accepts
+  that state only over the inherited native control channel. Client-provided
+  labels, ledger entries, `remember:true` and raw socket requests cannot enroll
+  a key. The frontend defers local admission to this helper rather than
+  creating its own broad allow. Deny/revoke narrows app access; it does not
+  clear a native exclusion. Whole-host revocation is a native user control.
+- **Both plugin and helper must be current.** A helper advertising
+  `hostTrustProtocol:1` supplies this boundary. Update the ordinary plugin
+  through Connectors and the separate native helper through its app updater.
+  Updating one does not replace the other. Older clients can retain host
+  cards and per-app gates; they cannot acquire a durable pairing from an app
+  name. Use supported plugin/helper updates and restart their connections.
+- **The person at this Mac answers.** The panel belongs to the helper's console
+  session, even when a remote person drives the host. Without a configured
+  password or Touch ID, Allow is unavailable. An open panel blocks other helper
+  input and observation. Stop cancels it. Repeated prompts are bounded; a
+  denial is never permission for the agent to ask again through another route.
+- **Trust does not authorize every action.** `app_script` retains exact-script
+  approval and a single-use helper token. App exclusions still apply.
+  Consequential-action confirmation and registering or spawning a computer
+  still need a host-attested decision or MCP elicitation. Unsupported decision
+  paths fail closed. macOS Accessibility, Screen Recording and Automation
+  permissions remain separate.
+- **Context is requested, not continuously collected.** Trust starts no
+  recording or preview. The compact Codewhale controller displays
+  activity and Pause/Stop; it is app UI, not a claimed macOS system indicator.
+  Preview captures begin only when requested with `preview(enabled:true)`.
+  App exclusions block unscoped whole-screen capture and browser routes that
+  cannot enforce the exclusions; scoped allowed-app capture remains available.
+- **Other platforms have no equivalent native trust panel.** Windows, Linux,
+  HarmonyOS and remote transport qualification remain as described below.
 
-- **Not shown to a person yet.** Both the helper panel (`app/macos/consent-panel.h`)
-  and the `osascript` dialog were checked against injected runners, fake helpers
-  and an ad-hoc universal compilation of the launcher; neither the panel nor the
-  Touch ID prompt has been shown on a real desktop, and the installed helper in
-  `~/Applications` has not been rebuilt with Developer ID or notarized yet.
-- **Who answers is whoever sits at this Mac.** The prompt belongs to the
-  console session of the machine running the helper or MCP server. A host driven
-  remotely, or a Mac someone else is using, puts the question in front of
-  that person.
-- **What the lock and daemon stop.** Through the helper, the daemon holds the
-  authoritative session ledger, resolves the target app identity once before the
-  prompt (refusing when name, bundle id and pid disagree), refuses unapproved
-  local app calls from every socket client, refuses a second decision while one
-  is open (`consent_pending`), and enforces a 2-second quiet gap after every
-  prompt, a 10-second cooldown after a decline or timeout, and at most five
-  prompts per minute (`consent_rate_limited`). On the interim `osascript` path,
-  a shared `prompt.active` marker also causes other plugin sessions sharing the
-  state dir to refuse input aimed at `osascript` or `System Events` while a
-  dialog is open.
-- **What the interim `osascript` dialog does not stop.** Another non-plugin
-  process, or a model with a shell and Accessibility (scripting System Events,
-  `cliclick`, its own `osascript`), can still click an `osascript` button; that
-  is why the `osascript` path is off by default and why the helper panel gates
-  Allow behind `LAPolicyDeviceOwnerAuthentication`.
-- **The prompt shows what the model sent.** App names and bundle ids are
-  cleaned of control, format and separator characters, quoted and cut, and
-  `app_script` source is checked against the script policy first, rendered with
-  visible `\uXXXX` escapes for format characters, and refused (`script_too_long`)
-  above 600 characters before any prompt opens.
-- **`remember:true` does not persist an allow here.** A lasting allow must be
-  signed with the Codewhale host's ledger key, which this path never has, so
-  every new session asks again. A deny with `remember:true` still persists, and
-  revoking an allow narrows access without opening a prompt.
-- **Codewhale and elicitation keep precedence.** A host that sent the decision
-  key never gets the native prompt, even for an unattested call; a client that
-  advertises elicitation keeps its own prompt. Batches (`run_actions`) and
-  trajectory replays still refuse decisions without asking.
+The opt-in `CODEWHALE_CU_NATIVE_PROMPT=1` fallback uses `osascript` only for
+macOS decisions without a helper or host decision path. It is off by default.
+Unlike the helper's authenticated Allow, an `osascript` button can be operated
+by another process with Accessibility permission. The marker blocks cooperating
+plugin sessions; it is not an OS sandbox. Batches and trajectory replays cannot
+grant consent.
 
 ## Many live MCP sessions (0.12.1)
 
@@ -77,7 +89,8 @@ input.
   nothing. Measured on that Mac: 7–31 MB resident and under 1 s of CPU in
   17 hours per instance.
 - **A session that worked and went quiet** keeps its helper lease (one local
-  socket) and its app binding. On macOS its live preview stops capturing after
+  socket) and its app binding. Preview is off by default in 0.13.0. If the
+  person enabled it, the macOS preview stops capturing after
   `CODEWHALE_CU_PREVIEW_IDLE_MS` (default 60 s) without a bind, preview or
   action; the next action restarts it. Through the helper, its held pointer
   and its input claim on its app lapse after `CODEWHALE_CU_INPUT_IDLE_MS`
@@ -106,23 +119,19 @@ input.
   processes were alive stopped when those processes were stopped. Its cause was
   not reproduced or established.
 
-## Per-app consent and user yield (0.11.0)
+## Legacy per-app consent and user yield
 
-The consent ledger makes the app — not the tool — the unit of trust on
-`local`, and the yield machinery makes shared-surface moments wait for a
-gap in the user's hardware input. What neither is:
+Direct mode and older helper protocols retain the per-app ledger introduced
+in 0.11.0. Current native installation trust supersedes per-app approval as
+the default local flow. Shared-input yielding still applies to both.
 
-- **The ledger is a model-level gate, not a sandbox.** It lives in the MCP
-  dispatch path: every first contact refuses `consent_required` until a
-  decision exists, and a deny covers every spelling of the app. A
-  determined agent with another channel (a different MCP server, a shell,
-  `app_script` driving System Events) can still reach the app — the honest
-  claim is no accidental touches and a deny this surface actually enforces.
-- **Consent granularity is the app, not the action.** There is no
-  per-action sensitivity policy yet (send/purchase/delete confirmations) —
-  an allowed app can be driven to its consequential edges. That boundary
-  belongs in host policy; receipts name what happened so the host can gate
-  it.
+- **The legacy ledger is a control boundary, not an OS sandbox.** Unapproved
+  calls on those routes can refuse `consent_required`. Denied identities remain
+  denied. This does not control unrelated tools or processes outside Computer
+  Use, and it cannot enroll a host with the current native helper.
+- **App consent does not authorize every action.** Recognized consequential
+  controls require the separate confirmation described below. Label matching
+  is incomplete, so the host must still honor the person's task authorization.
 - **Yield is turn-taking, not a lock.** The wait for a hardware-input gap
   is bounded (`CODEWHALE_CU_YIELD_WAIT_MS`, default 2500; the gap is
   `CODEWHALE_CU_YIELD_GAP_MS`, default 450, and 0 disables). If the person remains active at the deadline, the call refuses
@@ -137,9 +146,9 @@ gap in the user's hardware input. What neither is:
   focus after launch; raw input on both is still shared-surface by nature,
   so background there means "don't steal focus on launch", not
   "background-safe input".
-- **Consent persists per computer id.** `remember:true` writes
-  `consent.json` under the state dir keyed by computer id — a re-registered
-  computer with a new id asks again; a stolen id inherits its ledger.
+- **Legacy remembered decisions are not native host trust.** Host-signed app
+  entries are keyed by computer id. They do not replace native enrollment, and
+  re-registering a computer does not confer new authority.
 - **`app_script` is gated lexically, not sandboxed.** The server refuses
   shell escapes (`do shell script`, `doShellScript`, terminal `do script`),
   the Objective-C bridge, dynamic code, raw Apple event codes and System
@@ -248,14 +257,15 @@ Two honesty fixes on the action path:
   write and drops it) and sends process-bound unicode events after the
   accessibility focus — still no pointer movement, still verified against
   the control's own value.
-- **The preview panel is on by default** while an app is bound: each action
-  refreshes the captured window and draws the agent cursor at the action's
+- **The preview panel is off by default.** When the person asks to watch,
+  `preview(enabled:true)` opens it. Each action then refreshes the captured
+  window and draws the agent cursor at the action's
   target — including element actions, not just pointer gestures. Since
   0.6.1 the panel is borderless (draggable by its background, caption
   drawn inside) and also draws the user's real hardware cursor as a white
   "you" arrow alongside the cyan agent arrow, in the same window-relative
   space. It is a nonactivating panel; it never moves the real cursor.
-  `preview(enabled:false)` mutes it for the session.
+  `preview(enabled:false)` hides it and stops preview capture.
 
 Live spot check (macOS 26.1, arm64, 2026-09-15): real Chrome on a long
 ChatGPT page observed ~750 elements to depth 24 including the composer
@@ -271,8 +281,9 @@ permission probes and the existing stop tool; no native menu panel or signed
 installer qualification is claimed for those platforms. The self-contained
 macOS bundle requires macOS 13.5+ (its pinned Node runtime minimum).
 
-Installed local helpers take precedence over embedded native binaries. A
-registered helper that fails to start does not fall back to direct input.
+The current macOS plugin requires the separately installed native helper.
+A missing helper returns setup instructions; a registered helper that fails
+to start does not fall back to direct input.
 Explicit developer mode (`CODEWHALE_CU_APP=off`) has no menu-bar controls and
 must never be used by a model to bypass a user's Pause or Stop.
 
@@ -623,8 +634,8 @@ recording-file listing remain available on every platform.
   indistinguishable.
 - **macOS zoom** has single-Retina live receipts; nested zoom and mixed-display
   child rasters remain untested.
-- **macOS has an agent preview** with a drawn cursor, on by default while an
-  app is bound (0.6.0+; `preview(enabled:false)` mutes it). Other platforms
+- **macOS has an optional agent preview** with a drawn cursor. It stays hidden
+  until requested with `preview(enabled:true)`. Other platforms
   have no equivalent preview.
 - **Each MCP session has its own input binding.** Session protocol 2 separates
   backend state in the long-running daemon. New clients also require background

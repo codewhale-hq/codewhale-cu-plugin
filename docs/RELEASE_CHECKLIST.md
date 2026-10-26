@@ -12,6 +12,32 @@ Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). Records below
 come from one maintainer Mac (arm64, Retina) and are evidence, not a
 publication verdict.
 
+### 0.13.0 — source candidate, 2026-10-26
+
+Publication remains pending. The independently installed plugin and signed
+native helper are separate from Engine packaging.
+
+- The host-pairing runtime checks passed **50/50** existing cases. After the
+  native presentation changes, the existing consent and human-control suites
+  passed **38/38**. These checks exercise refusals, session isolation,
+  cancellation, saved exclusions and host revocation; they do not prove native
+  input on every application or platform.
+- A signed universal candidate on one maintainer Mac received actual human
+  Touch ID/password approval, performed Unicode input, click, scroll and app
+  capture, and recorded **115 observer samples with no pointer or foreground
+  changes**. Saved access survived a helper restart and a new MCP process.
+  Human revocation then removed saved access. Temporary approvals were revoked.
+- The subsequently simplified native window was rebuilt and inspected at idle
+  and in Settings. Previous revoked connections are hidden by default. The
+  optional practice check completed input and capture with no pointer or
+  foreground change, using only its owned process and no saved host grant.
+- Remaining qualification includes the revised active controller and approval
+  panel, keyboard/screen-reader behavior, small-display layout, the full frozen
+  source suite and three-platform CI, notarized release assets, ordinary plugin
+  installation in the released Engine, and the published website/download path.
+  The earlier live host-trust receipt is not a blanket qualification of the
+  later presentation changes.
+
 ### 0.12.0 — release qualification, 2026-09-22
 
 The agent gets its own pointer on macOS: every click, hover, drag and scroll
@@ -405,7 +431,8 @@ lease boundary independently enforces foreground authorization. Background
 text requires the new native guard capability, so older helpers fail closed.
 Routine consent tests use recording fixtures, never the user's Calculator.
 
-This source change does not update an already installed app. Rebuild and qualify
-the exact helper, synchronize the Engine embed, and verify continuous human
-keyboard ownership in an authorized isolated trial before claiming coexistence.
+This source change does not update an already installed app or plugin. Qualify
+the exact helper and matching plugin through the installation path used by
+Connectors, and verify continuous human keyboard ownership in an authorized
+isolated trial before claiming coexistence.
 The native sharing picker alone cannot supply input isolation.

@@ -4,10 +4,12 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
-import { handle, closeSession } from "../src/app-handler.mjs";
+import { handle, closeSession, resolveConsentApp } from "../src/app-handler.mjs";
+import { APP_ID } from "../src/app-socket.mjs";
+import * as consent from "../src/consent.mjs";
 
 /** Uses the same daemon backend and cancellation path as connected hosts. */
-export async function runBackgroundCheck({ bundle, demoDirectory } = {}) {
+export async function runBackgroundCheck({ bundle, demoDirectory, onStateChange } = {}) {
   if (process.platform !== "darwin" || !bundle) throw new Error("The background check requires the installed macOS app.");
   const executable = path.join(bundle, "Contents", "Resources", "Practice.app", "Contents", "MacOS", "practice");
   if (!fs.existsSync(executable)) throw new Error("Update the Computer Use app to run the background check.");
@@ -37,12 +39,18 @@ export async function runBackgroundCheck({ bundle, demoDirectory } = {}) {
     }
   }
   async function call(tool, args = {}) {
-    const reply = await handle({ tool, args }, { sessionId, signal: controller.signal, persistentInputOwner: true });
+    const reply = await consent.withSession(sessionId, () => handle({ tool, args }, { sessionId, signal: controller.signal, persistentInputOwner: true, onStateChange }));
     if (!reply.ok) throw new Error(reply.error.message);
     return reply.data;
   }
   try {
     await until(() => ready);
+    const { resolved, keys } = await resolveConsentApp({ pid: child.pid });
+    if (child.exitCode !== null || child.signalCode !== null || resolved.pid !== child.pid || resolved.bundle_id !== `${APP_ID}.practice`) throw new Error("The owned practice application could not be verified.");
+    consent.withSession(sessionId, () => {
+      if (consent.decisionFor("local", keys).state === "denied") throw new Error("Access to the practice application was denied. No permissions were changed.");
+      consent.record("local", [`pid:${child.pid}`], "allow", { name: resolved.name });
+    });
     await call("open_application", { pid: child.pid, activate: false });
     const state = await call("get_app_state");
     if (demoDirectory) {
@@ -85,6 +93,7 @@ export async function runBackgroundCheck({ bundle, demoDirectory } = {}) {
     clearTimeout(timer);
     try { await closeSession(sessionId); }
     finally {
+      onStateChange?.();
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
       fs.rmSync(scratch, { recursive: true, force: true });
     }

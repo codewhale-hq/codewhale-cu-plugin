@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import url from "node:url";
+import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import * as consent from "../src/consent.mjs";
 import { createConsentController, resolveConsentApp, issueAppScriptToken, consumeAppScriptToken } from "../src/app-handler.mjs";
@@ -545,28 +546,31 @@ test("daemon consent controller: identity ambiguity refusal and app_script token
     { name: "Twin", bundle_id: "com.example.twin", pid: 201 },
     { name: "Twin", bundle_id: "com.example.twin", pid: 202 },
   ];
-  let monoNow = 200_000;
   const ctl = createConsentController({
-    now: () => monoNow,
-    epochNow: () => 1_700_000_000_000,
     schedule: () => ({}),
     clearSchedule: () => {},
     resolveApp: (ref) => resolveConsentApp(ref, { listApps: async () => apps }),
   });
   ctl.handleControlMessage({ command: "capabilities", consent: 1 });
 
-  // Disagreed name + bundle_id, duplicate running app without pid, and missing app all refuse consent_identity_ambiguous.
+  // Disagreed selectors, duplicate running apps and missing pids refuse consent_identity_ambiguous.
   for (const badApp of [
     { name: "Safari", bundle_id: "com.apple.mail" },
     { name: "Safari", pid: 102 },
     { name: "Twin" },
-    { name: "NotRunning" },
+    { name: "NotRunning", bundle_id: "com.example.not-running" },
     { pid: 9999 },
     {},
   ]) {
     const r = await ctl.request({ kind: "allow_app", app: badApp });
     assert.equal(r.ok, false, JSON.stringify(badApp));
     assert.equal(r.error.code, "consent_identity_ambiguous", JSON.stringify(badApp));
+  }
+  for (const ref of [{ name: "NotRunning" }, { bundle_id: "com.example.not-running" }]) {
+    const cold = await resolveConsentApp(ref, { listApps: async () => apps });
+    assert.equal(cold.running, false);
+    assert.deepEqual(cold.resolved, ref);
+    assert.deepEqual(cold.keys, consent.appKeys(ref));
   }
 
   // app_script policy check runs before the prompt; invisible chars are visibly escaped; oversized scripts refuse.
@@ -586,11 +590,14 @@ test("daemon consent controller: identity ambiguity refusal and app_script token
   assert.match(approved.approvalToken, /^[0-9a-f]{32}$/);
 
   // Token is bound to language + script, single-use, and expires after 60s.
-  assert.equal(consumeAppScriptToken(approved.approvalToken, "javascript", scriptText, monoNow), false, "wrong language must not consume or pass");
-  assert.equal(consumeAppScriptToken(approved.approvalToken, "applescript", scriptText + " ", monoNow), false, "modified script must not pass");
-  assert.equal(consumeAppScriptToken(approved.approvalToken, "applescript", scriptText, monoNow), true, "exact match passes once");
-  assert.equal(consumeAppScriptToken(approved.approvalToken, "applescript", scriptText, monoNow), false, "replayed token is refused");
+  assert.equal(consumeAppScriptToken(approved.approvalToken, "javascript", scriptText), false, "wrong language must not consume or pass");
+  assert.equal(consumeAppScriptToken(approved.approvalToken, "applescript", scriptText + " "), false, "modified script must not pass");
+  assert.equal(consumeAppScriptToken(approved.approvalToken, "applescript", scriptText), true, "exact match passes once with the production clocks");
+  assert.equal(consumeAppScriptToken(approved.approvalToken, "applescript", scriptText), false, "replayed token is refused");
 
+  const scoped = consent.withSession("approved", () => issueAppScriptToken("applescript", scriptText));
+  assert.equal(consent.withSession("unapproved", () => consumeAppScriptToken(scoped, "applescript", scriptText)), false);
+  assert.equal(consent.withSession("approved", () => consumeAppScriptToken(scoped, "applescript", scriptText)), true);
   const expiring = issueAppScriptToken("applescript", 'return "ttl"', 1_000);
   assert.equal(consumeAppScriptToken(expiring, "applescript", 'return "ttl"', 61_001), false, "expired token is refused");
   consent.dropSession("local");
@@ -625,17 +632,17 @@ test("daemon socket attack test: unconsented client cannot act, model-style cons
   process.env.CODEWHALE_CU_STATE_DIR = dir;
   process.env.CODEWHALE_CU_APP_SOCKET = endpoint;
 
-  const daemon = spawn(process.execPath, [path.join(ROOT, "app", "daemon.mjs")], {
+  let daemon = spawn(process.execPath, [path.join(ROOT, "app", "daemon.mjs")], {
     env,
     stdio: ["ignore", "ignore", "pipe", "overlapped"],
   });
   let daemonErr = "";
   daemon.stderr.on("data", (c) => { daemonErr += c; });
-  const control = daemon.stdio[3];
+  let control = daemon.stdio[3];
   control.setEncoding("utf8");
   let controlBuf = "";
   const controlStates = [];
-  control.on("data", (chunk) => {
+  const controlData = (chunk) => {
     controlBuf += chunk;
     let nl;
     while ((nl = controlBuf.indexOf("\n")) !== -1) {
@@ -643,7 +650,8 @@ test("daemon socket attack test: unconsented client cannot act, model-style cons
       controlBuf = controlBuf.slice(nl + 1);
       if (line) controlStates.push(JSON.parse(line));
     }
-  });
+  };
+  control.on("data", controlData);
 
   const sockets = [];
   t.after(async () => {
@@ -690,15 +698,17 @@ test("daemon socket attack test: unconsented client cannot act, model-style cons
   sockets.push(opened.socket);
   const attackerToken = opened.reply.leaseToken;
   const attackCall = (tool, args = {}) => appRequest({ tool, args, sessionId: attackerSession, leaseToken: attackerToken });
+  const sessionless = await appRequest({ tool: "consent_request", kind: "allow_app", app: { name: "FakeApp" } });
+  assert.equal(sessionless.error.code, "session_required");
+  const wrongLease = await appRequest({ tool: "consent_request", kind: "allow_app", app: { name: "FakeApp" }, sessionId: attackerSession, leaseToken: "wrong" });
+  assert.equal(wrongLease.error.code, "session_owner_required");
 
   for (const [tool, args] of [
-    ["open_application", { name: "FakeApp" }],
     ["get_app_state", { app_ref: { name: "FakeApp" } }],
     ["list_windows", { app_ref: { pid: 4242 } }],
     ["left_click", { target: { type: "element", index: 1, path: [0, 1], app_ref: { name: "FakeApp" } } }],
     ["left_click", { target: { type: "element", index: 1, path: [0, 1] } }],
     ["screenshot", {}],
-    ["app_script", { script: 'tell application "FakeApp" to return "pwn"' }],
     ["app_script", { script: 'tell application "FakeApp" to return "pwn"', approvalToken: "0".repeat(32) }],
   ]) {
     const r = await attackCall(tool, args);
@@ -712,7 +722,7 @@ test("daemon socket attack test: unconsented client cannot act, model-style cons
   assert.equal(forgedDecision.error.code, "tool_not_allowed");
 
   const abortUnanswered = new AbortController();
-  const unanswered = appRequest({ tool: "consent_request", kind: "allow_app", app: { name: "FakeApp" } }, { signal: abortUnanswered.signal }).catch((e) => e);
+  const unanswered = appRequest({ tool: "consent_request", kind: "allow_app", app: { name: "FakeApp" }, sessionId: attackerSession, leaseToken: attackerToken }, { signal: abortUnanswered.signal }).catch((e) => e);
   await waitUntil(() => controlStates.some((st) => st.consent?.id), "prompt pushed to fd 3");
 
   // While the unanswered prompt is open, attacker actions get consent_pending.
@@ -725,10 +735,9 @@ test("daemon socket attack test: unconsented client cannot act, model-style cons
   await unanswered;
   await waitUntil(() => controlStates.at(-1)?.consent === null, "prompt cleared on abort");
   for (const [tool, args] of [
-    ["open_application", { name: "FakeApp" }],
     ["get_app_state", { app_ref: { name: "FakeApp" } }],
     ["screenshot", {}],
-    ["app_script", { script: 'tell application "FakeApp" to return "pwn"' }],
+    ["app_script", { script: 'tell application "FakeApp" to return "pwn"', approvalToken: "0".repeat(32) }],
   ]) {
     const r = await attackCall(tool, args);
     assert.equal(r.ok, false);
@@ -737,17 +746,24 @@ test("daemon socket attack test: unconsented client cannot act, model-style cons
 
   // 4. Legitimate approval through the helper control channel, followed by mid-session revoke and deny enforcement.
   await new Promise((r) => setTimeout(r, 2_100));
-  const allowPromise = sOld.tool("consent", { action: "allow", app: "FakeApp" });
+  fs.writeFileSync(stateFile, JSON.stringify({ apps: [] }));
+  const allowPromise = sOld.tool("open_application", { name: "FakeApp" });
   await waitUntil(() => controlStates.at(-1)?.consent?.id, "MCP allow prompt pushed");
+  assert.ok(controlStates.at(-1).consent.lines.some((line) => line.includes("not running")));
   const promptId = controlStates.at(-1).consent.id;
   control.write(JSON.stringify({ command: "consent_decision", consent: promptId, decision: "allow", auth: "local" }) + "\n");
   const allowReceipt = await allowPromise;
   assert.equal(allowReceipt.ok, true, JSON.stringify(allowReceipt));
-  assert.equal(allowReceipt.persisted, false, "daemon-granted allows are session-only");
+  assert.equal(allowReceipt.resolved.name, "FakeApp");
+  fs.writeFileSync(stateFile, JSON.stringify({ apps: [{ name: "FakeApp", pid: 4242, bundle_id: "com.fake.app", frontmost: true }] }));
 
   assert.equal((await sOld.tool("open_application", { name: "FakeApp" })).ok, true);
   assert.equal((await sOld.tool("get_app_state", { app_ref: { name: "FakeApp" } })).ok, true);
   assert.equal((await sOld.tool("screenshot", {})).ok, true);
+  for (const [tool, args] of [["get_app_state", { app_ref: { name: "FakeApp" } }], ["screenshot", {}]]) {
+    const otherSession = await attackCall(tool, args);
+    assert.equal(otherSession.error.code, "consent_required", `an approval in another session must not allow ${tool}`);
+  }
 
   // Mid-session revoke removes the allow in the daemon too.
   const revoked = await sOld.tool("consent", { action: "revoke", app: "FakeApp" });
@@ -759,8 +775,130 @@ test("daemon socket attack test: unconsented client cannot act, model-style cons
   // Mid-session deny blocks the app in the daemon with app_denied.
   const denied = await sOld.tool("consent", { action: "deny", app: "FakeApp" });
   assert.equal(denied.ok, true, JSON.stringify(denied));
-  const afterDeny = await attackCall("open_application", { name: "FakeApp" });
+  const afterDeny = await sOld.tool("open_application", { name: "FakeApp" });
   assert.equal(afterDeny.ok, false);
   assert.equal(afterDeny.error.code, "app_denied");
+  assert.equal(controlStates.at(-1).consent, null, "a denied app never opens another approval panel");
+  assert.equal((await attackCall("get_app_state", { app_ref: { name: "FakeApp" } })).error.code, "consent_required");
+
+  await new Promise((r) => setTimeout(r, 2_100));
+  const ownApproval = attackCall("app_script", { script: 'tell application "FakeApp" to return "approved"' });
+  await waitUntil(() => controlStates.at(-1)?.consent?.id, "second session's own approval");
+  control.write(JSON.stringify({ command: "consent_decision", consent: controlStates.at(-1).consent.id, decision: "allow", auth: "local" }) + "\n");
+  const legacyScript = await ownApproval;
+  assert.equal(legacyScript.ok, true, JSON.stringify(legacyScript));
+  assert.equal(legacyScript.data.result, "fake");
+  assert.equal((await attackCall("get_app_state", { app_ref: { name: "FakeApp" } })).ok, true);
+  assert.equal((await attackCall("close_session")).ok, true);
+  assert.equal((await attackCall("get_app_state", { app_ref: { name: "FakeApp" } })).error.code, "control_stopped");
+  opened.socket.destroy();
+  let reopened;
+  await waitUntil(async () => {
+    const candidate = await appRequest({ tool: "open_session", sessionId: attackerSession }, { keepOpen: true });
+    if (candidate.reply.ok) { reopened = candidate; sockets.push(candidate.socket); return true; }
+    candidate.socket.destroy(); return false;
+  }, "closed session id can be leased afresh");
+  const afterClose = await appRequest({ tool: "get_app_state", args: { app_ref: { name: "FakeApp" } }, sessionId: attackerSession, leaseToken: reopened.reply.leaseToken });
+  assert.equal(afterClose.error.code, "consent_required", "a fresh lease must not inherit a closed lease's approval");
+
+  await new Promise((r) => setTimeout(r, 2_100));
+  const disconnectedApproval = appRequest({ tool: "open_application", args: { name: "FakeApp" }, sessionId: attackerSession, leaseToken: reopened.reply.leaseToken });
+  await waitUntil(() => controlStates.at(-1)?.consent?.id, "approval before owner disconnect");
+  const abandonedPrompt = controlStates.at(-1).consent.id;
+  reopened.socket.destroy();
+  assert.equal((await disconnectedApproval).error.code, "cancelled");
+  control.write(JSON.stringify({ command: "consent_decision", consent: abandonedPrompt, decision: "allow", auth: "local" }) + "\n");
+  await waitUntil(() => controlStates.at(-1)?.consent === null, "disconnected approval is withdrawn");
+
+  await new Promise((r) => setTimeout(r, 2_100));
+  const deniedSession = "denied-client";
+  const deniedOwner = await appRequest({ tool: "open_session", sessionId: deniedSession }, { keepOpen: true });
+  sockets.push(deniedOwner.socket);
+  const deniedOpen = () => appRequest({ tool: "open_application", args: { name: "FakeApp" }, sessionId: deniedSession, leaseToken: deniedOwner.reply.leaseToken });
+  const deniedPrompt = deniedOpen();
+  await waitUntil(() => controlStates.at(-1)?.consent?.id, "first-use native Deny prompt");
+  control.write(JSON.stringify({ command: "consent_decision", consent: controlStates.at(-1).consent.id, decision: "deny", auth: "none" }) + "\n");
+  assert.equal((await deniedPrompt).error.code, "consent_declined");
+  assert.equal((await deniedOpen()).error.code, "app_denied", "native Deny is final for this session");
+  assert.equal(controlStates.at(-1).consent, null);
+
+  for (const socket of sockets) socket.destroy();
+  const retired = new Promise(resolve => daemon.once("exit", resolve));
+  daemon.kill("SIGTERM");
+  await retired;
+  control.destroy(); controlBuf = ""; controlStates.length = 0;
+  daemon = spawn(process.execPath, [path.join(ROOT, "app", "daemon.mjs")], { env, stdio: ["ignore", "ignore", "pipe", "overlapped"] });
+  daemon.stderr.on("data", chunk => { daemonErr += chunk; });
+  control = daemon.stdio[3]; control.setEncoding("utf8"); control.on("data", controlData);
+  await waitUntil(async () => !!(await hello({ timeoutMs: 150 })), "new helper connection");
+  control.write(JSON.stringify({ command: "resume" }) + "\n");
+  control.write(JSON.stringify({ command: "host_trust_state", hosts: [] }) + "\n");
+  control.write(JSON.stringify({ command: "capabilities", consent: 1, hostTrust: 1 }) + "\n");
+  await waitUntil(async () => (await hello())?.hostTrustProtocol === 1, "host pairing capability");
+  const identity = crypto.generateKeyPairSync("ed25519");
+  const publicKey = identity.publicKey.export({ format: "der", type: "spki" }).toString("base64");
+  async function paired(id, key = identity, authenticate = true) {
+    const publicKey = key.publicKey.export({ format: "der", type: "spki" }).toString("base64");
+    const opened = await appRequest({ tool: "open_session", sessionId: id, host: { publicKey, label: "Codewhale", persistent: true } }, { keepOpen: true });
+    sockets.push(opened.socket);
+    const leaseToken = opened.reply.leaseToken;
+    const message = Buffer.from(["net.codewhale.computer-use.host.v1", id, leaseToken, opened.reply.challenge, publicKey].join("\0"));
+    const proof = crypto.sign(null, message, key.privateKey).toString("base64");
+    if (authenticate) assert.equal((await appRequest({ tool: "authenticate_session", sessionId: id, leaseToken, publicKey, proof })).ok, true);
+    return { id, leaseToken, publicKey, proof, socket: opened.socket, call: (tool, args = {}) => appRequest({ tool, args, sessionId: id, leaseToken }) };
+  }
+  const unauthenticated = await paired("unproved-key", identity, false);
+  assert.equal((await unauthenticated.call("list_apps")).error.code, "host_auth_required");
+  assert.equal((await appRequest({ tool: "authenticate_session", sessionId: unauthenticated.id, leaseToken: unauthenticated.leaseToken, publicKey, proof: Buffer.alloc(64).toString("base64") })).error.code, "host_auth_failed");
+  assert.equal((await appRequest({ tool: "authenticate_session", sessionId: unauthenticated.id, leaseToken: unauthenticated.leaseToken, publicKey, proof: unauthenticated.proof })).error.code, "host_auth_failed", "failed proof consumes its challenge");
+  unauthenticated.socket.destroy();
+
+  const host = await paired("paired-host");
+  assert.equal((await host.call("consent_status")).host.trusted, false);
+  await new Promise(resolve => setTimeout(resolve, 2_100));
+  const firstObservation = host.call("list_apps");
+  await waitUntil(() => controlStates.at(-1)?.consent?.host?.publicKey === publicKey, "first host trust prompt");
+  const hostPrompt = controlStates.at(-1).consent;
+  assert.match(hostPrompt.headline, /Let Codewhale use your Mac/);
+  assert.equal(hostPrompt.host.persistent, true);
+  let records = [{ publicKey, label: "Codewhale", decision: "allow", exclusions: [] }];
+  control.write(JSON.stringify({ command: "host_trust_state", hosts: records }) + "\n");
+  control.write(JSON.stringify({ command: "consent_decision", consent: hostPrompt.id, decision: "allow", auth: "local" }) + "\n");
+  assert.equal((await firstObservation).ok, true);
+  assert.equal((await host.call("consent_status")).host.persisted, true);
+  assert.equal((await host.call("open_application", { name: "FakeApp" })).ok, true);
+  const nextTask = await paired("next-task-same-host");
+  assert.equal((await nextTask.call("list_apps")).ok, true, "same installation needs no new approval");
+  assert.equal((await nextTask.call("open_application", { name: "Different App" })).ok, true, "switching apps needs no new approval");
+  assert.equal(controlStates.at(-1).consent, null);
+
+  const otherHost = await paired("different-key-same-name", crypto.generateKeyPairSync("ed25519"));
+  await new Promise(resolve => setTimeout(resolve, 2_100));
+  const otherObservation = otherHost.call("list_apps");
+  await waitUntil(() => controlStates.at(-1)?.consent?.host?.publicKey === otherHost.publicKey, "different key cannot inherit the label's trust");
+  control.write(JSON.stringify({ command: "consent_decision", consent: controlStates.at(-1).consent.id, decision: "deny", auth: "none" }) + "\n");
+  assert.equal((await otherObservation).error.code, "consent_declined");
+  assert.equal((await otherHost.call("list_apps")).error.code, "consent_declined");
+
+  records = [{ ...records[0], exclusions: ["bundle:com.fake.app"] }];
+  control.write(JSON.stringify({ command: "host_trust_state", hosts: records }) + "\n");
+  await waitUntil(async () => (await host.call("consent_status")).host.exclusions.length === 1, "native exclusion applied");
+  assert.equal((await host.call("get_app_state", { app_ref: { name: "FakeApp" } })).error.code, "app_denied", "a prior name alias cannot bypass bundle exclusion");
+  assert.equal((await host.call("screenshot", { display: 1 })).error.code, "app_denied");
+  assert.equal((await host.call("app_script", { script: 'tell application "FakeApp" to return "no"' })).error.code, "app_denied");
+  let deniedAcknowledged = false;
+  const saveDeny = appRequest({ tool: "consent_deny", app: { name: "FakeApp" }, sessionId: host.id, leaseToken: host.leaseToken }).then(result => { deniedAcknowledged = true; return result; });
+  await waitUntil(() => controlStates.some(state => state.host_exclusion?.publicKey === publicKey), "native exclusion persistence request");
+  assert.equal(deniedAcknowledged, false);
+  records = [{ ...records[0], exclusions: ["bundle:com.fake.app", "name:fakeapp"] }];
+  control.write(JSON.stringify({ command: "host_trust_state", hosts: records }) + "\n");
+  assert.equal((await saveDeny).persisted, true);
+  records = [{ ...records[0], decision: "revoked" }];
+  control.write(JSON.stringify({ command: "host_trust_state", hosts: records }) + "\n");
+  await waitUntil(async () => (await nextTask.call("consent_status")).host.revoked, "all matching leases revoked");
+  assert.equal((await host.call("list_apps")).error.code, "host_revoked");
+  const afterRevocation = await paired("revoked-new-task");
+  assert.equal((await afterRevocation.call("list_apps")).error.code, "host_revoked");
+  assert.equal(controlStates.at(-1).consent, null, "revocation cannot trigger another automatic approval prompt");
 });
 

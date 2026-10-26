@@ -9,7 +9,8 @@ means a batch wait timed out and subsequent steps did not run. Inspect
 `completed_steps`, `action_sent` and `outcome_unknown`; earlier effects remain.
 
 Every refusal is structured: `ok:false` with an `error.code` you can branch on.
-Never retry a refusal unchanged — re-observe, re-target, or change route.
+For stale targets, re-observe before retrying. For a denial, Pause or Stop,
+stop; never change targets or routes to bypass it.
 
 ## Target and state
 
@@ -37,7 +38,7 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 | `background_scroll_unavailable` | no scrollbar at that point | target an observed scroll area |
 | `menu_item_not_found` | exact title not present (menus expose items only while open) | check the exact title; an ellipsis is part of it |
 | `menu_item_disabled` | item present but the app refuses it right now (often a missing key window) | use the window's own control element instead |
-| `app_not_found` | selector missed — `open_application` names/bundle ids that resolve nowhere and dead pids report it too | `list_apps` (or `all:true`) for exact names/pids |
+| `app_not_found` | selector missed — `open_application` names/bundle ids that resolve nowhere and dead pids report it too | `list_apps` for running names/pids, or `installed:true` for a launchable app |
 | `ambiguous_application` | an app name or bundle id matched several running apps (observation, input or `kill_app`) | pass `pid` to choose one |
 | `protected_application` | the target is the Computer Use helper or its host | name the intended app instead; these cannot be terminated through the plugin |
 | `browser_not_running` | browser action before `browser {action:"start"}` (or the browser went away) | start it; a closed CDP connection clears the session state |
@@ -45,17 +46,21 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 | `selector_not_found` | no element matches the CSS selector on the current page | re-check the selector against a fresh `browser {action:"screenshot"}` or `browser {action:"status"}` |
 | `unsupported_runtime` | this Node has no global WebSocket (browser transport) | use Node 22+ for the daemon/server running the plugin |
 | `not_granted` | the session's capability grant (`CODEWHALE_CU_GRANT`) does not include this tool | work inside the grant; the host narrowed it deliberately |
-| `consent_required` | no user decision exists for this app on the local computer | ask the user, then record it: `consent {action:"allow"\|"deny", app:"…"}` |
-| `app_denied` | the user denied this app — the deny covers every spelling of it | do not work around it; only they can `consent {action:"revoke"}` |
+| `consent_required` | a target is not bound/resolved, an exact-script token is missing, or an older/direct route needs per-app consent | follow the receipt: bind/observe the intended app, use the supported exact-script approval, or record the person's legacy app decision; do not invent a broad allow |
+| `app_denied` | the person excluded this app or a capture/browser route cannot enforce the exclusions | use an allowed scoped target; never rename the app or change routes to bypass it. Current-helper `revoke` narrows access and cannot clear native exclusions |
+| `host_auth_failed` / `host_auth_required` | the connection did not prove its installation key for the live helper lease | restart the updated MCP connection; never borrow another session's proof or lease |
+| `host_revoked` | the person revoked installation access | stop; only the person can reconsider in the native controls. A new task, model or key is not a workaround |
+| `host_trust_unavailable` | the native trust store or a permission change could not be read/saved | report the helper's Keychain/persistence error; stay blocked until the person resolves it, without deleting trust data or using direct input |
+| `host_trust_pending` | a native exclusion is being saved | wait for the current permission change to finish; do not act through another connection |
 | `launch_refused` | `open_application` named an interpreter, shell, package runner or script host | launch the application itself by its own name; never start a command runner through the launcher |
 | `invalid_platform` | a registry entry or an ssh host reported a platform other than darwin, linux, win32 or harmonyos | re-register the computer; do not retry the same entry |
 | `cursor_move_failed` | Windows refused to move the pointer, so no button event was sent | retry once; if it persists the desktop may be locked or a secure prompt is showing, so ask the person |
-| `consent_needs_user` | a consent allow/revoke, a `confirm`, `app_script`, or computer register/spawn was called without the user's own decision: the Computer Use helper is not running or needs an update to show the approval panel, or the call was unattested under the Codewhale host, a `run_actions` step, or off macOS under a host without elicitation | ask the user (or update/restart the Computer Use app when the message says so); never retry it as a model call or a `run_actions` step |
+| `consent_needs_user` | a decision requires actual human approval and its helper/host decision path is unavailable, outdated or unattested | report the required supported decision/update path; never synthesize approval or retry through a batch |
 | `consent_declined` | the user declined the Codewhale Computer Use approval panel (or failed Touch ID / password authentication), the host's prompt, or the macOS dialog, or the prompt timed out | do not retry; continue without it or ask them |
-| `consent_pending` | a macOS approval panel or dialog is open and waits for the person; until it closes every call except `stop_computer_control`, `consent {action:"status"}` and plain `list_apps` is refused | wait for their answer; never try to answer, move or close the dialog |
-| `consent_rate_limited` | a prompt just closed (2 s gap; 10 s after a decline/timeout on the interim dialog), or five prompts were shown in the last minute; `retry_after_s` says when another may open | do not ask again right away; continue without it or ask them in the conversation |
-| `consent_identity_ambiguous` | the app fields given to `consent allow` do not resolve to a single running application | call `list_apps`, pass the exact `pid` (or single matching name/bundle id), and ask again |
-| `foreground_consent_required` | an older installed server requires a separate foreground decision | follow that installed server's permission flow; current source reuses the approved app grant |
+| `consent_pending` | a native approval panel is waiting; other input and observation are blocked | wait for the person; never answer, move or close it. Stop can cancel it, and consent status remains metadata |
+| `consent_rate_limited` | repeated prompts reached the helper's gap/rate bound; `retry_after_s` reports the wait | do not loop or retry a denial; continue without access or explain the required decision |
+| `consent_identity_ambiguous` | the supplied app fields cannot identify one application safely | inspect `list_apps` or the installed catalog and use one exact identity; never guess or disguise an excluded app |
+| `foreground_consent_required` | an older installed server requires a separate foreground decision | follow that installed server's permission flow; the current helper reuses installation trust while honoring foreground exclusions |
 | `confirmation_required` | the click or press would activate a pay/buy/order/send/transfer/delete control | stop and show the user exactly what will happen; only on their approval, `consent {action:"allow", confirm:"<token>"}` and repeat the identical call |
 | `confirmation_unknown` | the confirmation token is unknown, used, or expired | repeat the original call for a fresh token and ask the user again |
 | `script_refused` | `app_script` would reach a shell, Cocoa, dynamic code, a terminal app, or an app it does not name with a literal | use the host's shell for shell work, or name the app literally; never rewrite the script to get past the check |

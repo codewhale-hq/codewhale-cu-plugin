@@ -10,12 +10,12 @@ import { execFile } from "node:child_process";
 import { isDeepStrictEqual } from "node:util";
 import * as registry from "../src/registry.mjs";
 import * as consent from "../src/consent.mjs";
-import { backendFor, installRemoteAgent, executorFor, closeAppSession, routeFingerprint, closeSshChannel, SESSION_ID } from "../src/transport.mjs";
+import { backendFor, installRemoteAgent, executorFor, appExec, closeAppSession, routeFingerprint, closeSshChannel, SESSION_ID } from "../src/transport.mjs";
 import { spawnDockerComputer, destroyDockerComputer, destroySessionSpawns } from "../src/spawn.mjs";
 import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD, resolveTool, parseGrant, MERGED_EXPANSION, LEASE_GATED_TOOLS } from "../src/tools.mjs";
 import { tryJson, withSignal, throwIfAborted, wait, currentSignal } from "../src/exec.mjs";
 import { inputRefusal, watchLease, HUMAN_DRIVING } from "../src/lease.mjs";
-import { APP_VERSION, helperStaleness, helperBuildDrift, appRequest, hello } from "../src/app-socket.mjs";
+import { APP_VERSION, helperStaleness, helperBuildDrift, hello, setAppHostIdentity } from "../src/app-socket.mjs";
 import { launchRefusal } from "../src/launch-policy.mjs";
 import { checkAppScript } from "../src/app-script-policy.mjs";
 import { createNativePrompt, DECLINED_MESSAGE } from "../src/native-prompt.mjs";
@@ -131,7 +131,11 @@ function acceptHostKeys(params) {
   const decision = typeof params?.decision_key === "string" && /^[0-9a-f]{64}$/i.test(params.decision_key) ? Buffer.from(params.decision_key, "hex") : null;
   if (!decision) return;
   hostDecisionKey = decision;
-  if (typeof params?.ledger_key === "string" && /^[0-9a-f]{64}$/i.test(params.ledger_key)) consent.setLedgerKey(Buffer.from(params.ledger_key, "hex"));
+  if (typeof params?.ledger_key === "string" && /^[0-9a-f]{64}$/i.test(params.ledger_key)) {
+    const ledgerKey = Buffer.from(params.ledger_key, "hex");
+    consent.setLedgerKey(ledgerKey);
+    setAppHostIdentity({ ledgerKey });
+  }
 }
 
 /** Whether `meta` carries a fresh host attestation for exactly this call. */
@@ -182,6 +186,10 @@ async function requireUserDecision(params, name, args) {
   let targetComputer = null;
   try { targetComputer = registry.get(args.computer || activeComputerId); } catch {}
   if (name === "consent_revoke" && targetComputer) {
+    if (targetComputer.transport === "local" && targetComputer.owned !== true && process.env.CODEWHALE_CU_APP !== "off") {
+      const ex = await executorFor(targetComputer, await bindComputer(targetComputer));
+      if (ex.kind === "app" && Number(ex.app?.hostTrustProtocol) >= 1) return { via: "daemon", helper: ex.app };
+    }
     if (args.scope === "foreground") {
       if (consent.foregroundDecision(targetComputer.id).state === "allowed") return { via: "narrow" };
     } else {
@@ -195,21 +203,21 @@ async function requireUserDecision(params, name, args) {
     app = process.env.CODEWHALE_CU_APP === "off" ? null : await hello({ timeoutMs: 1_500 });
     if (app && Number(app.consentProtocol) >= 1) {
       if (name === "consent_allow" && args.scope === "foreground") {
-        const rep = await appRequest({ tool: "consent_request", kind: "allow_foreground" }, { timeoutMs: 130_000 });
+        const rep = await appExec(app).remote({ tool: "consent_request", kind: "allow_foreground" }, { timeoutMs: 130_000 });
         if (!rep?.ok) throw new ServerError(rep?.error?.code ?? "consent_declined", rep?.error?.message ?? DECLINED_MESSAGE, rep?.error?.retry_after_s != null ? { retry_after_s: rep.error.retry_after_s } : null);
         return { via: "daemon", scope: "foreground" };
       }
       if (name === "consent_allow") {
         const ref = refFromConsentArgs(args);
         if (!consent.appKeys(ref).length) throw new ServerError("bad_args", `consent allow needs an app identity (app, name, bundle_id or pid) — or scope:"foreground"`);
-        const rep = await appRequest({ tool: "consent_request", kind: "allow_app", app: ref }, { timeoutMs: 130_000 });
+        const rep = await appExec(app).remote({ tool: "consent_request", kind: "allow_app", app: ref }, { timeoutMs: 130_000 });
         if (!rep?.ok) throw new ServerError(rep?.error?.code ?? "consent_declined", rep?.error?.message ?? DECLINED_MESSAGE, rep?.error?.retry_after_s != null ? { retry_after_s: rep.error.retry_after_s } : null);
         return { via: "daemon", resolved: rep.app, keys: rep.keys };
       }
       if (name === "app_script") {
         validateToolArgs(targetComputer, "app_script", args);
         appScriptTargets(args);
-        const rep = await appRequest({ tool: "consent_request", kind: "app_script", language: args.language, script: args.script }, { timeoutMs: 130_000 });
+        const rep = await appExec(app).remote({ tool: "consent_request", kind: "app_script", language: args.language, script: args.script }, { timeoutMs: Number(app.hostTrustProtocol) >= 1 ? 250_000 : 130_000 });
         if (!rep?.ok) throw new ServerError(rep?.error?.code ?? "consent_declined", rep?.error?.message ?? DECLINED_MESSAGE, rep?.error?.retry_after_s != null ? { retry_after_s: rep.error.retry_after_s } : null);
         for (const t of rep.targets ?? []) {
           const keys = consent.appKeys(t);
@@ -853,8 +861,8 @@ async function waitFor(computer, args, switched) {
 }
 
 // ---------- per-app consent ----------
-// The app, not the tool, is the unit of trust on the local computer: the
-// first call that targets an application — binding input to it, observing it
+// Direct and legacy helper routes use per-app trust: the first call that
+// targets an application — binding input to it, observing it
 // by name, or acting through a bound/element target — refuses
 // consent_required until the user records a decision with the consent tool.
 // Spawned computers are exempt: a task-owned desktop holds nothing of the
@@ -1539,9 +1547,20 @@ async function callTool(params, bindWhen = null) {
     return { content: [{ type: "text", text: JSON.stringify(fail(null, err.code ?? "registry_error", err.message)) }], isError: true };
   }
 
-  // Consent tools are the ledger itself — server-side, no backend dispatch.
-  // They still resolve the target computer the same way every other tool does.
+  // Legacy consent uses the server ledger; current helpers own local changes.
   if (name === "consent_status") {
+    try {
+      if (computer.transport === "local" && computer.owned !== true && process.env.CODEWHALE_CU_APP !== "off") {
+        const ex = await executorFor(computer, await bindComputer(computer));
+        if (ex.kind === "app" && Number(ex.app?.hostTrustProtocol) >= 1) {
+          const rep = await ex.remote({ tool: "consent_status" }, { timeoutMs: 5_000 });
+          if (!rep?.ok) throw new ServerError(rep?.error?.code ?? "consent_error", rep?.error?.message ?? "The helper could not report consent status");
+          return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ...rep, tool: name, switched })) }] };
+        }
+      }
+    } catch (err) {
+      return { content: [{ type: "text", text: JSON.stringify(fail(computer, err.code ?? "consent_error", err.message ?? String(err), { tool: name, switched })) }], isError: true };
+    }
     return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, ...consent.status(computer.id) })) }] };
   }
   if (name === "consent_allow" && typeof args.confirm === "string") {
@@ -1559,12 +1578,22 @@ async function callTool(params, bindWhen = null) {
       const scope = args.scope === "foreground" ? "foreground" : "app";
       const verb = { consent_allow: "allow", consent_deny: "deny" }[name] ?? null;
       const remember = decided?.via === "daemon" ? false : args.remember === true;
+      if (name !== "consent_allow" && computer.transport === "local" && computer.owned !== true && process.env.CODEWHALE_CU_APP !== "off") {
+        const app = decided?.helper ?? (await executorFor(computer, await bindComputer(computer))).app;
+        if (Number(app?.hostTrustProtocol) >= 1) {
+          const ref = scope === "app" ? refFromConsentArgs(args) : null;
+          if (ref && !consent.appKeys(ref).length) throw new ServerError("bad_args", `consent ${name.slice(8)} needs an app identity (app, name, bundle_id or pid) — or scope:"foreground"`);
+          const rep = await appExec(app).remote({ tool: name, scope, ...(ref ? { app: ref } : {}) }, { timeoutMs: 10_000 });
+          if (!rep?.ok) throw new ServerError(rep?.error?.code ?? "consent_error", rep?.error?.message ?? "The helper did not apply the consent change");
+          return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ...rep, tool: name, switched })) }] };
+        }
+      }
       if (scope === "foreground") {
         throwIfAborted();
         const r = verb ? consent.recordForeground(computer.id, verb, { remember })
           : consent.revokeForeground(computer.id);
         if ((name === "consent_deny" || name === "consent_revoke") && computer.transport === "local" && computer.owned !== true && process.env.CODEWHALE_CU_APP !== "off") {
-          await appRequest({ tool: name, scope: "foreground" }, { timeoutMs: 1_500 }).catch(() => {});
+          await appExec().remote({ tool: name, scope: "foreground" }, { timeoutMs: 1_500 }).catch(() => {});
         }
         return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, scope, ...r, note: verb ? `Shared-desktop (foreground) control ${verb === "allow" ? "allowed" : "denied"} for ${r.persisted ? "this computer until revoked" : "this session"}.` : "Foreground override removed — approved app access covers activate:true." })) }] };
       }
@@ -1580,13 +1609,13 @@ async function callTool(params, bindWhen = null) {
       if (verb) {
         const r = consent.record(computer.id, allKeys, verb, { remember, name: resolved?.name ?? ref.name ?? null });
         if (name === "consent_deny" && computer.transport === "local" && computer.owned !== true && process.env.CODEWHALE_CU_APP !== "off") {
-          await appRequest({ tool: "consent_deny", scope: "app", keys: allKeys, app: resolved ?? ref }, { timeoutMs: 1_500 }).catch(() => {});
+          await appExec().remote({ tool: "consent_deny", scope: "app", keys: allKeys, app: resolved ?? ref }, { timeoutMs: 1_500 }).catch(() => {});
         }
         return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, scope, decision: verb, app: resolved ?? ref, keys: allKeys, persisted: r.persisted, note: `${resolved?.name ?? ref.name ?? ref.bundle_id ?? `pid ${ref.pid}`} ${verb === "allow" ? "allowed" : "denied"} ${r.persisted ? "until revoked" : "for this session"}.` })) }] };
       }
       const r = consent.revoke(computer.id, allKeys);
       if (computer.transport === "local" && computer.owned !== true && process.env.CODEWHALE_CU_APP !== "off") {
-        await appRequest({ tool: "consent_revoke", scope: "app", keys: allKeys, app: resolved ?? ref }, { timeoutMs: 1_500 }).catch(() => {});
+        await appExec().remote({ tool: "consent_revoke", scope: "app", keys: allKeys, app: resolved ?? ref }, { timeoutMs: 1_500 }).catch(() => {});
       }
       return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, scope, app: resolved ?? ref, keys: allKeys, ...r, note: "Decisions removed — the next call targeting this app asks again." })) }] };
     } catch (err) {
@@ -1601,9 +1630,8 @@ async function callTool(params, bindWhen = null) {
     if (binding.needsObservation && !ROUTE_INSPECTION_TOOLS.has(name)) {
       throw new ServerError("computer_observation_required", "Computer route changed — call screenshot or get_app_state on the registered target before acting");
     }
-    // Per-app consent: the first call that targets an application on the local
-    // computer must carry a recorded user decision. open_application returns
-    // the grant so its resolved identity can be aliased below.
+    // Current helpers own local admission. Direct and legacy helper routes
+    // retain per-app consent and alias the approved identity after launch.
     // app_script is app scripting, not a shell: shell escapes and targets the
     // policy cannot name are refused before the ledger or any dispatch.
     if (name === "app_script" && typeof args.script === "string") appScriptTargets(args);
@@ -1611,7 +1639,17 @@ async function callTool(params, bindWhen = null) {
       const refusal = launchRefusal(args, computer.platform ?? computer.platformHint ?? (computer.transport === "local" ? process.platform : computer.transport === "hdc" ? "harmonyos" : "linux"), { remote: computer.transport !== "local" });
       if (refusal) throw new ServerError(refusal.code, refusal.message);
     }
-    const gateResult = await consentCheck(computer, name, args);
+    let gateResult;
+    const localExecutor = computer.transport === "local" ? await executorFor(computer, binding) : null;
+    const helperOwnsConsent = computer.owned !== true && localExecutor?.kind === "app" && Number(localExecutor.app?.hostTrustProtocol) >= 1;
+    if (!helperOwnsConsent) {
+      try { gateResult = await consentCheck(computer, name, args); }
+      catch (error) {
+        if (error?.code !== "consent_required" || name !== "open_application" || computer.transport !== "local" || computer.owned === true || !consent.appKeys(args).length) throw error;
+        if (localExecutor?.kind !== "app" || !(Number(localExecutor.app?.consentProtocol) >= 1)) throw error;
+        gateResult = { grant: { persisted: false } };
+      }
+    }
     if (gateResult?.implicit) args = { ...args, app_ref: gateResult.implicit };
     confirmationCheck(computer, name, args, undefined, CONFIRM_TOOLS.has(name) || (name === "type" && args.target?.type === "element" && (args.press_enter === true || /[\r\n]/.test(String(args.text ?? "")))));
     if (name === "run_actions") {
@@ -1664,7 +1702,7 @@ async function callTool(params, bindWhen = null) {
     // be steered into a shell — fail here first to save the hop.
     if (name === "app_script" && computer.transport !== "local") throw remoteScriptRefusal(computer);
     let data;
-    const ex = computer.transport === "local" || computer.transport === "ssh" || computer.transport === "docker" ? await executorFor(computer, binding) : null;
+    const ex = localExecutor ?? (computer.transport === "ssh" || computer.transport === "docker" ? await executorFor(computer, binding) : null);
     if (ex?.kind === "app") binding.usedApp = true;
     // Zoom needs the bound parent raster up front (server-side check too, not
     // only the backend) so it can bind the child raster after success.
@@ -1680,6 +1718,7 @@ async function callTool(params, bindWhen = null) {
       // --serve; a channel that never produced a reply means an old agent,
       // so fall back to one-shot for that binding rather than failing.
       const remoteCall = async (request, opts = {}) => {
+        if (helperOwnsConsent) opts = { ...opts, timeoutMs: Math.max(opts.timeoutMs ?? 0, 130_000) };
         if (typeof ex.persistent === "function" && binding.sshServe !== false) {
           try {
             return await ex.persistent(request, opts);
@@ -1702,7 +1741,7 @@ async function callTool(params, bindWhen = null) {
       };
       const wireArgs = await prepareArgs(computer, name, args, resolve, sink);
       if (name === "app_script" && decided?.approvalToken) wireArgs.approvalToken = decided.approvalToken;
-      if (computer.transport === "local" || computer.transport === "ssh") await inputOwnerCheck(computer, name, wireArgs, remoteInputOwner(computer, remoteCall));
+      if (!helperOwnsConsent && (computer.transport === "local" || computer.transport === "ssh")) await inputOwnerCheck(computer, name, wireArgs, remoteInputOwner(computer, remoteCall));
       await focusedControlCheck(computer, name, wireArgs, remoteFocusedControl(remoteCall, sink));
       throwIfAborted();
       await assertCurrentRoute(computer, binding);
@@ -1714,7 +1753,7 @@ async function callTool(params, bindWhen = null) {
       inFlight++;
       try {
         dispatched = true;
-        const timeoutMs = backendMethod.startsWith("recording") || backendMethod === "get_app_state" ? 60_000 : 30_000;
+        const timeoutMs = backendMethod === "open_application" && ex?.kind === "app" && Number(ex.app?.consentProtocol) >= 1 ? 130_000 : backendMethod.startsWith("recording") || backendMethod === "get_app_state" ? 60_000 : 30_000;
         const invoke = async (tool, a) => {
           const r = await remoteCall({ tool, args: a }, { timeoutMs });
           if (!r.ok) {
@@ -2083,6 +2122,7 @@ const HANDLERS = {
     clientElicitation = params?.capabilities?.elicitation != null;
     const info = params?.clientInfo;
     clientInfo = info && typeof info === "object" ? { name: info.name ?? null, version: info.version ?? null } : null;
+    setAppHostIdentity({ label: clientInfo?.name === "codewhale-tui" ? "Codewhale" : clientInfo?.name });
     return {
       protocolVersion: params?.protocolVersion ?? "2025-06-18",
       capabilities: {

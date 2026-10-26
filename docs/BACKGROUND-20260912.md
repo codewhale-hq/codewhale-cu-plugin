@@ -61,5 +61,7 @@ were already frontmost; [LIMITATIONS.md](LIMITATIONS.md) states that
 explicitly.
 
 The signed 0.2.2 app used here was a local review artifact, not a notarized
-release. An installed Codewhale binary embeds its own copy of this runtime and
-needs rebuilding to pick up source changes.
+release. At the time of this 0.2.2 record, Codewhale embedded a runtime copy and
+needed rebuilding to pick up source changes. Current distribution uses an
+independently installed plugin and separate native helper; see
+[distribution](DISTRIBUTION.md).

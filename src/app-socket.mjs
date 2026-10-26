@@ -21,6 +21,29 @@ export const PLUGIN_ROOT = path.resolve(path.dirname(url.fileURLToPath(import.me
 export const APP_ID = "net.codewhale.computer-use";
 export const APP_NAME = "Codewhale Computer Use";
 export const APP_VERSION = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, "plugin.json"), "utf8")).version;
+const HOST_AUTH_DOMAIN = "net.codewhale.computer-use.host.v1";
+let appHostIdentity = null;
+let appHostLabel = "This connection";
+
+export function setAppHostIdentity({ ledgerKey, label } = {}) {
+  if (ledgerKey !== undefined) {
+    if (!Buffer.isBuffer(ledgerKey) || ledgerKey.length !== 32) throw new TypeError("Host ledger key must contain 32 bytes");
+    if (sessionLeases.size) throw new Error("Host identity cannot change while computer sessions are open");
+    const seed = Buffer.from(crypto.hkdfSync("sha256", ledgerKey, Buffer.alloc(0), HOST_AUTH_DOMAIN, 32));
+    const privateKey = crypto.createPrivateKey({ key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), seed]), format: "der", type: "pkcs8" });
+    seed.fill(0);
+    appHostIdentity = { privateKey, publicKey: crypto.createPublicKey(privateKey).export({ format: "der", type: "spki" }).toString("base64"), persistent: true };
+  }
+  if (typeof label === "string" && label.trim()) appHostLabel = label.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 80);
+}
+
+function hostIdentity() {
+  if (!appHostIdentity) {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
+    appHostIdentity = { privateKey, publicKey: publicKey.export({ format: "der", type: "spki" }).toString("base64"), persistent: false };
+  }
+  return appHostIdentity;
+}
 
 /** Strict x.y.z comparison: true only when candidate is a newer release than current. */
 export function newerVersion(candidate, current) {
@@ -171,7 +194,9 @@ export function openAppSession(sessionId) {
     // the grant is normalized through BACKEND_METHOD before it travels.
     const grant = parseGrant(process.env.CODEWHALE_CU_GRANT);
     const transportGrant = grant ? [...new Set([...grant].map((name) => BACKEND_METHOD[name] ?? name))] : null;
-    const pending = requestConnection({ tool: "open_session", sessionId, owner: { pid: process.pid, host_pid: process.ppid }, ...(transportGrant ? { grant: transportGrant } : {}) }, { timeoutMs: 3_000, signal: null, keepOpen: true }).then(({ reply, socket }) => {
+    const identity = hostIdentity();
+    const host = { publicKey: identity.publicKey, label: appHostLabel, persistent: identity.persistent };
+    const pending = requestConnection({ tool: "open_session", sessionId, host, owner: { pid: process.pid, host_pid: process.ppid }, ...(transportGrant ? { grant: transportGrant } : {}) }, { timeoutMs: 3_000, signal: null, keepOpen: true }).then(async ({ reply, socket }) => {
       if (!reply?.ok || typeof reply.leaseToken !== "string") {
         socket.destroy();
         throw Object.assign(new ExecError(reply?.error?.message ?? "Computer session lease was refused"), { code: reply?.error?.code ?? "app_session_closed" });
@@ -183,8 +208,24 @@ export function openAppSession(sessionId) {
       });
       // Library clients need not keep Node alive solely for an idle lease.
       socket.unref();
+      try {
+        if (Number(reply.hostTrustProtocol) >= 1) {
+          if (typeof reply.challenge !== "string" || !/^[0-9a-f]{64}$/.test(reply.challenge)
+              || typeof sessionId !== "string" || sessionId.includes("\0") || reply.leaseToken.includes("\0")) {
+            throw Object.assign(new ExecError("Computer helper returned an invalid host challenge"), { code: "app_bad_reply" });
+          }
+          const message = Buffer.from([HOST_AUTH_DOMAIN, sessionId, reply.leaseToken, reply.challenge, identity.publicKey].join("\0"));
+          const proof = crypto.sign(null, message, identity.privateKey).toString("base64");
+          const authenticated = await appRequest({ tool: "authenticate_session", sessionId, leaseToken: lease.token, publicKey: identity.publicKey, proof }, { timeoutMs: 3_000, signal: null });
+          if (!authenticated?.ok) throw Object.assign(new ExecError(authenticated?.error?.message ?? "Computer host authentication was refused"), { code: authenticated?.error?.code ?? "host_authentication_required" });
+        }
+        if (socket.destroyed) throw Object.assign(new ExecError("Computer session closed during authentication"), { code: "app_session_closed" });
+      } catch (error) {
+        socket.destroy();
+        throw error;
+      }
       return lease;
-    }, (error) => {
+    }).catch((error) => {
       // Opening a lease sends no input, so its failure is never
       // outcome-unknown for the action that was waiting on it.
       if (error && typeof error === "object") delete error.requestDispatched;
@@ -241,8 +282,8 @@ let lastLaunchAt = 0;
 
 /**
  * Decide how the local computer is driven this call: through the app when it
- * is running (or registered and launchable), otherwise directly from this
- * process. Set CODEWHALE_CU_APP=off to force direct.
+ * is running (or registered and launchable). macOS requires helper setup;
+ * other platforms can run directly. Set CODEWHALE_CU_APP=off to force direct.
  */
 export async function ensureApp({ launch = true } = {}) {
   if (process.env.CODEWHALE_CU_APP === "off") return { via: "direct", reason: "CODEWHALE_CU_APP=off" };
@@ -251,11 +292,8 @@ export async function ensureApp({ launch = true } = {}) {
   if (app) return { via: "app", app };
   const reg = readRegistration();
   if (!reg) {
-    const standalone = fs.existsSync(path.join(PLUGIN_ROOT, "scripts", "build-app.mjs"));
-    return { via: "direct", reason: standalone
-      ? `${APP_NAME} is not installed. Input and screen permissions belong to the current host. To use a standalone permission-owning helper, run "npm run build:app && npm run install:app" in the plugin checkout.`
-      : "Using the Computer Use helper included with Codewhale. Input and screen permissions belong to the current host app; grant them in your operating system's privacy settings when requested." };
-
+    if (process.platform === "darwin") throw Object.assign(new ExecError(`Install ${APP_NAME} from https://codewhale.net/computer-use and open it once to finish macOS permission setup. Then retry; its native approval and Pause/Stop controls must be available before computer access.`), { code: "app_setup_required" });
+    return { via: "direct", reason: `${APP_NAME} is not installed. Input and screen permissions belong to the current host.` };
   }
   if (typeof reg.path === "string" && !fs.existsSync(reg.path)) {
     throw Object.assign(new ExecError(`${APP_NAME} is registered at ${reg.path}, but that app is missing. Reinstall it and open it once to refresh ${registrationPath()}.`), { code: "app_missing" });

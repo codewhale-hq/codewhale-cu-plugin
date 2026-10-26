@@ -9,7 +9,7 @@ no better interface.
 
 ## Observe
 - `request_access` — permissions + capabilities; call once per session.
-- `list_apps {all?}` — running apps (names, pids). Default: user-facing apps.
+- `list_apps {all?, installed?}` — running apps by default; `all:true` includes helpers and `installed:true` lists launchable apps, including those not running.
 - `list_windows {app_ref?}` — windows with indices for `window_id`.
 - `get_app_state {app_ref?, query?, role?, limit?, detail?, since?}` — elements +
   `state_id`. `since` takes an earlier state ID or `"latest"`; same complete
@@ -48,14 +48,14 @@ a raster ID. Browser viewport points use the browser's separate contract.
   `script_error`, `script_timeout`, `automation_denied` (-1743 consent),
   `script_refused` (shell escapes, ObjC bridge, terminal apps, or an app not
   named with a literal) and `unsupported_on_transport` on ssh/docker/hdc.
-  Every app the script names needs consent like any other target.
+  Exact-script human approval and app exclusions still apply after host trust.
 
 ## Apps & computers
 - `open_application {name|bundle_id|pid, activate?}` — bind the input target; `app_not_found` when the selector resolves nowhere.
 - `list_apps {installed:true}` — the installed catalog (openable apps, running or not, one subdirectory deep) instead of the running list.
 - `kill_app {name|bundle_id|pid, force?}` — quit an app; refuses an ambiguous name match (pass pid); never the helper itself. Linux: closes the window first; `still_running` means the app refused to quit; `force:true` sends SIGKILL and discards unsaved work.
 - `set_window_frame {app_ref?, window_id, frame:{x,y,w,h}}` — move/resize one window; readbacks report what the app actually did (`verified`, `ax_errors`).
-- `preview {enabled}` — floating panel: captured window + agent/user cursors; live while bound.
+- `preview {enabled}` — optional floating panel with captured window and agent/user cursors; off by default. Enable only when the user asks to watch.
 - `computer {action, id?}` — list / switch / register / **spawn** / remove.
   `spawn {id, transport:"docker", image?}` provisions a task-owned disposable
   Linux desktop (registered `owned:true`, becomes active) — the default
@@ -72,14 +72,19 @@ a raster ID. Browser viewport points use the browser's separate contract.
 - `browser {action:"status"}` · `browser {action:"stop"}` — tabs/active tab; close this session's tab (last one out closes the browser).
 
 ## Session
-- `consent {action:"status"|"allow"|"deny"|"revoke", app?|scope?}` — the
-  per-app decision ledger on `local`. First contact with an app refuses
-  `consent_required`; record the user's answer (`remember:true` persists).
-  App approval also covers `open_application activate:true` for that app;
-  `scope:"foreground"` remains an optional override whose denial blocks it.
-  A denied app fails `app_denied`
-  under every spelling; only the user can revoke it.
-  `consent {action:"allow", confirm:"<token>"}` records the user's approval
+- With the current Mac plugin/helper, the first content/action request asks
+  for native approval. Codewhale's installation key is trusted until revoked,
+  across apps, tasks and models. Other hosts without a persistent key get
+  connection-scoped access. Do not request per-app approval by default.
+- `consent {action:"status"}` reports current helper trust and exclusions
+  without opening a prompt. Current-helper app `deny` or `revoke` narrows
+  access; it cannot clear native exclusions. The person revokes host trust
+  in the native controls. Honor foreground exclusions too.
+- Older/direct routes retain the per-app ledger and its `allow`/`deny`/`revoke`
+  flow; follow actual receipts and record only the person's decision.
+  Never rename targets, switch connections or alter installation state to
+  bypass a denial. `remember:true` is not native host enrollment.
+- `consent {action:"allow", confirm:"<token>"}` records the user's approval
   of one exact pay/buy/send/transfer/delete call that refused
   `confirmation_required` — only after they approved it.
 - `list_sessions` — live sessions on this machine (content-free) and the user's control mode.

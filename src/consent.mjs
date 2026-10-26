@@ -19,6 +19,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { stateDir } from "./registry.mjs";
 
 // Persisted allows are signed. consent.json is a file any process of this
@@ -48,11 +49,27 @@ function honored(computerId, key, entry) {
 const ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 const consentPath = () => path.join(stateDir(), "consent.json");
 
-/** computerId -> Map(key -> {decision, name?, at}) — session-scoped, dies with the server. */
+/** Computer and host session -> Map(key -> {decision, name?, at}); never persisted. */
 const session = new Map();
+const hostAccess = new Map();
+const sessionScope = new AsyncLocalStorage();
+export const currentSession = () => sessionScope.getStore();
+export const withSession = (sessionId, operation) => sessionScope.run(sessionId, operation);
+export function setHostAccess(sessionId, grant) {
+  if (grant) hostAccess.set(sessionId, { persisted: grant.persisted === true, exclusions: new Set(grant.exclusions ?? []) });
+  else hostAccess.delete(sessionId);
+}
+const hostGrant = (computerId) => computerId === "local" ? hostAccess.get(currentSession()) : null;
+export const hostExclusions = (computerId) => [...(hostGrant(computerId)?.exclusions ?? [])];
+export function clearSessionDenials(computerId) {
+  const entries = session.get(sessionKey(computerId));
+  for (const [key, entry] of entries ?? []) if (entry.decision === "deny") entries.delete(key);
+}
+const sessionKey = (computerId) => currentSession() == null ? computerId : `${computerId}:${currentSession()}`;
 function sessionMap(computerId) {
-  let m = session.get(computerId);
-  if (!m) { m = new Map(); session.set(computerId, m); }
+  const key = sessionKey(computerId);
+  let m = session.get(key);
+  if (!m) { m = new Map(); session.set(key, m); }
   return m;
 }
 
@@ -114,6 +131,11 @@ function persistedEntries(computerId) {
   const apps = load().computers[computerId]?.apps ?? {};
   return Object.fromEntries(Object.entries(apps).filter(([key, entry]) => honored(computerId, key, entry)));
 }
+export function legacyExclusions(computerId) {
+  const keys = Object.entries(persistedEntries(computerId)).filter(([key, entry]) => entry.decision === "deny" && /^(?:bundle:|name:)/.test(key)).map(([key]) => key);
+  if (load().computers[computerId]?.foreground?.decision === "deny") keys.push("scope:foreground");
+  return [...new Set(keys)];
+}
 
 /**
  * The newest decision among matching keys wins — session entries are checked
@@ -124,6 +146,9 @@ function persistedEntries(computerId) {
 const comparable = (name) => (typeof name === "string" ? name.trim().replace(/\.app$/i, "").toLowerCase() : null);
 
 export function decisionFor(computerId, keys, { pidName } = {}) {
+  const host = hostGrant(computerId);
+  const excluded = keys.find((key) => host?.exclusions.has(key));
+  if (excluded) return { state: "denied", via: excluded, persisted: host.persisted };
   let best = null;
   const consider = (entry, key, persisted) => {
     if (!entry || (entry.decision !== "allow" && entry.decision !== "deny")) return;
@@ -137,12 +162,12 @@ export function decisionFor(computerId, keys, { pidName } = {}) {
     const durable = persisted || entry.persisted === true;
     if (!best || String(entry.at ?? "") > String(best.at ?? "")) best = { ...entry, via: key, persisted: durable };
   };
-  const sm = session.get(computerId);
+  const sm = session.get(sessionKey(computerId));
   for (const key of keys) {
     consider(sm?.get(key), key, false);
-    consider(persistedEntries(computerId)[key], key, true);
+    if (!host) consider(persistedEntries(computerId)[key], key, true);
   }
-  if (!best) return { state: "undecided" };
+  if (!best) return host && keys.length ? { state: "allowed", via: "scope:host", persisted: host.persisted } : { state: "undecided" };
   return { state: best.decision === "deny" ? "denied" : "allowed", via: best.via, persisted: best.persisted, name: best.name ?? null };
 }
 
@@ -196,7 +221,7 @@ export function alias(computerId, keys, { persisted = false, name = null } = {})
 
 /** Remove every trace of the given keys (and foreground when asked) at both layers. */
 export function revoke(computerId, keys) {
-  const sm = session.get(computerId);
+  const sm = session.get(sessionKey(computerId));
   let removed = 0;
   for (const key of keys) if (sm?.delete(key)) removed++;
   const data = load();
@@ -209,18 +234,21 @@ export function revoke(computerId, keys) {
 }
 
 export function anyAllowed(computerId) {
-  for (const [key, entry] of session.get(computerId) ?? []) if (key !== "scope:foreground" && entry.decision === "allow") return true;
+  if (hostGrant(computerId)) return true;
+  for (const [key, entry] of session.get(sessionKey(computerId)) ?? []) if (key !== "scope:foreground" && entry.decision === "allow") return true;
   return Object.values(persistedEntries(computerId)).some((entry) => entry.decision === "allow");
 }
 
 export function foregroundDecision(computerId) {
-  const s = session.get(computerId)?.get("scope:foreground");
+  const host = hostGrant(computerId);
+  if (host?.exclusions.has("scope:foreground")) return { state: "denied", persisted: host.persisted };
+  const s = session.get(sessionKey(computerId))?.get("scope:foreground");
   const stored = load().computers[computerId]?.foreground;
-  const p = honored(computerId, "scope:foreground", stored) ? stored : null;
+  const p = !host && honored(computerId, "scope:foreground", stored) ? stored : null;
   const pick = [s && { ...s, persisted: s.persisted === true }, p && { ...p, persisted: true }]
     .filter(Boolean)
     .sort((a, b) => String(b.at).localeCompare(String(a.at)))[0];
-  if (!pick || (pick.decision !== "allow" && pick.decision !== "deny")) return { state: "undecided" };
+  if (!pick || (pick.decision !== "allow" && pick.decision !== "deny")) return host ? { state: "allowed", persisted: host.persisted } : { state: "undecided" };
   return { state: pick.decision === "deny" ? "denied" : "allowed", persisted: pick.persisted };
 }
 
@@ -237,7 +265,7 @@ export function recordForeground(computerId, decision, { remember = false } = {}
 }
 
 export function revokeForeground(computerId) {
-  const sm = session.get(computerId);
+  const sm = session.get(sessionKey(computerId));
   let removed = sm?.delete("scope:foreground") ? 1 : 0;
   const data = load();
   if (data.computers[computerId]?.foreground) { delete data.computers[computerId].foreground; removed++; save(data); }
@@ -247,16 +275,18 @@ export function revokeForeground(computerId) {
 /** Merged view for consent status: persisted entries overlaid with this session's. */
 export function status(computerId) {
   const apps = {};
-  for (const [key, entry] of Object.entries(persistedEntries(computerId))) apps[key] = { ...entry, source: "persisted" };
-  for (const [key, entry] of session.get(computerId) ?? []) {
+  if (!hostGrant(computerId)) for (const [key, entry] of Object.entries(persistedEntries(computerId))) apps[key] = { ...entry, source: "persisted" };
+  for (const [key, entry] of session.get(sessionKey(computerId)) ?? []) {
     if (key === "scope:foreground") continue;
     apps[key] = { ...entry, source: entry.persisted === true ? "persisted" : "session" };
   }
   const fg = foregroundDecision(computerId);
-  return { computer: computerId, apps, foreground: fg.state === "undecided" ? null : fg };
+  const host = hostGrant(computerId);
+  return { computer: computerId, apps, foreground: fg.state === "undecided" ? null : fg, ...(host ? { host: { trusted: true, persisted: host.persisted, exclusions: [...host.exclusions] } } : {}) };
 }
 
 /** Drop this session's grants for a computer whose route went away. */
 export function dropSession(computerId) {
-  session.delete(computerId);
+  session.delete(sessionKey(computerId));
+  if (computerId === "local") hostAccess.delete(currentSession());
 }

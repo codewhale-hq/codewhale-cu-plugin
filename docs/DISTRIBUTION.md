@@ -1,9 +1,20 @@
-# macOS distribution
+# Plugin and native helper distribution
 
-Release status is recorded in [CHANGELOG.md](../CHANGELOG.md); while no
-release is published, the setup page reports the download as pending and the
-app's **Check for updates…** reports that no stable installer has been
-published.
+Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). The published
+0.12.0 release includes the notarized macOS helper. The 0.13.0 working tree is
+a candidate: its native app has been built and signed, but live qualification
+and publication remain pending.
+
+Computer Use is an ordinary plugin, installed and updated through Codewhale's
+**Connectors** from a stable published release using the existing plugin
+installer. The separate native helper owns macOS permissions, approval and
+Pause/Stop controls. Neither component is embedded in Engine, and neither
+requires an Engine release to update.
+
+The 0.13.0 candidate plans a portable `computer-use.tar.gz` asset alongside the
+native installers in this repository's stable release. That asset is not yet
+published. It supplies the plugin runtime, MCP entry point and skills for the
+existing installer. Native app updates continue through its own updater.
 
 The public entry point is [codewhale.net/computer-use](https://codewhale.net/computer-use).
 The plugin marketplace links there; this repository's GitHub Releases stores
@@ -19,8 +30,11 @@ check shows unknown.
 The standalone download carries its native launcher, accessibility helper,
 practice app and Node 24.21.0 for Apple silicon and Intel. It requires macOS
 13.5+. No Node installation, compiler, npm install or terminal setup is needed
-to open the downloaded app. MCP hosts still use their own server launch
-configuration; the helper automatically owns local input once registered.
+to open the downloaded app. Codewhale launches the installed plugin through
+its existing connector system; other MCP hosts use their own server launch
+configuration. The separately installed helper owns local input once
+registered. On macOS, a missing helper returns `app_setup_required` before
+computer access, with instructions to install it and open it once.
 
 ## Build and qualify
 
@@ -69,8 +83,9 @@ website offers the disk image as the download when `release.json`'s `dmg`
 entry and GitHub's SHA-256 asset digest agree, and the archive otherwise; the
 updater always downloads the archive, verifies it against GitHub's digest and
 does not read `release.json`; `SHA256SUMS.txt` is a human-readable receipt
-that no code consumes. Keep the release draft until all four assets have
-uploaded. The website refreshes
+that no code consumes. Keep the release draft until these four assets and,
+for 0.13.0, the portable plugin asset have uploaded and their applicable
+checks have passed. The website refreshes
 availability within five minutes of publication; no hard-coded website version
 needs to change. Packaging does not tag, publish, or change
 the separate Codewhale Engine release. The same release may carry an explicitly named unsigned Windows x64 preview
@@ -80,9 +95,14 @@ qualification are separate from source and CI checks.
 
 ## Installation and updates
 
-For a download, open the disk image and drag the app into Applications. Open
-it once to register the helper, then use its setup panel. The archive on the
-same release is what **Check for updates…** installs.
+Install and update the plugin through **Connectors**, selecting a stable
+published plugin release. For the native helper, open the disk image and drag
+the app into Applications. Open it once to register the helper, then use its
+setup panel. The versioned macOS archive on the same release is what **Check
+for updates…** installs; `computer-use.tar.gz` is the separate portable plugin
+asset planned for 0.13.0. Restart plugin connections after an update so they
+use the installed version. Changing a source checkout updates neither the
+installed plugin nor the native app.
 
 For a developer build, `npm run install:app` installs in `~/Applications`.
 It stages and verifies the complete app before replacement and retains the

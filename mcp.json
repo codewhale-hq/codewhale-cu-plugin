@@ -8,7 +8,7 @@
       "cwd": ".",
       "extensions": {
         "net.codewhale": {
-          "execute_timeout": 120
+          "execute_timeout": 300
         }
       }
     }

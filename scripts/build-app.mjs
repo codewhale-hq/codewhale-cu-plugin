@@ -101,7 +101,7 @@ export function macLauncher({ rebuild = false, output = LAUNCHER_PREBUILT } = {}
   const canCompile = process.platform === "darwin" && spawnSync("xcrun", ["--find", "clang"], { stdio: "ignore" }).status === 0;
   if (canCompile) {
     fs.mkdirSync(path.dirname(output), { recursive: true });
-    const r = spawnSync("clang", ["-x", "objective-c", "-framework", "Cocoa", "-Os", "-Wall", "-arch", "arm64", "-arch", "x86_64", "-mmacosx-version-min=13.0", "-framework", "ApplicationServices", "-framework", "ScreenCaptureKit", "-framework", "AVFoundation", "-framework", "CoreMedia", "-framework", "CoreGraphics", "-framework", "LocalAuthentication", "-o", output, LAUNCHER_SRC], { encoding: "utf8" });
+    const r = spawnSync("clang", ["-x", "objective-c", "-framework", "Cocoa", "-Os", "-Wall", "-arch", "arm64", "-arch", "x86_64", "-mmacosx-version-min=13.0", "-framework", "ApplicationServices", "-framework", "ScreenCaptureKit", "-framework", "AVFoundation", "-framework", "CoreMedia", "-framework", "CoreGraphics", "-framework", "LocalAuthentication", "-framework", "Security", "-framework", "QuartzCore", "-o", output, LAUNCHER_SRC], { encoding: "utf8" });
     if (r.status !== 0) throw new Error(`clang failed:\n${r.stderr}`);
     const signed = spawnSync("codesign", ["--force", "--options", "runtime", "--sign", "-", "--identifier", APP_ID, output], { encoding: "utf8" });
     if (signed.status !== 0) throw new Error(`launcher codesign failed: ${signed.stderr}`);
