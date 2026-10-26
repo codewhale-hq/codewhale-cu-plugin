@@ -6,6 +6,18 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {handle,closeAllSessions} from '../src/app-handler.mjs';
+import * as consent from '../src/consent.mjs';
+
+for (const ref of [
+  { pid: 123, name: 'Fixture', bundle_id: 'test.fixture' },
+  { pid: 999, name: 'Front', bundle_id: 'test.front' },
+  { pid: 200, name: 'Twin', bundle_id: 'test.twin' },
+  { pid: 201, name: 'Twin', bundle_id: 'test.twin' },
+  { pid: 321, name: 'missing', bundle_id: 'missing' },
+  { bundle_id: 'test.other' },
+]) {
+  consent.record('local', consent.appKeys(ref), 'allow', { remember: false, name: ref.name ?? null });
+}
 
 const root=fileURLToPath(new URL('..',import.meta.url));
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cu-app-targeting-'));

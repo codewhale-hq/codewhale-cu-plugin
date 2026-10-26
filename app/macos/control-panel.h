@@ -10,6 +10,12 @@ static void cuSend(NSString *command) {
   NSData *data=[[NSString stringWithFormat:@"{\"command\":\"%@\"}\n",command] dataUsingEncoding:NSUTF8StringEncoding];
   write(cuControlFD,data.bytes,data.length);
 }
+static void cuSendJSON(NSDictionary *payload) {
+  if(cuControlFD<0) return;
+  NSData *json=[NSJSONSerialization dataWithJSONObject:payload options:0 error:nil]; if(!json) return;
+  NSMutableData *line=[NSMutableData dataWithData:json]; [line appendBytes:"\n" length:1];
+  write(cuControlFD,line.bytes,line.length);
+}
 static NSTextField *cuLabel(NSString *text, CGFloat size, NSFontWeight weight) {
   NSTextField *label=[NSTextField wrappingLabelWithString:text];
   label.font=[NSFont systemFontOfSize:size weight:weight];
@@ -29,7 +35,10 @@ static NSView *cuSeparator(void) {
   NSBox *line=[NSBox new]; line.boxType=NSBoxSeparator; line.translatesAutoresizingMaskIntoConstraints=NO; return line;
 }
 
+#include "consent-panel.h"
+
 @interface CUControlPanel : NSObject <NSMenuDelegate, NSWindowDelegate>
+@property(retain) CUConsentPanel *consent;
 @property(retain) NSStatusItem *item;
 @property(retain) NSTimer *timer;
 @property(retain) NSWindow *window;
@@ -89,7 +98,9 @@ static NSView *cuSeparator(void) {
     dispatch_source_set_cancel_handler(cuControlReader,^{ close(fd); });
     dispatch_resume(cuControlReader);
   }
+  self.consent=[[CUConsentPanel new] autorelease];
   cuSend(@"status");
+  cuSendJSON(@{@"command":@"capabilities",@"consent":@1});
 }
 - (void)buildWindow {
   self.window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,650) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable backing:NSBackingStoreBuffered defer:NO];
@@ -154,6 +165,7 @@ static NSView *cuSeparator(void) {
 }
 - (void)render:(NSDictionary *)state {
   self.state=state;
+  [self.consent handle:state[@"consent"]];
   NSString *mode=state[@"mode"]?:@"stopped"; BOOL ready=[mode isEqual:@"ready"], pending=[state[@"cleanupPending"] boolValue];
   NSArray *sessions=state[@"sessions"]?:@[];
   BOOL foreground=NO, running=NO; NSMutableArray *lines=[NSMutableArray new];

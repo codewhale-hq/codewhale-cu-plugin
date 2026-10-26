@@ -84,8 +84,27 @@ ledger. `app_script` goes through the ledger too: every app a script names
 Automation prompts come on top of that. A script that names no app runs as
 osascript itself and needs consent for `com.apple.osascript`. Recording a
 decision (`consent` allow or revoke, a `confirm`), running `app_script`, and
-registering or spawning a computer are the user's own calls: the host shows
-them the exact call, and a model call alone returns `consent_needs_user`.
+registering or spawning a computer are the user's own calls. On macOS, when
+the Codewhale Computer Use helper is running (`consentProtocol: 1`), the
+helper shows its own approval panel and the person approves with Touch ID or
+their login password (`consent` allow and `app_script` are enforced in the
+daemon's session ledger for every local socket client). Otherwise the
+Codewhale host shows them the exact call on its approval card, or another
+host may ask through MCP elicitation. On macOS, under a host with neither and
+an older helper (when `CODEWHALE_CU_NATIVE_PROMPT=1` is enabled), the plugin
+shows a native dialog titled "Codewhale Computer Use" with the exact request
+(tool, app, remember, computer) and Deny as the default button; only Allow
+passes, and Deny, Escape or no answer within about two minutes declines
+(`consent_declined`). Tell the person a dialog is coming before you make the
+call, since it may open behind other windows. While it is open every other
+call except `stop_computer_control`, `consent {action:"status"}` and plain
+`list_apps` refuses `consent_pending`; never try to answer, move or close it.
+After any prompt closes no new prompt opens for 2 seconds (10 seconds after a
+decline/timeout on the interim dialog), and at most five open in a minute
+(`consent_rate_limited`). Without the host's ledger key, `remember:true`
+cannot keep an allow past this session; the panel says so. Under the Codewhale
+host, and off macOS without elicitation, a model call alone returns
+`consent_needs_user`.
 
 Only in explicitly selected foreground mode for an approved app, where a shared surface is taken
 — a front lease for window-record

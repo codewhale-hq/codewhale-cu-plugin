@@ -28,6 +28,7 @@ import { stateDir } from "./registry.mjs";
 // ledger key, allows live for the session only.
 let ledgerKey = null;
 export function setLedgerKey(key) { ledgerKey = Buffer.isBuffer(key) && key.length >= 32 ? key : null; }
+export const persistsAllows = () => ledgerKey != null;
 function entryMac(computerId, key, entry) {
   return crypto.createHmac("sha256", ledgerKey).update(`${computerId}\0${key}\0${entry.decision}\0${entry.at ?? ""}`).digest("hex");
 }

@@ -26,10 +26,14 @@ test("retiring daemon cleanup preserves a replacement listener and its run recei
   });
   const started = path.join(directory, "cleanup-started"), release = path.join(directory, "allow-cleanup");
   const fixture = path.join(directory, "backend.mjs");
+  const consentModuleUrl = new URL("../src/consent.mjs", import.meta.url).href;
   fs.writeFileSync(fixture, `
     import fs from 'node:fs';
     import {setTimeout as delay} from 'node:timers/promises';
+    import * as consent from ${JSON.stringify(consentModuleUrl)};
+    consent.record('local', ['name:retiring', 'pid:100'], 'allow', { remember: false, name: 'Retiring' });
     export function create() { return {
+      async list_apps() { return [{ name: 'Retiring', pid: 100, frontmost: true }]; },
       async get_app_state() { return {found:true,elements:[]}; },
       async releaseInput() {
         if (process.env.CU_BLOCK_CLEANUP !== '1') return;

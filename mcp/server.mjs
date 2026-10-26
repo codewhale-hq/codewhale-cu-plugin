@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { execFile } from "node:child_process";
 import { isDeepStrictEqual } from "node:util";
 import * as registry from "../src/registry.mjs";
 import * as consent from "../src/consent.mjs";
@@ -14,9 +15,10 @@ import { spawnDockerComputer, destroyDockerComputer, destroySessionSpawns } from
 import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD, resolveTool, parseGrant, MERGED_EXPANSION, LEASE_GATED_TOOLS } from "../src/tools.mjs";
 import { tryJson, withSignal, throwIfAborted, wait, currentSignal } from "../src/exec.mjs";
 import { inputRefusal, watchLease, HUMAN_DRIVING } from "../src/lease.mjs";
-import { APP_VERSION, helperStaleness, helperBuildDrift } from "../src/app-socket.mjs";
+import { APP_VERSION, helperStaleness, helperBuildDrift, appRequest, hello } from "../src/app-socket.mjs";
 import { launchRefusal } from "../src/launch-policy.mjs";
 import { checkAppScript } from "../src/app-script-policy.mjs";
+import { createNativePrompt, DECLINED_MESSAGE } from "../src/native-prompt.mjs";
 import { createRecorder, readTrajectory, listTrajectories, resolveTrajectory, isTrajectoryTool, containsRasterPin } from "../src/trajectory.mjs";
 
 const SERVER_NAME = "codewhale-cu";
@@ -83,6 +85,12 @@ function assertLease(name) {
   const refusal = inputRefusal(name);
   if (refusal) throw new ServerError(refusal.code, refusal.message, refusal.extra);
 }
+/** Throw consent_pending while any plugin session shows an approval dialog. */
+function assertNoPrompt(name, args) {
+  const pending = nativePrompt.refusal(name, args);
+  if (pending) throw new ServerError(pending.code, pending.message);
+}
+const promptRefused = (tool, err) => ({ content: [{ type: "text", text: JSON.stringify(fail(null, err.code, err.message, { tool })) }], isError: true });
 /** A request name (possibly a merged tool) that may deliver input. */
 // A consent decision (allow/deny/revoke, including an irreversible-action
 // confirm) must be its own top-level call the host shows the user. It is
@@ -99,7 +107,11 @@ const isConsentDecision = (tool, args) => CONSENT_DECISIONS.has(tool) || (tool =
 //    first stdin message (codewhale/host_keys) and attaches
 //    _meta["codewhale/user_decision"] = {nonce, args_json, mac} only after the
 //    user approved that exact call on its card;
-//  - or, under another host, an MCP elicitation the client shows its user.
+//  - or, under another host, an MCP elicitation the client shows its user;
+//  - or, on macOS under a host with neither and only when the operator set
+//    CODEWHALE_CU_NATIVE_PROMPT=1, an interim native dialog the person answers
+//    (src/native-prompt.mjs). While any plugin session shows one, every call
+//    it refuses gets consent_pending.
 // Otherwise the call is refused with consent_needs_user.
 const NEEDS_USER_DECISION = new Set(["consent_allow", "consent_revoke", "app_script", "computer_register", "computer_spawn"]);
 const wireName = (tool, args) => { try { return resolveTool(tool, args ?? {}).name; } catch { return tool; } };
@@ -108,6 +120,11 @@ let hostDecisionKey = null;
 let sawFirstMessage = false;
 let clientElicitation = false;
 const seenDecisionNonces = new Set();
+let clientInfo = null;
+const nativePrompt = createNativePrompt({ execFile, platform: process.platform, enabled: process.env.CODEWHALE_CU_NATIVE_PROMPT === "1", fs, dir: registry.stateDir(), pid: process.pid });
+process.on("exit", () => nativePrompt.release());
+/** abort signal of a tools/call -> how many dialogs this process had opened when it arrived */
+const promptTickets = new WeakMap();
 
 /** First-message key delivery from the host (never from later messages). */
 function acceptHostKeys(params) {
@@ -160,8 +177,48 @@ function clientRequest(method, params) {
   });
 }
 
-/** Resolve with nothing when the user decided this call; throw otherwise. */
+/** Resolve when the user decided this call (with the dialog's request when it decided there); throw otherwise. */
 async function requireUserDecision(params, name, args) {
+  let targetComputer = null;
+  try { targetComputer = registry.get(args.computer || activeComputerId); } catch {}
+  if (name === "consent_revoke" && targetComputer) {
+    if (args.scope === "foreground") {
+      if (consent.foregroundDecision(targetComputer.id).state === "allowed") return { via: "narrow" };
+    } else {
+      const k = consent.appKeys(refFromConsentArgs(args));
+      if (k.length && consent.decisionFor(targetComputer.id, k).state === "allowed") return { via: "narrow" };
+    }
+  }
+  let app = null;
+  if (targetComputer && targetComputer.transport === "local" && targetComputer.owned !== true
+      && ((name === "consent_allow" && typeof args.confirm !== "string") || name === "app_script")) {
+    app = process.env.CODEWHALE_CU_APP === "off" ? null : await hello({ timeoutMs: 1_500 });
+    if (app && Number(app.consentProtocol) >= 1) {
+      if (name === "consent_allow" && args.scope === "foreground") {
+        const rep = await appRequest({ tool: "consent_request", kind: "allow_foreground" }, { timeoutMs: 130_000 });
+        if (!rep?.ok) throw new ServerError(rep?.error?.code ?? "consent_declined", rep?.error?.message ?? DECLINED_MESSAGE, rep?.error?.retry_after_s != null ? { retry_after_s: rep.error.retry_after_s } : null);
+        return { via: "daemon", scope: "foreground" };
+      }
+      if (name === "consent_allow") {
+        const ref = refFromConsentArgs(args);
+        if (!consent.appKeys(ref).length) throw new ServerError("bad_args", `consent allow needs an app identity (app, name, bundle_id or pid) — or scope:"foreground"`);
+        const rep = await appRequest({ tool: "consent_request", kind: "allow_app", app: ref }, { timeoutMs: 130_000 });
+        if (!rep?.ok) throw new ServerError(rep?.error?.code ?? "consent_declined", rep?.error?.message ?? DECLINED_MESSAGE, rep?.error?.retry_after_s != null ? { retry_after_s: rep.error.retry_after_s } : null);
+        return { via: "daemon", resolved: rep.app, keys: rep.keys };
+      }
+      if (name === "app_script") {
+        validateToolArgs(targetComputer, "app_script", args);
+        appScriptTargets(args);
+        const rep = await appRequest({ tool: "consent_request", kind: "app_script", language: args.language, script: args.script }, { timeoutMs: 130_000 });
+        if (!rep?.ok) throw new ServerError(rep?.error?.code ?? "consent_declined", rep?.error?.message ?? DECLINED_MESSAGE, rep?.error?.retry_after_s != null ? { retry_after_s: rep.error.retry_after_s } : null);
+        for (const t of rep.targets ?? []) {
+          const keys = consent.appKeys(t);
+          if (keys.length) consent.record(targetComputer.id, keys, "allow", { remember: false, name: t.name ?? null });
+        }
+        return { via: "daemon", approvalToken: rep.approvalToken, targets: rep.targets };
+      }
+    }
+  }
   if (verifyUserDecision(params.name, params.arguments ?? {}, params._meta)) return;
   if (clientElicitation) {
     const answer = await clientRequest("elicitation/create", {
@@ -169,10 +226,95 @@ async function requireUserDecision(params, name, args) {
       requestedSchema: { type: "object", properties: {} },
     });
     if (answer?.action === "accept") return;
-    throw new ServerError("consent_declined", "the user did not approve this — do not retry it; continue without it or ask them");
+    throw new ServerError("consent_declined", DECLINED_MESSAGE);
   }
-  throw new ServerError("consent_needs_user", `${name} is the user's own decision: it runs only when the host shows them the exact call and they approve it. A model tool call cannot make it. Ask the user.`);
+  if (!hostDecisionKey && nativePrompt.available) {
+    const request = await nativeRequest(name, args);
+    await nativePrompt.ask(request, { signal: currentSignal(), ticket: promptTickets.get(currentSignal()) });
+    return request;
+  }
+  const helperHint = app && !Number(app.consentProtocol)
+    ? " Update and restart the Codewhale Computer Use app so it can show the approval panel."
+    : "";
+  throw new ServerError("consent_needs_user", `${name} is the user's own decision: it runs only when the host shows them the exact call and they approve it. A model tool call cannot make it. Ask the user.${helperHint}`);
 }
+
+/**
+ * What the native dialog shows, checked before it opens: the identity the
+ * ledger will record (resolved once, never again after the click), the
+ * pending action a confirm admits, the apps a script names, and a
+ * registration or spawn that would pass its own validation.
+ */
+async function nativeRequest(name, args) {
+  const request = { tool: name, args, computer: args.computer || activeComputerId, persists: consent.persistsAllows(), client: clientInfo };
+  if (name === "computer_register") {
+    assertNotOwnedElsewhere(args.computer);
+    registry.validateEntry({ id: args.computer, transport: args.transport, label: args.label, host: args.host, port: args.port, user: args.user, knownHosts: args.knownHosts, target: args.target });
+    return request;
+  }
+  if (name === "computer_spawn") {
+    validateSpawn(args);
+    return request;
+  }
+  const computer = registry.get(request.computer);
+  if (name === "app_script") {
+    if (computer.transport !== "local") throw remoteScriptRefusal(computer);
+    return { ...request, targets: appScriptTargets(args) };
+  }
+  if (name === "consent_allow" && typeof args.confirm === "string") return { ...request, confirmation: pendingConfirmation(args.confirm) };
+  const ledger = consent.status(computer.id);
+  if (args.scope === "foreground") return { ...request, denied: ledger.foreground?.state === "denied" };
+  const ref = refFromConsentArgs(args);
+  if (!consent.appKeys(ref).length) throw new ServerError("bad_args", `consent ${name.slice(8)} needs an app identity (app, name, bundle_id or pid) — or scope:"foreground"`);
+  const decided = await consentIdentity(computer, ref);
+  return { ...request, ...decided, denied: decided.keys.some((key) => ledger.apps[key]?.decision === "deny") };
+}
+
+/**
+ * One app for a consent the dialog asks about: every name, bundle id and pid
+ * given must belong to the same single running application. An app that is
+ * not running is recorded exactly as named, by one name or bundle id.
+ */
+async function consentIdentity(computer, ref) {
+  const res = await callTool({ name: "list_apps", arguments: { computer: computer.id, all: true } });
+  const body = JSON.parse(res.content[0].text);
+  if (res.isError || body.ok === false || !Array.isArray(body.apps)) throw new ServerError(body.error?.code ?? "observe_failed", body.error?.message ?? "the running applications could not be listed, so the dialog cannot show which app this is");
+  const wanted = ["pid", "bundle_id", "name"].filter((field) => ref[field] != null).map((field) => consent.appKeys({ [field]: ref[field] })[0]);
+  const running = body.apps.map((app) => ({ app, keys: new Set(consent.appKeys(app)) }));
+  const desc = [ref.name, ref.bundle_id, ref.pid != null ? `pid ${ref.pid}` : null].filter(Boolean).join(", ");
+  if (wanted.every((key) => !running.some((entry) => entry.keys.has(key)))) {
+    if (ref.pid != null) throw new ServerError("consent_identity_ambiguous", `no running application has pid ${ref.pid}; call list_apps, then ask again`);
+    if (wanted.length > 1) throw new ServerError("consent_identity_ambiguous", `${desc} is not running, so its name and bundle id cannot be checked against each other; name it one way, then ask again`);
+    return { identity: ref, resolved: null, running: false, keys: consent.appKeys(ref) };
+  }
+  const hits = running.filter((entry) => wanted.every((key) => entry.keys.has(key)));
+  if (hits.length !== 1) {
+    throw new ServerError("consent_identity_ambiguous", hits.length
+      ? `${desc} matches ${hits.length} running applications (${hits.slice(0, 5).map(({ app }) => `${app.name ?? app.bundle_id} pid ${app.pid}`).join(", ")}); pass pid to choose one, then ask again`
+      : `${desc} do not all belong to one running application; name the app one way, then ask again`);
+  }
+  const { app } = hits[0];
+  const identity = {
+    ...(typeof app.name === "string" && app.name ? { name: app.name } : {}),
+    ...(typeof app.bundle_id === "string" && app.bundle_id ? { bundle_id: app.bundle_id } : {}),
+    ...(Number.isInteger(app.pid) && app.pid > 0 ? { pid: app.pid } : {}),
+  };
+  return { identity, resolved: identity, running: true, keys: consent.appKeys(identity) };
+}
+
+function validateSpawn(args) {
+  if (args.transport !== "docker") throw new ServerError("bad_args", `spawn transport must be "docker" (got ${JSON.stringify(args.transport)})`);
+  if (typeof args.computer !== "string" || !registry.ID_RE.test(args.computer)) throw new ServerError("invalid_id", "computer id must match " + registry.ID_RE);
+  assertNotOwnedElsewhere(args.computer);
+}
+
+function appScriptTargets(args) {
+  const policy = checkAppScript(args.script, args.language);
+  if (policy.refused) throw new ServerError("script_refused", `app_script refused: ${policy.refused}. Do not rewrite the script to get around this; use the computer-use tools, or ask the user.`);
+  return policy.targets;
+}
+
+const remoteScriptRefusal = (computer) => new ServerError("unsupported_on_transport", `app_script runs on the local computer only — the ${computer.transport} transport stays a computer-use channel, never a shell`);
 const mayDeliverInput = (requestName) => requestName === "run_actions" || requestName === "trajectory_replay"
   || LEASE_GATED_TOOLS.has(requestName) || (MERGED_EXPANSION[requestName] ?? []).some((wire) => LEASE_GATED_TOOLS.has(wire));
 const cancelledCode = () => (controlStopped ? "control_stopped" : leasePreempted.has(currentSignal()) ? HUMAN_DRIVING : "cancelled");
@@ -1075,7 +1217,7 @@ function confirmationCheck(computer, name, args, control = activatedControl(comp
     throw confirmationRequired(token, entry);
   }
   const token = `confirm-${crypto.randomBytes(9).toString("hex")}`;
-  const entry = { hash, tool: name, label: control.label, app: control.app, repeated, expires: now + CONFIRM_TTL_MS, confirmed: false };
+  const entry = { hash, tool: name, label: control.label, app: control.app, computer: computer.id, repeated, expires: now + CONFIRM_TTL_MS, confirmed: false };
   confirmations.set(token, entry);
   throw confirmationRequired(token, entry);
 }
@@ -1127,13 +1269,18 @@ function confirmationRequired(token, entry) {
     { confirm: { token, tool: entry.tool, label: entry.label, app: entry.app ?? null, expires_in_s: Math.round((entry.expires - Date.now()) / 1000) } });
 }
 
-/** consent allow with confirm: mark one pending exact call as approved by the user. */
-function recordConfirmation(token) {
+function pendingConfirmation(token) {
   const entry = confirmations.get(token);
   if (!entry || entry.expires <= Date.now()) {
     confirmations.delete(token);
     throw new ServerError("confirmation_unknown", "that confirmation token is unknown or expired — repeat the original call to get a fresh one, and ask the user again");
   }
+  return entry;
+}
+
+/** consent allow with confirm: mark one pending exact call as approved by the user. */
+function recordConfirmation(token) {
+  const entry = pendingConfirmation(token);
   entry.confirmed = true;
   entry.expires = Date.now() + CONFIRM_TTL_MS;
   return entry;
@@ -1184,12 +1331,15 @@ async function callTool(params, bindWhen = null) {
       return { content: [{ type: "text", text: JSON.stringify(fail(null, "bad_args", `${requested} requires "${field}"`)) }], isError: true };
     }
   }
+  const pending = nativePrompt.refusal(name, args);
+  if (pending) return promptRefused(requested, pending);
+  let decided = null;
   if (NEEDS_USER_DECISION.has(name)) {
     try {
-      await requireUserDecision(params, name, args);
+      decided = await requireUserDecision(params, name, args) ?? null;
       throwIfAborted();
     } catch (err) {
-      return { content: [{ type: "text", text: JSON.stringify(fail(null, err.code ?? "consent_needs_user", err.message ?? String(err), { tool: requested })) }], isError: true };
+      return { content: [{ type: "text", text: JSON.stringify(fail(null, err.code ?? "consent_needs_user", err.message ?? String(err), { tool: requested, ...(Number.isFinite(err.extra?.retry_after_s) ? { retry_after_s: err.extra.retry_after_s } : {}) })) }], isError: true };
     }
   }
 
@@ -1320,8 +1470,7 @@ async function callTool(params, bindWhen = null) {
 
   if (name === "computer_spawn") {
     try {
-      if (args.transport !== "docker") throw new ServerError("bad_args", `spawn transport must be "docker" (got ${JSON.stringify(args.transport)})`);
-      assertNotOwnedElsewhere(args.computer);
+      validateSpawn(args);
       const spawned = await spawnDockerComputer({ id: args.computer, image: args.image });
       let entry;
       try {
@@ -1397,6 +1546,7 @@ async function callTool(params, bindWhen = null) {
   }
   if (name === "consent_allow" && typeof args.confirm === "string") {
     try {
+      throwIfAborted();
       const entry = recordConfirmation(args.confirm);
       const app = entry.app?.name ?? entry.app?.bundle_id ?? null;
       return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, confirmed: { tool: entry.tool, label: entry.label, app: entry.app ?? null }, note: `The user approved ${entry.tool} on "${entry.label}"${app ? ` in ${app}` : ""}. Exactly one identical call is admitted; anything else asks again.` })) }] };
@@ -1408,9 +1558,14 @@ async function callTool(params, bindWhen = null) {
     try {
       const scope = args.scope === "foreground" ? "foreground" : "app";
       const verb = { consent_allow: "allow", consent_deny: "deny" }[name] ?? null;
+      const remember = decided?.via === "daemon" ? false : args.remember === true;
       if (scope === "foreground") {
-        const r = verb ? consent.recordForeground(computer.id, verb, { remember: args.remember === true })
+        throwIfAborted();
+        const r = verb ? consent.recordForeground(computer.id, verb, { remember })
           : consent.revokeForeground(computer.id);
+        if ((name === "consent_deny" || name === "consent_revoke") && computer.transport === "local" && computer.owned !== true && process.env.CODEWHALE_CU_APP !== "off") {
+          await appRequest({ tool: name, scope: "foreground" }, { timeoutMs: 1_500 }).catch(() => {});
+        }
         return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, scope, ...r, note: verb ? `Shared-desktop (foreground) control ${verb === "allow" ? "allowed" : "denied"} for ${r.persisted ? "this computer until revoked" : "this session"}.` : "Foreground override removed — approved app access covers activate:true." })) }] };
       }
       const ref = refFromConsentArgs(args);
@@ -1418,14 +1573,21 @@ async function callTool(params, bindWhen = null) {
       if (!keys.length) throw new ServerError("bad_args", `consent ${name.slice(8)} needs an app identity (app, name, bundle_id or pid) — or scope:"foreground"`);
       // Fold in the resolved running-app identity so the decision holds under
       // every spelling — and a deny cannot be sidestepped by asking for the
-      // same app a different way.
-      const resolved = await resolveAppIdentity(computer, ref);
-      const allKeys = resolved ? [...new Set([...keys, ...consent.appKeys(resolved)])] : keys;
+      // same app a different way. A dialog decision already resolved it.
+      const resolved = decided?.keys ? decided.resolved : await resolveAppIdentity(computer, ref);
+      const allKeys = decided?.keys ?? (resolved ? [...new Set([...keys, ...consent.appKeys(resolved)])] : keys);
+      throwIfAborted();
       if (verb) {
-        const r = consent.record(computer.id, allKeys, verb, { remember: args.remember === true, name: resolved?.name ?? ref.name ?? null });
+        const r = consent.record(computer.id, allKeys, verb, { remember, name: resolved?.name ?? ref.name ?? null });
+        if (name === "consent_deny" && computer.transport === "local" && computer.owned !== true && process.env.CODEWHALE_CU_APP !== "off") {
+          await appRequest({ tool: "consent_deny", scope: "app", keys: allKeys, app: resolved ?? ref }, { timeoutMs: 1_500 }).catch(() => {});
+        }
         return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, scope, decision: verb, app: resolved ?? ref, keys: allKeys, persisted: r.persisted, note: `${resolved?.name ?? ref.name ?? ref.bundle_id ?? `pid ${ref.pid}`} ${verb === "allow" ? "allowed" : "denied"} ${r.persisted ? "until revoked" : "for this session"}.` })) }] };
       }
       const r = consent.revoke(computer.id, allKeys);
+      if (computer.transport === "local" && computer.owned !== true && process.env.CODEWHALE_CU_APP !== "off") {
+        await appRequest({ tool: "consent_revoke", scope: "app", keys: allKeys, app: resolved ?? ref }, { timeoutMs: 1_500 }).catch(() => {});
+      }
       return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, scope, app: resolved ?? ref, keys: allKeys, ...r, note: "Decisions removed — the next call targeting this app asks again." })) }] };
     } catch (err) {
       return { content: [{ type: "text", text: JSON.stringify(fail(computer, err.code ?? "consent_error", err.message ?? String(err), { tool: name, switched })) }], isError: true };
@@ -1444,10 +1606,7 @@ async function callTool(params, bindWhen = null) {
     // the grant so its resolved identity can be aliased below.
     // app_script is app scripting, not a shell: shell escapes and targets the
     // policy cannot name are refused before the ledger or any dispatch.
-    if (name === "app_script" && typeof args.script === "string") {
-      const policy = checkAppScript(args.script, args.language);
-      if (policy.refused) throw new ServerError("script_refused", `app_script refused: ${policy.refused}. Do not rewrite the script to get around this; use the computer-use tools, or ask the user.`);
-    }
+    if (name === "app_script" && typeof args.script === "string") appScriptTargets(args);
     if (name === "open_application") {
       const refusal = launchRefusal(args, computer.platform ?? computer.platformHint ?? (computer.transport === "local" ? process.platform : computer.transport === "hdc" ? "harmonyos" : "linux"), { remote: computer.transport !== "local" });
       if (refusal) throw new ServerError(refusal.code, refusal.message);
@@ -1503,9 +1662,7 @@ async function callTool(params, bindWhen = null) {
     // Scripting is honored on the local computer only. Remote agents refuse
     // it too (their handler gates computerId), so a remote channel can never
     // be steered into a shell — fail here first to save the hop.
-    if (name === "app_script" && computer.transport !== "local") {
-      throw new ServerError("unsupported_on_transport", `app_script runs on the local computer only — the ${computer.transport} transport stays a computer-use channel, never a shell`);
-    }
+    if (name === "app_script" && computer.transport !== "local") throw remoteScriptRefusal(computer);
     let data;
     const ex = computer.transport === "local" || computer.transport === "ssh" || computer.transport === "docker" ? await executorFor(computer, binding) : null;
     if (ex?.kind === "app") binding.usedApp = true;
@@ -1544,6 +1701,7 @@ async function callTool(params, bindWhen = null) {
         return rep.data;
       };
       const wireArgs = await prepareArgs(computer, name, args, resolve, sink);
+      if (name === "app_script" && decided?.approvalToken) wireArgs.approvalToken = decided.approvalToken;
       if (computer.transport === "local" || computer.transport === "ssh") await inputOwnerCheck(computer, name, wireArgs, remoteInputOwner(computer, remoteCall));
       await focusedControlCheck(computer, name, wireArgs, remoteFocusedControl(remoteCall, sink));
       throwIfAborted();
@@ -1551,6 +1709,7 @@ async function callTool(params, bindWhen = null) {
       // Re-check the kill switch: a stop that arrived while the executor was
       // being resolved still blocks this dispatch.
       if (controlStopped && !READ_ONLY_TOOLS.has(name)) throw new ServerError("control_stopped", "stop_computer_control is active; no further actions are permitted this session");
+      assertNoPrompt(name, args);
       assertLease(name);
       inFlight++;
       try {
@@ -1615,6 +1774,7 @@ async function callTool(params, bindWhen = null) {
       throwIfAborted();
       await assertCurrentRoute(computer, binding);
       if (controlStopped && !READ_ONLY_TOOLS.has(name)) throw new ServerError("control_stopped", "stop_computer_control is active; no further actions are permitted this session");
+      assertNoPrompt(name, args);
       assertLease(name);
       inFlight++;
       try {
@@ -1908,8 +2068,8 @@ const SKILL_DESCRIPTION = skillPack.find((f) => f.rel === "SKILL.md")?.frontmatt
  * session makes (refusals included — they are part of what happened); the
  * recorder's own tools and replayed calls are never re-recorded.
  */
-async function callToolRecorded(params) {
-  const result = await callTool(params);
+async function callToolRecorded(params, refused = null) {
+  const result = refused ?? await callTool(params);
   if (recorder.active && !replaying && !isTrajectoryTool(params?.name)) {
     let body = null;
     try { body = JSON.parse(result?.content?.[0]?.text ?? "null"); } catch { /* non-JSON receipts record without an outcome */ }
@@ -1921,6 +2081,8 @@ async function callToolRecorded(params) {
 const HANDLERS = {
   initialize(params) {
     clientElicitation = params?.capabilities?.elicitation != null;
+    const info = params?.clientInfo;
+    clientInfo = info && typeof info === "object" ? { name: info.name ?? null, version: info.version ?? null } : null;
     return {
       protocolVersion: params?.protocolVersion ?? "2025-06-18",
       capabilities: {
@@ -1973,6 +2135,11 @@ const HANDLERS = {
   },
   async "tools/call"(params) {
     if (params?.name === "stop_computer_control") return callTool(params);
+    // An open approval dialog holds the queue below: a call it refuses is
+    // answered now, and a decision that queued behind one is refused later.
+    const pending = nativePrompt.refusal(wireName(params?.name, params?.arguments), params?.arguments);
+    if (pending) return callToolRecorded(params ?? {}, promptRefused(params?.name, pending));
+    promptTickets.set(currentSignal(), nativePrompt.ticket);
     const previous = dispatch;
     let release;
     dispatch = new Promise((resolve) => { release = resolve; });

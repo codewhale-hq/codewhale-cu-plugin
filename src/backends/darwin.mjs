@@ -13,6 +13,7 @@ import { spawn } from "node:child_process";
 import { run, runOk, ExecError, tryJson, have, withSignal, wait, throwIfAborted, currentSignal } from "../exec.mjs";
 import { stateDir } from "../registry.mjs";
 import { createBrowser } from "../browser-cdp.mjs";
+import { liveMarker, isPromptProcess } from "../native-prompt.mjs";
 import { recordingsDir, recordingsOutputPath } from "../recordings.mjs";
 
 /** Base64 expands 3 bytes to 4, padded to a multiple of 4. */
@@ -280,7 +281,15 @@ export function create({ exec }) {
     if (!state.foregroundInput) throw Object.assign(new ExecError("This action would take keyboard focus and was not sent in background mode. Use an accessibility action, browser control, or a separate computer."), { code: "background_focus_required" });
   }
 
+  function assertNotPrompt(...refs) {
+    const pids = liveMarker({ fs, dir: stateDir() })?.pids ?? [];
+    if (refs.some((ref) => isPromptProcess(ref, pids))) {
+      throw Object.assign(new ExecError("osascript and the Computer Use approval dialog belong to the person; this plugin does not bind to, observe or operate them."), { code: "protected_application" });
+    }
+  }
+
   async function native(tool, args = {}) {
+    assertNotPrompt(args?.app_ref, args?.target?.app_ref, args?.from_target?.app_ref, args?.to?.app_ref, tool === "kill_app" ? args : null, state.inputApp);
     // Window-addressed events still borrow keyboard focus. Block before even
     // starting an older installed helper, including the app-scoped fallback.
     if (["bg_pointer", "bg_key"].includes(tool)) requireFocusControl();
@@ -310,6 +319,7 @@ export function create({ exec }) {
       throw error;
     }
     const result = tryJson(r.stdout, null);
+    if (tool === "get_app_state" || tool === "window_info") assertNotPrompt(result);
     const interference = leaseVerdict(result);
     if (interference !== null) result.user_input_during_lease = interference;
     if (state.previewEnabled && state.inputApp && ["type", "key_event", "bg_pointer", "bg_key", "set_value", "select_text", "perform_action", "hit_test", "click_element", "scroll_element", "focus_element"].includes(tool)) {
@@ -783,6 +793,7 @@ export function create({ exec }) {
     }
     if (activate && p?.frontmost === false) throw Object.assign(new ExecError("The selected application did not become frontmost; no input mode was enabled. Continue with background control or wait for the user."), { code: "activation_not_confirmed" });
     if (p?.bundle_id === "net.codewhale.computer-use") throw Object.assign(new ExecError("The Computer Use setup and safety controls belong to the user and cannot be operated by this plugin."), { code: "protected_application" });
+    assertNotPrompt(p);
     // A bare executable has no bundle id; carrying an empty one would make the
     // identity unmatchable.
     state.inputApp = { pid: p.pid, ...(p.bundle_id ? { bundle_id: p.bundle_id } : {}), ...(p.name ? { name: p.name } : {}) };

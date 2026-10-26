@@ -1,5 +1,63 @@
 # Limitations
 
+## Native macOS approval panel and interim dialog (0.12.1)
+
+Under a host that neither attests decisions nor supports MCP elicitation, the
+plugin asks for the user's own decisions on macOS in two ways:
+
+1. **Helper-owned approval panel (`consentProtocol: 1`, default when the
+   Computer Use app is running).** For `consent {action:"allow"}` and
+   `app_script` on `local`, the MCP server asks the helper's daemon over its
+   socket (`consent_request`), and the daemon asks the native menu-bar app over
+   the private FD 3/4 control channel. Allow requires Touch ID or the user's
+   login password (`LAPolicyDeviceOwnerAuthentication`, failing closed when
+   neither is configured), and the daemon enforces its session ledger and
+   single-use `app_script` tokens for every local socket client.
+2. **Interim `/usr/bin/osascript` dialog (default off; enabled only when
+   `CODEWHALE_CU_NATIVE_PROMPT=1` is set in the server environment).** Used
+   only when explicitly opted in for decisions without the helper panel. It is
+   a plugin-session gate, not an OS boundary.
+
+Limits:
+
+- **Not shown to a person yet.** Both the helper panel (`app/macos/consent-panel.h`)
+  and the `osascript` dialog were checked against injected runners, fake helpers
+  and an ad-hoc universal compilation of the launcher; neither the panel nor the
+  Touch ID prompt has been shown on a real desktop, and the installed helper in
+  `~/Applications` has not been rebuilt with Developer ID or notarized yet.
+- **Who answers is whoever sits at this Mac.** The prompt belongs to the
+  console session of the machine running the helper or MCP server. A host driven
+  remotely, or a Mac someone else is using, puts the question in front of
+  that person.
+- **What the lock and daemon stop.** Through the helper, the daemon holds the
+  authoritative session ledger, resolves the target app identity once before the
+  prompt (refusing when name, bundle id and pid disagree), refuses unapproved
+  local app calls from every socket client, refuses a second decision while one
+  is open (`consent_pending`), and enforces a 2-second quiet gap after every
+  prompt, a 10-second cooldown after a decline or timeout, and at most five
+  prompts per minute (`consent_rate_limited`). On the interim `osascript` path,
+  a shared `prompt.active` marker also causes other plugin sessions sharing the
+  state dir to refuse input aimed at `osascript` or `System Events` while a
+  dialog is open.
+- **What the interim `osascript` dialog does not stop.** Another non-plugin
+  process, or a model with a shell and Accessibility (scripting System Events,
+  `cliclick`, its own `osascript`), can still click an `osascript` button; that
+  is why the `osascript` path is off by default and why the helper panel gates
+  Allow behind `LAPolicyDeviceOwnerAuthentication`.
+- **The prompt shows what the model sent.** App names and bundle ids are
+  cleaned of control, format and separator characters, quoted and cut, and
+  `app_script` source is checked against the script policy first, rendered with
+  visible `\uXXXX` escapes for format characters, and refused (`script_too_long`)
+  above 600 characters before any prompt opens.
+- **`remember:true` does not persist an allow here.** A lasting allow must be
+  signed with the Codewhale host's ledger key, which this path never has, so
+  every new session asks again. A deny with `remember:true` still persists, and
+  revoking an allow narrows access without opening a prompt.
+- **Codewhale and elicitation keep precedence.** A host that sent the decision
+  key never gets the native prompt, even for an unattested call; a client that
+  advertises elicitation keeps its own prompt. Batches (`run_actions`) and
+  trajectory replays still refuse decisions without asking.
+
 ## Many live MCP sessions (0.12.1)
 
 The host decides how many server processes run and when they end. The plugin
@@ -98,8 +156,9 @@ gap in the user's hardware input. What neither is:
   relatives need a per-call user confirmation. A coordinate click is matched
   against the latest observation only; a control never observed, a label in
   another language, or an unlabelled icon is not recognized. The prompt that
-  confirms it is the host's `consent` approval card, so the host must never
-  auto-approve `consent allow`.
+  confirms it is the host's `consent` approval card (on macOS under a host
+  without one, the native dialog), so the host must never auto-approve
+  `consent allow`.
 - **Trajectories redact entered text.** Typed text, set values and clipboard
   writes are stored as `[redacted]` (the plugin cannot tell a password field
   from any other), and those steps are not replayable. Other arguments,

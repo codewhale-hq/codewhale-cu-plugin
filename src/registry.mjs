@@ -91,8 +91,8 @@ export function switchTo(id) {
   return c;
 }
 
-/** Register or update a computer. Returns the entry. */
-export function register({ id, transport, label, ...rest }) {
+/** Throw the RegistryError that register would raise for this entry, saving nothing. */
+export function validateEntry({ id, transport, ...rest }) {
   if (!id || !ID_RE.test(id)) throw new RegistryError("invalid_id", "computer id must match " + ID_RE);
   if (!["local", "ssh", "hdc", "docker"].includes(transport)) {
     throw new RegistryError("invalid_transport", "transport must be one of: local, ssh, hdc, docker");
@@ -103,7 +103,6 @@ export function register({ id, transport, label, ...rest }) {
   if (!knownPlatform(rest.platform) || !knownPlatform(rest.platformHint)) {
     throw new RegistryError("invalid_platform", `platform must be one of: ${PLATFORMS.join(", ")}`);
   }
-  if (transport !== "docker") { delete rest.owned; delete rest.spawnedBy; }
   if (transport === "ssh") {
     try {
       validateSshTarget(rest);
@@ -111,19 +110,21 @@ export function register({ id, transport, label, ...rest }) {
       throw new RegistryError(e.code ?? "invalid_host", e.message);
     }
   }
-  if (transport === "hdc") {
-    if (rest.target != null && !/^[A-Za-z0-9._-]*$/.test(rest.target)) {
-      throw new RegistryError("invalid_target", "hdc target key contains invalid characters");
-    }
-    rest.platform = "harmonyos";
+  if (transport === "hdc" && rest.target != null && !/^[A-Za-z0-9._-]*$/.test(rest.target)) {
+    throw new RegistryError("invalid_target", "hdc target key contains invalid characters");
   }
-  if (transport === "docker") {
-    if (!rest.container || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(rest.container)) {
-      throw new RegistryError("invalid_container", "docker computers need a valid container name");
-    }
-    // Spawned containers always run the Linux desktop image.
-    rest.platform = rest.platform ?? "linux";
+  if (transport === "docker" && (!rest.container || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(rest.container))) {
+    throw new RegistryError("invalid_container", "docker computers need a valid container name");
   }
+}
+
+/** Register or update a computer. Returns the entry. */
+export function register({ id, transport, label, ...rest }) {
+  validateEntry({ id, transport, ...rest });
+  if (transport !== "docker") { delete rest.owned; delete rest.spawnedBy; }
+  if (transport === "hdc") rest.platform = "harmonyos";
+  // Spawned containers always run the Linux desktop image.
+  if (transport === "docker") rest.platform = rest.platform ?? "linux";
   const reg = load();
   const prev = reg.computers[id];
   reg.computers[id] = {

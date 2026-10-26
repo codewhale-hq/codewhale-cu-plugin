@@ -6,8 +6,11 @@ Access, and that the reason is structural rather than a missing branch. The
 Engine since lets Full Access ask for a consent decision (its commit
 `ad697b35f5`, 2026-10-22); the four-layer split in sections 4 to 7, a
 host-owned grant store and a `/plugin permissions` view are not built. The
-plugin side is unchanged: it still verifies a host attestation or a client
-elicitation before it records an allow.
+plugin side still verifies a host attestation or a client elicitation before
+it records an allow; since 0.12.1, on macOS under a host with neither, the
+helper app shows a Touch ID / password approval panel and enforces allows in
+its daemon (or, when `CODEWHALE_CU_NATIVE_PROMPT=1` is set without the helper,
+asks with an interim `osascript` dialog; see `docs/LIMITATIONS.md`).
 
 ## 1. The finding, in one paragraph
 

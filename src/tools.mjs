@@ -101,7 +101,7 @@ export const TOOLS = [
   },
   {
     name: "consent",
-    description: "Per-app consent on the local computer. Any call that targets an app — open_application, an app_ref, an element, or an action on the bound app — refuses consent_required until the user decides; record their answer here. action status | allow | deny | revoke. app is a name or bundle id (or pid:/number for a pid); App approval also covers explicit foreground selection (open_application activate:true); scope 'foreground' is an optional computer-wide override and a recorded denial still blocks it. Decisions apply to this session; remember:true persists them.",
+    description: "Per-app consent on the local computer. Any call that targets an app — open_application, an app_ref, an element, or an action on the bound app — refuses consent_required until the user decides; record their answer here. action status | allow | deny | revoke. On macOS the person answers allow requests in the Codewhale Computer Use approval panel with Touch ID or their login password. app is a name or bundle id (or pid:/number for a pid); App approval also covers explicit foreground selection (open_application activate:true); scope 'foreground' is an optional computer-wide override and a recorded denial still blocks it. Decisions apply to this session; remember:true persists them when the host signs the ledger.",
     inputSchema: {
       type: "object",
       required: ["action"],

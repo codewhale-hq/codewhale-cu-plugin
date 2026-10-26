@@ -2,6 +2,19 @@
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { runOk, withSignal } from "../../src/exec.mjs";
+import * as consent from "../../src/consent.mjs";
+
+const FIXTURE_APPS = [
+  "Practice", "Reopened", "Lease owner", "Re-leased owner", "Editor A", "Editor B",
+  "Open", "Visible", "Cancelled queue", "Host A", "Host B", "Stopped host",
+  "Local host A", "Retiring alias owner", "Alias retirement survivor",
+  "Killed idle host", "Surviving host", "Killed active host",
+  "Survivor", "Survivor again", "Disconnected host", "Revived",
+];
+for (const name of FIXTURE_APPS) {
+  consent.record("local", consent.appKeys({ name }), "allow", { remember: false, name });
+}
+consent.record("local", ["pid:100"], "allow", { remember: false, name: "Practice" });
 
 export function create() {
   const instance = crypto.randomUUID();
@@ -11,6 +24,7 @@ export function create() {
   const record = (method, extra = {}) => fs.appendFileSync(log, JSON.stringify({ instance, method, appName, at: Date.now(), ...extra }) + "\n");
   return {
     async probe() { return { ready: true }; },
+    async list_apps() { return [{ name: appName ?? "Practice", pid: 100, frontmost: true }]; },
     async input_owner() { return null; },
     async get_app_state({ app_ref }) {
       appName = app_ref?.name;

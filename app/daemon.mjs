@@ -17,7 +17,7 @@ import fs from "node:fs";
 import net from "node:net";
 import crypto from "node:crypto";
 import path from "node:path";
-import { handle, closeSession, closeAllSessions, releaseSessionInput, reopenSession, ALLOWED, controlStatus, setControlMode, summarizeSessions } from "../src/app-handler.mjs";
+import { handle, closeSession, closeAllSessions, releaseSessionInput, reopenSession, ALLOWED, controlStatus, setControlMode, summarizeSessions, createConsentController } from "../src/app-handler.mjs";
 import { runBackgroundCheck } from "./background-check.mjs";
 import { checkForUpdate, prepareUpdate, restartWithUpdate, readUpdateResult } from "./updates.mjs";
 import { APP_ID, APP_NAME, APP_VERSION, PLUGIN_ROOT, socketPath, runInfoPath, writeRegistration, defaultLaunch, hello, runtimeFingerprint } from "../src/app-socket.mjs";
@@ -26,12 +26,14 @@ import { stateDir } from "../src/registry.mjs";
 const startedAt = new Date().toISOString();
 const bundle = process.env.CODEWHALE_CU_APP_BUNDLE || null;
 let controlOwner = false;
+let notifyControlState = () => {};
+const consentController = createConsentController({ onStateChange: () => notifyControlState() });
 const log = (msg) => process.stderr.write(`${new Date().toISOString()} ${APP_NAME}: ${msg}\n`);
 let build = null;
 try { build = runtimeFingerprint(); } catch (error) { log(`could not fingerprint the runtime: ${error.message}`); }
 
 function appInfo() {
-  return { id: APP_ID, name: APP_NAME, version: APP_VERSION, build, pluginRoot: PLUGIN_ROOT, sessionProtocol: 2, backgroundProtocol: 1, controlProtocol: 1, controlOwner, pid: process.pid, platform: process.platform, node: process.version, bundle, startedAt, socket: socketPath() };
+  return { id: APP_ID, name: APP_NAME, version: APP_VERSION, build, pluginRoot: PLUGIN_ROOT, sessionProtocol: 2, backgroundProtocol: 1, controlProtocol: 2, consentProtocol: consentController.helperConsent ? 1 : 0, controlOwner, pid: process.pid, platform: process.platform, node: process.version, bundle, startedAt, socket: socketPath() };
 }
 
 if (await hello({ timeoutMs: 1_500 })) {
@@ -81,11 +83,13 @@ if (process.env.CODEWHALE_CU_CONTROL_FD === "3") {
   let input = "";
   control.setEncoding("utf8");
   const status = () => ({ ...controlStatus(), version: APP_VERSION, checking, backgroundCheck, error: controlError,
+    consent: consentController.activePromptPayload(),
     update: update ? { available: update.available, version: update.version, message: update.message, busy: updating } : null });
   const send = (id, error) => {
     if (error) controlError = String(error.message ?? error).slice(0, 400);
     if (!control.destroyed) control.write(JSON.stringify({ id, ...status() }) + "\n");
   };
+  notifyControlState = () => send(undefined);
   control.on("data", chunk => {
     input += chunk;
     if (input.length > 8192) { control.destroy(); return; }
@@ -95,6 +99,14 @@ if (process.env.CODEWHALE_CU_CONTROL_FD === "3") {
       let request;
       try { request = JSON.parse(line); } catch { continue; }
       const { id, command } = request;
+      const c = consentController.handleControlMessage(request);
+      if (c.handled) {
+        if (command === "capabilities") {
+          try { if (fs.existsSync(runInfoPath())) fs.writeFileSync(runInfoPath(), JSON.stringify(appInfo(), null, 2) + "\n"); } catch {}
+        }
+        if (c.sendStatus) send(id);
+        continue;
+      }
       if (command === "status") send(id);
       else if (["pause", "resume", "stop"].includes(command)) {
         const mode = { pause: "paused", resume: "ready", stop: "stopped" }[command];
@@ -164,6 +176,9 @@ async function serve(conn) {
         if (shuttingDown) reply = { ok: false, error: { code: "app_shutting_down", message: "Computer Use helper is shutting down" } };
         else if (req?.tool === "hello") reply = { ok: true, app: appInfo() };
         else if (req?.tool === "platform") reply = await handle(req);
+        else if (req?.tool === "consent_request") reply = await consentController.request(req, { signal: controller.signal });
+        else if (req?.tool === "consent_deny") reply = consentController.deny(req);
+        else if (req?.tool === "consent_revoke") reply = consentController.revoke(req);
         else if (!ALLOWED.has(req?.tool) && !["open_session", "close_session", "release_session_input"].includes(req?.tool)) reply = await handle(req);
         else if (typeof req?.sessionId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(req.sessionId)) {
           reply = { ok: false, error: { code: "session_required", message: "Update the MCP server: every computer request must carry its session identity." } };

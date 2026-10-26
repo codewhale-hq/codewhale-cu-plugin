@@ -352,6 +352,31 @@ computers are exempt (a task-owned desktop holds nothing of the user's);
 remote computers are covered by their transport's trust; `app_script` keeps
 macOS's own Automation consent.
 
+Recording an allow, confirming an irreversible action, running `app_script`,
+and registering or spawning a computer are the user's own decisions, never a
+model call (`consent {action:"revoke"}` narrows access without a prompt). The
+Codewhale host attests each one the user approved on its card; another host can
+ask through MCP elicitation. On macOS, under a host with neither (Claude
+Desktop, for example), when the Computer Use helper is running
+(`consentProtocol: 1`), `consent {action:"allow"}` and `app_script` on `local`
+open a helper-owned approval panel where Allow requires Touch ID or the user's
+login password and Deny needs no authentication; the helper's daemon enforces
+app allows and single-use `app_script` approvals for every local socket client.
+An interim `/usr/bin/osascript` dialog for hosts without the helper is off by
+default and runs only when `CODEWHALE_CU_NATIVE_PROMPT=1` is set in the server
+environment. While a prompt is open, every other tool call this server would
+run refuses `consent_pending` (and a second decision that arrives while one is
+open is refused rather than queued), except `stop_computer_control`, which
+cancels the prompt, and `consent {action:"status"}` and plain `list_apps`. A
+2-second quiet gap separates consecutive prompts, a decline or timeout silences
+prompts for 10 seconds, and at most five open per minute
+(`consent_rate_limited`). Without the Codewhale host's ledger key an allow
+cannot persist, so `remember:true` lasts this session there and the prompt says
+so. Off macOS without elicitation, and unattested under the Codewhale host,
+such a call refuses `consent_needs_user`. See
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md) for verification limits and what the
+interim dialog does not stop.
+
 In explicitly selected foreground mode for an approved app, whenever a shared surface is taken —
 a front lease for window-record input,
 a real-pointer gesture, foreground keys, or an activation — the helper waits

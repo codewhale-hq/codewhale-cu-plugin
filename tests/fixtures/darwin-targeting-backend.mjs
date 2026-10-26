@@ -10,6 +10,14 @@ export function create() {
   return createDarwin({exec:{async run(cmd,args,opts) {
     assert.equal(cmd,path.join(process.env.CODEWHALE_CU_APP_BUNDLE,'Contents','MacOS','accessibility'));
     const request=JSON.parse(args[0]);
+    if(request.tool==='list_apps') {
+      return {code:0,stderr:'',stdout:JSON.stringify({apps:[
+        {pid:999,name:'Front',bundle_id:'test.front',frontmost:true},
+        {pid:123,name:'Fixture',bundle_id:'test.fixture'},
+        {pid:200,name:'Twin',bundle_id:'test.twin'},
+        {pid:201,name:'Twin',bundle_id:'test.twin'},
+      ]})};
+    }
     assert.ok(['list_windows','get_app_state','resolve_element','window_info'].includes(request.tool));
     fs.appendFileSync(process.env.CU_TARGETING_CALLS,JSON.stringify(request)+'\n');
     if(process.env.CU_TARGETING_NATIVE==='1') return run(cmd,args,opts);

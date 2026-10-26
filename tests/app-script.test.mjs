@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import url from "node:url";
 import { spawn } from "node:child_process";
-import { handle } from "../src/app-handler.mjs";
+import { handle, issueAppScriptToken } from "../src/app-handler.mjs";
 
 const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
 
@@ -108,7 +108,8 @@ test("the remote agent refuses app_script at its own boundary", async () => {
 });
 
 test("the local handler runs app_script through the normal session machinery", { skip: process.platform !== "darwin" }, async () => {
-  const r = await handle({ tool: "app_script", args: { script: 'return "via handler"' } }, { computerId: "local", sessionId: "test-script" });
+  const approvalToken = issueAppScriptToken(undefined, 'return "via handler"');
+  const r = await handle({ tool: "app_script", args: { script: 'return "via handler"', approvalToken } }, { computerId: "local", sessionId: "test-script" });
   assert.equal(r.ok, true);
   assert.equal(r.tool, "app_script");
   assert.equal(r.data.result, "via handler");
