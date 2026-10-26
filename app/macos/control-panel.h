@@ -145,11 +145,11 @@ static NSView *cuSeparator(void) {
   NSStackView *head=cuStack(@[icon,cuStack(@[cuLabel(@"Computer Use",20,NSFontWeightSemibold),byline],NSUserInterfaceLayoutOrientationVertical,3)],NSUserInterfaceLayoutOrientationHorizontal,14);
 
   NSTextField *access; NSButton *accessButton;
-  NSView *ax=[self permissionRow:@"Accessibility" detail:@"Read controls and send input to the app you choose." status:&access button:&accessButton action:@selector(openAccessibility:)]; self.accessStatus=access; self.accessButton=accessButton;
+  NSView *ax=[self permissionRow:@"Accessibility" detail:@"Lets your agent read app controls and interact with them." status:&access button:&accessButton action:@selector(openAccessibility:)]; self.accessStatus=access; self.accessButton=accessButton;
   NSTextField *screen; NSButton *screenButton;
   NSView *sc=[self permissionRow:@"Screen Recording" detail:@"Capture the selected app when the task needs an image." status:&screen button:&screenButton action:@selector(openScreen:)]; self.screenStatus=screen; self.screenButton=screenButton;
   self.checkButton=cuButton(@"Run background check",self,@selector(check:));
-  self.checkResult=cuLabel(@"Check whether app control works without moving your pointer.",12,NSFontWeightRegular);
+  self.checkResult=cuLabel(@"Uses a practice window to check background control. Available when no apps are connected.",12,NSFontWeightRegular);
   self.checkResult.textColor=NSColor.secondaryLabelColor;
   self.setupSection=cuStack(@[cuLabel(@"Mac permissions",15,NSFontWeightSemibold),ax,sc],NSUserInterfaceLayoutOrientationVertical,14);
   self.activity=cuLabel(@"Connecting to helper…",15,NSFontWeightSemibold);
@@ -166,9 +166,9 @@ static NSView *cuSeparator(void) {
   self.hostsHeight=[hostsScroll.heightAnchor constraintEqualToConstant:40]; self.hostsHeight.active=YES;
   [hostsScroll.widthAnchor constraintEqualToConstant:432].active=YES;
   self.trustError=cuLabel(@"",12,NSFontWeightRegular); self.trustError.textColor=NSColor.systemRedColor;
-  NSTextField *trustDetail=cuLabel(@"These connections can use your Mac until you turn off access.",12,NSFontWeightRegular); trustDetail.textColor=NSColor.secondaryLabelColor;
-  self.historyButton=[NSButton checkboxWithTitle:@"Show previous connections" target:self action:@selector(showHistory:)];
-  NSStackView *hosts=cuStack(@[cuLabel(@"Remembered access",15,NSFontWeightSemibold),trustDetail,hostsScroll,self.historyButton],NSUserInterfaceLayoutOrientationVertical,10);
+  NSTextField *trustDetail=cuLabel(@"Trust applies to this host across chats, models and apps. Turn it off to stop its access; turning it back on requires Touch ID or your Mac password.",12,NSFontWeightRegular); trustDetail.textColor=NSColor.secondaryLabelColor;
+  self.historyButton=[NSButton checkboxWithTitle:@"Show connections with access turned off" target:self action:@selector(showHistory:)];
+  NSStackView *hosts=cuStack(@[cuLabel(@"Trusted hosts",15,NSFontWeightSemibold),trustDetail,hostsScroll,self.historyButton],NSUserInterfaceLayoutOrientationVertical,10);
   NSString *version=[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]?:@"";
   NSTextField *versionLabel=cuLabel([@"Version " stringByAppendingString:version],11,NSFontWeightRegular); versionLabel.textColor=NSColor.secondaryLabelColor;
   NSButton *help=cuButton(@"Help",self,@selector(help:)); self.updateButton=cuButton(@"Check for updates…",self,@selector(updates:));
@@ -205,11 +205,11 @@ static NSView *cuSeparator(void) {
 - (void)windowWillClose:(NSNotification *)notification { [self.timer invalidate]; self.timer=nil; [self.trustAuthContext invalidate]; self.trustAuthContext=nil; }
 - (void)menuWillOpen:(NSMenu *)menu { cuSend(@"status"); }
 - (void)openAccessibility:(id)sender {
-  NSDictionary *options=@{(__bridge NSString *)kAXTrustedCheckOptionPrompt:@YES}; AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+  NSDictionary *options=@{(__bridge NSString *)kAXTrustedCheckOptionPrompt:@YES}; if(!AXIsProcessTrusted()) AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
   [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]];
 }
 - (void)openScreen:(id)sender {
-  CGRequestScreenCaptureAccess();
+  if(!CGPreflightScreenCaptureAccess()) CGRequestScreenCaptureAccess();
   [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"]];
 }
 - (void)pause:(id)sender { cuSend([self.state[@"mode"] isEqual:@"ready"]?@"pause":@"resume"); }
@@ -224,34 +224,35 @@ static NSView *cuSeparator(void) {
   NSDictionary *snapshot=cuTrustSnapshot();
   BOOL showHistory=self.historyButton.state==NSControlStateValueOn;
   NSArray *records=[(cuHostTrustRecords?:@[]) filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *record, NSDictionary *bindings) { return showHistory || [record[@"decision"] isEqual:@"allow"]; }]];
-  NSDictionary *viewState=@{@"snapshot":snapshot,@"records":records,@"authenticating":@(self.trustAuthContext!=nil),@"actionError":self.trustActionError?:@""};
+  NSDictionary *viewState=@{@"snapshot":snapshot,@"records":records,@"authenticating":@(self.trustAuthContext!=nil),@"actionError":self.trustActionError?:@"",@"connected":@(cuControlFD>=0)};
   if([self.renderedHosts isEqual:viewState]) return;
   self.renderedHosts=viewState;
   for(NSView *row in [[self.hostRows.arrangedSubviews copy] autorelease]) { [self.hostRows removeArrangedSubview:row]; [row removeFromSuperview]; }
   if(!records.count) {
-    NSTextField *empty=cuLabel(@"No saved access.\nYour agent will ask when it needs to use this Mac.",12,NSFontWeightRegular);
+    NSTextField *empty=cuLabel(@"No trusted hosts.\nYour agent will ask the first time it needs to use this Mac.",12,NSFontWeightRegular);
     [empty.widthAnchor constraintEqualToConstant:412].active=YES;
     [empty.heightAnchor constraintGreaterThanOrEqualToConstant:36].active=YES;
     [self.hostRows addArrangedSubview:empty];
   }
   for(NSDictionary *record in records) {
     NSString *key=record[@"publicKey"]; BOOL revoked=[record[@"decision"] isEqual:@"revoked"];
-    NSString *status=snapshot[@"error"]?@"Access unavailable":revoked?@"Access off":@"Access allowed";
+    NSString *status=snapshot[@"error"]?@"Access unavailable":revoked?@"Access off":@"Trusted until turned off";
     NSString *detail=[record[@"exclusions"] count]?[NSString stringWithFormat:@"%@ · %lu app exceptions",status,(unsigned long)[record[@"exclusions"] count]]:status;
     NSUInteger matches=0;
     for(NSDictionary *other in records) if([other[@"label"] isEqual:record[@"label"]]) matches++;
     if(matches>1) detail=[detail stringByAppendingFormat:@" · ID %@",[key substringWithRange:NSMakeRange(44,12)]];
     NSTextField *description=cuLabel(detail,11,NSFontWeightRegular); description.textColor=NSColor.secondaryLabelColor; description.toolTip=[@"Connection identity: " stringByAppendingString:key];
     NSStackView *text=cuStack(@[cuLabel(record[@"label"],13,NSFontWeightMedium),description],NSUserInterfaceLayoutOrientationVertical,3);
-    [text.widthAnchor constraintEqualToConstant:310].active=YES;
+    [text.widthAnchor constraintEqualToConstant:360].active=YES;
     for(NSView *label in text.arrangedSubviews) [label.widthAnchor constraintEqualToAnchor:text.widthAnchor].active=YES;
-    NSButton *button=cuButton(revoked?@"Allow again…":@"Turn off",self,revoked?@selector(allowHost:):@selector(revokeHost:));
-    button.identifier=key; button.hasDestructiveAction=!revoked; button.enabled=self.trustAuthContext==nil || !revoked;
-    button.accessibilityLabel=[NSString stringWithFormat:@"%@ %@, key %@",revoked?@"Allow again":@"Turn off access for",record[@"label"],[key substringWithRange:NSMakeRange(44,12)]];
-    [button.widthAnchor constraintEqualToConstant:94].active=YES;
+    NSSwitch *button=[NSSwitch new]; button.target=self; button.action=@selector(toggleHost:);
+    button.identifier=key; button.state=revoked?NSControlStateValueOff:NSControlStateValueOn;
+    button.enabled=!snapshot[@"error"] && (self.trustAuthContext==nil || !revoked) && cuControlFD>=0;
+    button.accessibilityLabel=[NSString stringWithFormat:@"Allow %@ to use this Mac",record[@"label"]];
+    button.toolTip=revoked?@"Turn on access with Touch ID or your Mac password.":@"Turn off this host’s access immediately.";
     NSStackView *row=cuStack(@[text,button],NSUserInterfaceLayoutOrientationHorizontal,8); [row.widthAnchor constraintEqualToConstant:412].active=YES;
     if(!revoked && [record[@"exclusions"] count]) {
-      NSButton *all=cuButton(@"Allow all apps…",self,@selector(allowHost:)); all.identifier=key; all.tag=1; all.enabled=self.trustAuthContext==nil;
+      NSButton *all=cuButton(@"Remove app restrictions…",self,@selector(allowHost:)); all.identifier=key; all.tag=1; all.enabled=self.trustAuthContext==nil && !snapshot[@"error"] && cuControlFD>=0;
       all.toolTip=@"Remove this host’s saved app and foreground exclusions after Touch ID or your Mac password.";
       all.accessibilityLabel=[NSString stringWithFormat:@"Allow all apps for %@, key %@, removing app and foreground exclusions",record[@"label"],[key substringWithRange:NSMakeRange(44,12)]];
       [self.hostRows addArrangedSubview:cuStack(@[row,all],NSUserInterfaceLayoutOrientationVertical,6)];
@@ -262,7 +263,12 @@ static NSView *cuSeparator(void) {
   CGFloat height=MAX(24,self.hostRows.fittingSize.height);
   self.hostRows.frame=NSMakeRect(0,0,412,height); self.hostsHeight.constant=MIN(180,height);
 }
-- (void)revokeHost:(NSButton *)sender {
+- (void)toggleHost:(NSSwitch *)sender {
+  BOOL enabling=sender.state==NSControlStateValueOn;
+  sender.state=enabling?NSControlStateValueOff:NSControlStateValueOn;
+  if(enabling) [self allowHost:sender]; else [self revokeHost:sender];
+}
+- (void)revokeHost:(NSControl *)sender {
   [self.trustAuthContext invalidate]; self.trustAuthContext=nil; self.trustActionError=nil;
   if(cuHostTrustPublicKey(sender.identifier)) {
     cuSendJSON(@{@"command":@"revoke_host",@"publicKey":sender.identifier});
@@ -270,7 +276,7 @@ static NSView *cuSeparator(void) {
   }
   cuRevokeHost(sender.identifier); cuSendJSON(cuTrustSnapshot()); cuSend(@"status"); [self renderHosts];
 }
-- (void)allowHost:(NSButton *)sender {
+- (void)allowHost:(NSControl *)sender {
   if(self.trustAuthContext) return;
   BOOL clearExclusions=sender.tag==1;
   NSDictionary *selected=nil;
@@ -316,7 +322,7 @@ static NSView *cuSeparator(void) {
   self.item.button.toolTip=[NSString stringWithFormat:@"Computer Use — %@",self.activity.stringValue];
   BOOL checking=[state[@"checking"] boolValue];
   self.checkButton.title=checking?@"Checking…":@"Run background check";
-  self.checkButton.enabled=AXIsProcessTrusted() && CGPreflightScreenCaptureAccess() && ready && !checking && !running;
+  self.checkButton.enabled=AXIsProcessTrusted() && CGPreflightScreenCaptureAccess() && ready && !checking && !pending && !waiting && sessions.count==0;
   if([state[@"backgroundCheck"] isKindOfClass:NSDictionary.class]) self.checkResult.stringValue=state[@"backgroundCheck"][@"message"]?:@"Check finished.";
   self.errorLabel.stringValue=[state[@"error"] isKindOfClass:NSString.class]?state[@"error"]:@"";
   self.errorLabel.hidden=self.errorLabel.stringValue.length==0;
@@ -348,7 +354,7 @@ static NSView *cuSeparator(void) {
   if(cuControlFD<0) return;
   char bytes[4096]; ssize_t count;
   while((count=read(cuControlFD,bytes,sizeof bytes))>0) [cuControlBuffer appendBytes:bytes length:(NSUInteger)count];
-  if(count==0) { cuControlFD=-1; if(cuControlWriter) { if(cuControlWriterSuspended) { cuControlWriterSuspended=NO; dispatch_resume(cuControlWriter); } dispatch_source_cancel(cuControlWriter); cuControlWriter=NULL; } dispatch_source_cancel(cuControlReader); [self.trustAuthContext invalidate]; self.trustAuthContext=nil; [self.consent withdraw]; [self.sessionPill invalidate]; self.activity.stringValue=@"Helper disconnected"; self.targets.stringValue=@"Quit and reopen Computer Use to reconnect."; self.pauseButton.enabled=NO; self.stopButton.enabled=NO; self.checkButton.enabled=NO; return; }
+  if(count==0) { cuControlFD=-1; if(cuControlWriter) { if(cuControlWriterSuspended) { cuControlWriterSuspended=NO; dispatch_resume(cuControlWriter); } dispatch_source_cancel(cuControlWriter); cuControlWriter=NULL; } dispatch_source_cancel(cuControlReader); [self.trustAuthContext invalidate]; self.trustAuthContext=nil; [self.consent withdraw]; [self.sessionPill invalidate]; self.activity.stringValue=@"Helper disconnected"; self.targets.stringValue=@"Quit and reopen Computer Use to reconnect."; self.pauseButton.enabled=NO; self.stopButton.enabled=NO; self.checkButton.enabled=NO; self.pauseItem.enabled=NO; self.stopItem.enabled=NO; self.updateButton.enabled=NO; [self renderHosts]; return; }
   if(cuControlBuffer.length>262144) { [cuControlBuffer setLength:0]; shutdown(cuControlFD,SHUT_RDWR); return; }
   while(YES) {
     const char *start=cuControlBuffer.bytes; const char *end=memchr(start,'\n',cuControlBuffer.length); if(!end) break;
