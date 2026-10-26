@@ -543,7 +543,8 @@ test('background pointer fallbacks refuse without dispatch or moving focus', asy
 
 test('background web value replacement refuses before focusing or selecting text', async t => {
   const {backend,calls}=stubBackend(t,r=>r.tool==='set_value'?{nativeResult:{code:1,stderr:'web area refuses direct AXValue'}}:null);
-  await assert.rejects(backend.set_value({target:{type:'element',index:1},value:'replacement'}),{code:'background_focus_required'});
+  await backend.open_application({name:'Fixture'});
+  await assert.rejects(backend.set_value({target:{type:'element',app_ref:{pid:321},windowIndex:0,path:[1],role:'AXTextField'},value:'replacement'}),{code:'background_focus_required'});
   assert.ok(!calls.some(c=>['focus_element','bg_key','type'].includes(c.tool)));
 });
 

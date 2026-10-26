@@ -303,6 +303,7 @@ export function create({ exec }) {
       const last = [...(args.steps ?? [])].reverse().find((s) => Number.isFinite(s?.x) && Number.isFinite(s?.y));
       if (last) state.pointer = { x: last.x, y: last.y };
     }
+    if (args.observed_window && (await native("input_capabilities"))?.observed_window_input !== 1) throw Object.assign(new ExecError("Update Computer Use before acting on a captured window; this helper cannot preserve its identity"), { code: "app_upgrade_required" });
     const helper = await nativeHelper();
     const r = await runL(helper, [JSON.stringify({ tool, args: { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, owner_pipe: true } })], { timeoutMs: 20_000, ownerPipe: true });
     if (r.aborted || r.timedOut || r.code !== 0) {
@@ -320,6 +321,10 @@ export function create({ exec }) {
     if (tool === "get_app_state" || tool === "window_info") assertNotPrompt(result);
     const interference = leaseVerdict(result);
     if (interference !== null) result.user_input_during_lease = interference;
+    if (interference === true && result.action_sent) {
+      result.verified = false;
+      result.verification_required = "observation";
+    }
     if (state.previewEnabled && state.inputApp && ["type", "key_event", "bg_pointer", "bg_key", "set_value", "select_text", "perform_action", "hit_test", "click_element", "scroll_element", "focus_element"].includes(tool)) {
       previewActiveAt = Date.now();
       try { await updatePreview(); } catch (error) { result.preview_error = error.message; }
@@ -373,14 +378,6 @@ export function create({ exec }) {
   }
 
   // ---------- pointer input ----------
-  // Our qualified raw pointer path uses the shared event tap, which moves
-  // the user's real cursor. Process/window-directed mouse delivery has not
-  // passed the independent fixture. So the pointer path is:
-  //   1. accessibility action on the element under the point (quiet, exact),
-  //   2. otherwise refuse in background mode. Explicit foreground control
-  //      permits a global gesture only when the bound application owns the
-  //      window under the point. Restoring the cursor is not isolation.
-  // Every receipt says which of the two happened.
   function mouseName(button) { return { left: "left", right: "right", middle: "middle" }[button] ?? "left"; }
 
   function assertInScreen(x, y) {
@@ -388,6 +385,14 @@ export function create({ exec }) {
   }
 
   function buttonCode(button) { return button === "middle" ? 2 : button === "right" ? 1 : 0; }
+
+  function pointerBinding(target) {
+    if (target?.coordinate_space !== "raster") return target?.type === "element" ? { target } : {};
+    const observed = state.lastRaster?.observed_window;
+    if (state.lastRaster && !state.lastRaster.app_ref) return {};
+    if (!observed || observed.pid !== state.inputApp?.pid) throw new ExecError("raster has no window identity for the bound application — capture its window again");
+    return { observed_window: observed };
+  }
 
   /**
    * Every pointer gesture — click, hover, drag, wheel — goes to a window of the
@@ -397,13 +402,14 @@ export function create({ exec }) {
    * records are addressed to a window id of the bound app), so a covering
    * window cannot receive them.
    */
-  async function windowPointer(steps, extra = {}) {
+  async function windowPointer(steps, extra = {}, binding = {}) {
     requireFocusControl();
     if ((await native("input_capabilities"))?.window_record !== 1) {
       throw Object.assign(new ExecError("Pointer input needs the window-routed pointer, which this helper cannot resolve; update Computer Use or use an accessibility action. The user's cursor is never used instead."), { code: "bg_dispatch_unavailable" });
     }
-    const r = await native("bg_pointer", { steps, ...extra });
+    const r = await native("bg_pointer", { steps, ...extra, ...binding });
     return { action_sent: true, strategy: "window-record", input_scope: "application-window", pointer_moved: false,
+             ...(typeof r.verified === "boolean" ? { verified: r.verified, verification_required: r.verification_required } : {}),
              front_lease: r.front_lease === true, window: r.window ?? null, ...leaseAccounting(r),
              ...(typeof r.front_restored === "boolean" ? { front_restored: r.front_restored } : {}),
              ...(r.menu_lease_held ? { menu_lease_held: true } : {}) };
@@ -427,13 +433,14 @@ export function create({ exec }) {
    * and no foreground. strategy="a11y" requires that and fails closed;
    * strategy="event" goes straight to the guarded global gesture.
    */
-  async function pointerClick(button, x, y, clicks, strategy = "auto") {
+  async function pointerClick(button, x, y, clicks, strategy = "auto", target) {
     assertInScreen(x, y);
     if (!["auto", "a11y", "event", "app"].includes(strategy)) throw new ExecError(`strategy must be auto, a11y, app or event (got ${JSON.stringify(strategy)})`);
+    const binding = pointerBinding(target);
     let a11yReason = null;
     if (strategy !== "event" && ["left", "right"].includes(button) && clicks === 1) {
       if (button === "right") await requireBackgroundActions();
-      const hit = await native("hit_test", { x, y, perform: true, ...(button === "right" ? { operation: "context" } : {}) });
+      const hit = await native("hit_test", { x, y, perform: true, ...binding, ...(button === "right" ? { operation: "context" } : {}) });
       if (hit?.action_sent) {
         return { action_sent: true, strategy: "a11y", action: hit.action, pointer_moved: false, at: { x, y }, button, clicks,
                  element: { role: hit.element?.role ?? null, label: hit.element?.label ?? null } };
@@ -448,7 +455,7 @@ export function create({ exec }) {
     // Whatever the strategy, a raw click is a window-routed record: "app" and
     // "event" only choose whether the accessibility hit-test runs first.
     const r = await windowPointer(clickSteps(button, x, y, clicks),
-      a11yReason === "web_popup_requires_real_click" ? { menu_poll_ms: 6000 } : {});
+      a11yReason === "web_popup_requires_real_click" ? { menu_poll_ms: 6000 } : {}, binding);
     return { ...r, at: { x, y }, button, clicks, ...(a11yReason ? { a11y_reason: a11yReason } : {}) };
   }
 
@@ -538,7 +545,7 @@ export function create({ exec }) {
     const scale = d?.scale ?? 1;
     state.lastRaster = {
       file,
-      ...(window ? { app_ref, window_index: window_id ?? 0 } : {}),
+      ...(window ? { app_ref, window_index: window_id ?? 0, observed_window: { id: window.window_id, pid: window.pid ?? state.inputApp?.pid, frame: window.points } } : {}),
       bytes: stat.size,
       display: disp ?? 1,
       // Region and window rasters describe that rect, not the whole display.
@@ -567,7 +574,7 @@ export function create({ exec }) {
     const out = explicitOut ?? path.join(dir, `zoom-${crypto.randomBytes(4).toString("hex")}.png`);
     await runOk("sips", ["-s", "format", "png", "-c", String(Math.round(h)), String(Math.round(w)), "--cropOffset", String(Math.round(y)), String(Math.round(x)), src, "--out", out], { timeoutMs: 15_000 });
     const parent = state.lastRaster;
-    state.lastRaster = { file: out, bytes: fs.statSync(out).size, source: src, region,
+    state.lastRaster = { ...parent, file: out, bytes: fs.statSync(out).size, source: src, region,
       points: { x: (parent.points?.x ?? 0) + x / parent.scale, y: (parent.points?.y ?? 0) + y / parent.scale, w: w / parent.scale, h: h / parent.scale },
       pixels: { w, h }, scale: parent.scale, capturedAt: new Date().toISOString() };
     return state.lastRaster;
@@ -1002,7 +1009,7 @@ export function create({ exec }) {
     screenshot,
     zoom,
     left_click: async ({ target, strategy = "auto" } = {}) => {
-      if (target?.type !== "element" || strategy === "event" || strategy === "app") return pointerClick("left", target?.x, target?.y, 1, strategy);
+      if (target?.type !== "element" || strategy === "event" || strategy === "app") return pointerClick("left", target?.x, target?.y, 1, strategy, target);
       if (!["auto", "a11y"].includes(strategy)) throw new ExecError(`strategy must be auto, a11y, app or event (got ${JSON.stringify(strategy)})`);
       try {
         assertBoundElement(target);
@@ -1020,15 +1027,15 @@ export function create({ exec }) {
         throw error;
       }
     },
-    double_click: ({ target } = {}) => pointerClick("left", target?.x, target?.y, 2),
-    triple_click: ({ target } = {}) => pointerClick("left", target?.x, target?.y, 3),
+    double_click: ({ target } = {}) => pointerClick("left", target?.x, target?.y, 2, "auto", target),
+    triple_click: ({ target } = {}) => pointerClick("left", target?.x, target?.y, 3, "auto", target),
     right_click: async ({ target } = {}) => {
-      if (target?.type !== "element") return pointerClick("right", target?.x, target?.y, 1);
+      if (target?.type !== "element") return pointerClick("right", target?.x, target?.y, 1, "auto", target);
       assertBoundElement(target);
       await requireBackgroundActions();
       return native("click_element", { target, context: true });
     },
-    middle_click: ({ target } = {}) => pointerClick("middle", target?.x, target?.y, 1),
+    middle_click: ({ target } = {}) => pointerClick("middle", target?.x, target?.y, 1, "auto", target),
     // Hover moves only the Codewhale pointer: a mouse-moved record to the
     // window under it. While a button is held the point joins the drag path,
     // and the whole drag is delivered to the window on left_mouse_up.
@@ -1041,7 +1048,7 @@ export function create({ exec }) {
         return { action_sent: false, deferred: true, strategy: "window-record", at: state.pointer, pointer_moved: false,
                  note: "the button is held on the Codewhale pointer; the drag reaches the window on left_mouse_up" };
       }
-      const r = await windowPointer([{ type: MOUSE_MOVED, x: target.x, y: target.y, button: 0, clickState: 0 }]);
+      const r = await windowPointer([{ type: MOUSE_MOVED, x: target.x, y: target.y, button: 0, clickState: 0 }], {}, pointerBinding(target));
       return { ...r, at: { x: target.x, y: target.y } };
     },
     left_mouse_down: async ({ target } = {}) => {
@@ -1051,7 +1058,7 @@ export function create({ exec }) {
       if ((await native("input_capabilities"))?.window_record !== 1) {
         throw Object.assign(new ExecError("Pointer input needs the window-routed pointer, which this helper cannot resolve; update Computer Use. The user's cursor is never used instead."), { code: "bg_dispatch_unavailable" });
       }
-      state.heldDrag = { from: { x: target.x, y: target.y }, path: [], app: state.inputApp };
+      state.heldDrag = { from: { x: target.x, y: target.y }, path: [], app: state.inputApp, binding: pointerBinding(target) };
       state.pointer = { x: target.x, y: target.y };
       return { action_sent: false, deferred: true, strategy: "window-record", at: state.pointer, pointer_moved: false,
                note: "the button is held on the Codewhale pointer; the press reaches the window with the rest of the drag on left_mouse_up" };
@@ -1075,7 +1082,7 @@ export function create({ exec }) {
         last = p;
       }
       steps.push({ type: MOUSE.left.up, x: loc.x, y: loc.y, button: 0, clickState: 1, delayMs: 80 });
-      const r = await windowPointer(steps);
+      const r = await windowPointer(steps, {}, held.binding);
       state.pointer = { x: loc.x, y: loc.y };
       return { ...r, from, to: state.pointer, at: state.pointer };
     },
@@ -1090,7 +1097,7 @@ export function create({ exec }) {
         steps.push({ type: MOUSE.left.dragged, x: from.x + ((to.x - from.x) * i) / n, y: from.y + ((to.y - from.y) * i) / n, button: 0, clickState: 1, delayMs: 45 });
       }
       steps.push({ type: MOUSE.left.up, x: to.x, y: to.y, button: 0, clickState: 1, delayMs: 80 });
-      return { ...(await windowPointer(steps)), from, to };
+      return { ...(await windowPointer(steps, {}, pointerBinding(from))), from, to };
     },
     scroll: async ({ target, direction = "down", amount = 5 } = {}) => {
       assertInScreen(target?.x, target?.y);
@@ -1100,7 +1107,7 @@ export function create({ exec }) {
           assertBoundElement(target);
           return native("scroll_element", { target, direction, amount });
         }
-        const receipt = await native("hit_test", { x: target.x, y: target.y, perform: true, direction, amount,
+        const receipt = await native("hit_test", { x: target.x, y: target.y, perform: true, direction, amount, ...pointerBinding(target),
           operation: ["left", "right"].includes(direction) ? "scroll-horizontal" : "scroll-vertical" });
         if (receipt?.action_sent) return receipt;
         if ((await native("input_capabilities"))?.window_record !== 1) {
@@ -1114,7 +1121,7 @@ export function create({ exec }) {
       const notches = Math.max(1, Math.min(100, Math.round(amount)));
       const steps = [];
       for (let i = 0; i < notches; i++) steps.push({ scroll: [Math.sign(dx), Math.sign(dy)], x: target.x, y: target.y, delayMs: 15 });
-      return { ...(await windowPointer(steps)), direction, amount, verified: false, verification_required: "observation" };
+      return { ...(await windowPointer(steps, {}, pointerBinding(target))), direction, amount, verified: false, verification_required: "observation" };
     },
     type: (args = {}) => native("type", args),
     key: async ({ text, repeat = 1, target } = {}) => {
@@ -1123,13 +1130,19 @@ export function create({ exec }) {
       // Modified and window-targeted keys need a key window. Background
       // mode must never make one by borrowing the user's keyboard focus.
       if (flags !== 0 || target != null) requireFocusControl();
+      if (target != null) {
+        assertBoundElement(target);
+        if ((await native("input_capabilities"))?.targeted_keys !== 1) throw Object.assign(new ExecError("Update Computer Use before sending a key to an explicit element"), { code: "app_upgrade_required" });
+      }
       let yieldMs = 0;
+      let receipt = {};
       for (let i = 0; i < n; i++) {
-        const press = await withPressedKey(code, flags, () => {});
+        const press = target != null ? await native("bg_key", { code, flags, target }) : await withPressedKey(code, flags, () => {});
+        receipt = press ?? {};
         if (Number.isFinite(press?.yield_ms)) yieldMs = Math.max(yieldMs, press.yield_ms);
         if (i < n - 1) await wait(30);
       }
-      return { action_sent: true, key, code, keyboard_delivery: state.foregroundInput ? "foreground-guarded" : "process", repeat: n,
+      return { ...receipt, action_sent: true, key, code, keyboard_delivery: target != null ? "window-record" : state.foregroundInput ? "foreground-guarded" : "process", repeat: n,
         ...(yieldMs > 0 ? { yield_ms: yieldMs } : {}),
         ...(flags !== 0 && !state.foregroundInput ? { note: "process delivery (no focus lease was taken); menu key equivalents can be dropped without a key window. Verify the effect before retrying, or use invoke_menu for app menu commands." } : {}) };
     },
@@ -1143,29 +1156,13 @@ export function create({ exec }) {
     },
     set_value: async (args = {}) => {
       if (args.target?.type !== "element") throw new ExecError("set_value needs an element target — {type:'element',index} from get_app_state");
+      assertBoundElement(args.target);
       try {
         return await native("set_value", args);
       } catch (error) {
-        // Web text controls ignore AXValue writes, so the native side refuses
-        // before dispatch. The replacement path is focus + select-all + type
-        // with a read-back verify — the same shape kimi-cu uses, with the
-        // value proven rather than asserted.
         if (!/web area/i.test(error.message)) throw error;
-        if (args.target?.type !== "element") throw error;
         requireFocusControl();
-        const value = String(args.value ?? "");
-        await native("focus_element", { target: args.target });
-        // cmd+a through the record channel: menu key equivalents only
-        // validate against a key window, which the lease provides. bg_key
-        // posts a complete press (down and up); the `down` field is unused.
-        await native("bg_key", { code: 0, flags: 1 << 20 });
-        await new Promise((r) => setTimeout(r, 60));
-        await native("type", { text: value });
-        const back = await native("get_value", { target: args.target });
-        const verified = back?.value === value;
-        return { action_sent: true, strategy: "focus-type-replace", role: back?.role ?? null,
-                 after: back?.value ?? null, verified,
-                 ...(verified ? {} : { note: "replacement did not verify against the control's own value; observe before relying on it" }) };
+        throw Object.assign(new ExecError("Update Computer Use for literal web text replacement; the installed helper cannot preserve and verify the requested text"), { code: "app_upgrade_required" });
       }
     },
     focus: (args = {}) => native("focus_element", args),

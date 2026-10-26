@@ -119,27 +119,20 @@ static BOOL cuResolveBgPointer(void) {
   if(hs) cuGetPSN = (cuGetPSNFn)dlsym(hs, "GetProcessForPID");
   return cuGetFront && cuGetPSN && cuSetFront && cuPostRecord && cuSetWinLoc;
 }
-/** Smallest layer-0 window of pid containing p (a sheet beats its parent). */
+/** Frontmost visible layer-0 window of pid containing p. */
 static BOOL cuWindowAtPointForPid(pid_t pid, CGPoint p, uint32_t *outWin, CGRect *outFrame) {
-  NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionAll, kCGNullWindowID));
-  double bestArea = 0;
-  BOOL found = NO;
+  NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID));
   for(NSDictionary *w in windows) {
-    if([w[(__bridge NSString *)kCGWindowOwnerPID] intValue] != pid) continue;
-    if([w[(__bridge NSString *)kCGWindowLayer] intValue] != 0) continue;
+    if([w[(__bridge NSString *)kCGWindowOwnerPID] intValue] != pid || [w[(__bridge NSString *)kCGWindowLayer] intValue] != 0) continue;
     NSNumber *alpha = w[(__bridge NSString *)kCGWindowAlpha];
-    if(alpha && [alpha doubleValue] <= 0) continue;
-    CGRect b;
-    if(!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(__bridge NSString *)kCGWindowBounds], &b)) continue;
-    if(b.size.width < 1 || b.size.height < 1 || !CGRectContainsPoint(b, p)) continue;
-    double area = b.size.width * b.size.height;
-    if(!found || area < bestArea) {
-      found = YES; bestArea = area;
-      *outWin = [w[(__bridge NSString *)kCGWindowNumber] unsignedIntValue];
-      *outFrame = b;
-    }
+    if(alpha && alpha.doubleValue <= 0) continue;
+    CGRect frame;
+    if(!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(__bridge NSString *)kCGWindowBounds], &frame) || !CGRectContainsPoint(frame,p)) continue;
+    *outWin = [w[(__bridge NSString *)kCGWindowNumber] unsignedIntValue];
+    *outFrame = frame;
+    return YES;
   }
-  return found;
+  return NO;
 }
 /**
  * State for a window-routed action. Measured on macOS 26.1: the record
@@ -421,6 +414,7 @@ static void axPrepare(AXUIElementRef app);
 /** The CGWindowNumber and frame of the layer-0 window of pid whose frame matches an AX window rect. */
 static BOOL cuWindowNumberForFrame(pid_t pid, CGRect axFrame, uint32_t *outWin) {
   NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionAll, kCGNullWindowID));
+  uint32_t matched = 0;
   for(NSDictionary *w in windows) {
     if([w[(__bridge NSString *)kCGWindowOwnerPID] intValue] != pid) continue;
     if([w[(__bridge NSString *)kCGWindowLayer] intValue] != 0) continue;
@@ -428,10 +422,37 @@ static BOOL cuWindowNumberForFrame(pid_t pid, CGRect axFrame, uint32_t *outWin) 
     if(!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(__bridge NSString *)kCGWindowBounds], &b)) continue;
     if(fabs(b.origin.x - axFrame.origin.x) > 2 || fabs(b.origin.y - axFrame.origin.y) > 2) continue;
     if(fabs(b.size.width - axFrame.size.width) > 2 || fabs(b.size.height - axFrame.size.height) > 2) continue;
-    *outWin = [w[(__bridge NSString *)kCGWindowNumber] unsignedIntValue];
-    return YES;
+    if(matched) return NO;
+    matched = [w[(__bridge NSString *)kCGWindowNumber] unsignedIntValue];
   }
-  return NO;
+  if(matched) *outWin = matched;
+  return matched != 0;
+}
+static id cuResolvePathTarget(pid_t pid, NSDictionary *t);
+static void cuValidateElementIdentity(AXUIElementRef el, NSDictionary *target);
+static BOOL cuElementWindow(id element, pid_t preferPid, uint32_t *outWin, pid_t *outOwner, NSString **outRole);
+static BOOL cuObservedWindow(NSDictionary *observed, pid_t pid, CGPoint point, uint32_t *outWin, CGRect *outFrame) {
+  NSDictionary *f = observed[@"frame"];
+  CGRect expected = CGRectMake([f[@"x"] doubleValue],[f[@"y"] doubleValue],[f[@"w"] doubleValue],[f[@"h"] doubleValue]);
+  uint32_t number = [observed[@"id"] unsignedIntValue];
+  pid_t owner = 0;
+  CGRect actual = CGRectZero;
+  if([observed[@"pid"] intValue] != pid || !number || !cuWindowInfoForNumber(number,&actual,&owner) || owner != pid
+     || !CGRectEqualToRect(expected,actual) || !CGRectContainsPoint(actual,point))
+    @throw [NSException exceptionWithName:@"stale" reason:@"captured window moved, closed or changed ownership; capture it again before input; no input was sent" userInfo:nil];
+  *outWin = number;
+  *outFrame = actual;
+  return YES;
+}
+static void cuWindowChord(cuBgLease *lease, CGRect frame, CGKeyCode code, CGEventFlags flags) {
+  cuCheckCancelled();
+  for(int down = 1; down >= 0; down--) {
+    CGEventRef event = CGEventCreateKeyboardEvent(NULL,code,down);
+    CGEventSetFlags(event,flags);
+    cuPostEventRecord(lease,event,CGPointMake(frame.size.width / 2,frame.size.height / 2));
+    CFRelease(event);
+    usleep(30000);
+  }
 }
 static NSDictionary *cuBgPointer(NSRunningApplication *inputApp, NSDictionary *args) {
   if(!cuResolveBgPointer())
@@ -451,7 +472,15 @@ static NSDictionary *cuBgPointer(NSRunningApplication *inputApp, NSDictionary *a
   if(!haveAnchor) @throw [NSException exceptionWithName:@"args" reason:@"bg_pointer steps carry no point" userInfo:nil];
   uint32_t winNum = 0;
   CGRect frame = CGRectZero;
-  if(!cuWindowAtPointForPid(inputApp.processIdentifier, anchor, &winNum, &frame))
+  BOOL found = NO;
+  if(args[@"observed_window"]) found = cuObservedWindow(args[@"observed_window"],inputApp.processIdentifier,anchor,&winNum,&frame);
+  else if([args[@"target"][@"type"] isEqual:@"element"]) {
+    id el = cuResolvePathTarget(inputApp.processIdentifier,args[@"target"]);
+    if(!el) @throw [NSException exceptionWithName:@"stale" reason:@"element is no longer available; observe again" userInfo:nil];
+    cuValidateElementIdentity((__bridge AXUIElementRef)el,args[@"target"]);
+    found = cuElementWindow(el,inputApp.processIdentifier,&winNum,nil,nil) && cuWindowInfoForNumber(winNum,&frame,nil) && CGRectContainsPoint(frame,anchor);
+  } else found = cuWindowAtPointForPid(inputApp.processIdentifier,anchor,&winNum,&frame);
+  if(!found)
     @throw [NSException exceptionWithName:@"window" reason:@"no window of the bound application covers the start point; no input was sent" userInfo:nil];
   cuBgLease lease;
   NSString *why = nil;
@@ -463,6 +492,7 @@ static NSDictionary *cuBgPointer(NSRunningApplication *inputApp, NSDictionary *a
   BOOL menuLeaseHeld = NO;
   BOOL restored = YES;
   @try {
+    if(args[@"observed_window"]) cuObservedWindow(args[@"observed_window"],inputApp.processIdentifier,anchor,&winNum,&frame);
     for(NSDictionary *step in steps) {
       cuCheckCancelled();
       if([step[@"scroll"] isKindOfClass:NSArray.class]) {
@@ -1026,6 +1056,15 @@ static id cuResolvePathTarget(pid_t pid, NSDictionary *t) {
   CFRelease(appEl);
   return el;
 }
+static BOOL cuFocusTextTarget(id element) {
+  if(AXUIElementSetAttributeValue((__bridge AXUIElementRef)element,kAXFocusedAttribute,kCFBooleanTrue) != kAXErrorSuccess) return NO;
+  for(int attempt = 0; attempt < 12; attempt++) {
+    usleep(50000);
+    cuCheckCancelled();
+    if([attr((__bridge AXUIElementRef)element,@"AXFocused") boolValue]) return YES;
+  }
+  return NO;
+}
 /**
  * Type into whatever holds focus in the bound app, then prove it landed.
  * Dispatch succeeding is not delivery (a process with no text receiver drops
@@ -1038,7 +1077,7 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
   NSString *text=args[@"text"];
   if(![text isKindOfClass:NSString.class]) @throw [NSException exceptionWithName:@"text" reason:@"text must be a string" userInfo:nil];
   NSString *role=focused?attr((__bridge AXUIElementRef)focused,@"AXRole"):nil;
-  BOOL secure=[role isEqual:@"AXSecureTextField"];
+  BOOL secure=[role isEqual:@"AXSecureTextField"] || (focused && [attr((__bridge AXUIElementRef)focused,@"AXSubrole") isEqual:@"AXSecureTextField"]);
   NSString *before=nil;
   // A secure field's value is never read; it verifies as unverifiable.
   if(focused && !secure) { id v=attr((__bridge AXUIElementRef)focused,@"AXValue"); if([v isKindOfClass:NSString.class]) before=v; }
@@ -1148,6 +1187,80 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
   if(!verified) receipt[@"verification_required"]=@"screenshot";
   return receipt;
 }
+static NSDictionary *cuReplaceWebText(NSDictionary *args, NSRunningApplication *app, id element) {
+  cuRequireFocusControl(args);
+  NSString *role = attr((__bridge AXUIElementRef)element,@"AXRole");
+  NSString *value = args[@"value"];
+  if(![@[@"AXTextField",@"AXTextArea",@"AXComboBox",@"AXSearchField"] containsObject:role] || [attr((__bridge AXUIElementRef)element,@"AXSubrole") isEqual:@"AXSecureTextField"] || ![value isKindOfClass:NSString.class])
+    @throw [NSException exceptionWithName:@"value" reason:@"literal web replacement requires an ordinary text field and a string; no write was sent" userInfo:nil];
+  if(![role isEqual:@"AXTextArea"] && [value rangeOfCharacterFromSet:NSCharacterSet.newlineCharacterSet].location != NSNotFound)
+    @throw [NSException exceptionWithName:@"value" reason:@"this single-line control cannot preserve line breaks; no write was sent" userInfo:nil];
+  uint32_t number = 0;
+  CGRect frame = CGRectZero;
+  if(!cuResolveBgPointer() || !cuElementWindow(element,app.processIdentifier,&number,nil,nil) || !cuWindowInfoForNumber(number,&frame,nil))
+    @throw [NSException exceptionWithName:@"window" reason:@"explicit text target has no input window; observe again; no write was sent" userInfo:nil];
+  NSPasteboard *board = NSPasteboard.generalPasteboard;
+  NSInteger originalCount = board.changeCount;
+  NSMutableArray *saved = [NSMutableArray array];
+  for(NSPasteboardItem *item in board.pasteboardItems) {
+    NSPasteboardItem *copy = [NSPasteboardItem new];
+    for(NSPasteboardType type in item.types) {
+      NSData *data = [item dataForType:type];
+      if(!data || ![copy setData:data forType:type]) @throw [NSException exceptionWithName:@"clipboard" reason:@"clipboard could not be preserved; no write was sent" userInfo:nil];
+    }
+    [saved addObject:copy];
+  }
+  cuBgLease lease = {0};
+  NSString *why = nil;
+  if(!cuBgLeaseBegin(app,number,YES,args,&lease,&why)) @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:why userInfo:nil];
+  BOOL sent = NO, restored = YES, clipboardRestored = YES;
+  NSInteger ownedCount = -1;
+  NSMutableDictionary *receipt = [@{@"action_sent":@NO,@"verified":@NO,@"strategy":@"window-paste-replace",@"front_lease":@(lease.swapped),@"role":role,@"window":@{@"id":@(lease.postWin)}} mutableCopy];
+  @try {
+    cuCheckCancelled();
+    cuValidateElementIdentity((__bridge AXUIElementRef)element,args[@"target"]);
+    if(board.changeCount != originalCount) @throw [NSException exceptionWithName:@"clipboard" reason:@"clipboard changed before replacement; no text was sent" userInfo:nil];
+    sent = YES;
+    if(!cuFocusTextTarget(element)) @throw [NSException exceptionWithName:@"focus" reason:@"explicit text target did not acquire focus; no text was sent" userInfo:nil];
+    if(board.changeCount != originalCount) @throw [NSException exceptionWithName:@"clipboard" reason:@"clipboard changed before replacement; no text was sent" userInfo:nil];
+    ownedCount = [board clearContents];
+    BOOL prepared = [board setString:value forType:NSPasteboardTypeString];
+    ownedCount = board.changeCount;
+    if(!prepared) @throw [NSException exceptionWithName:@"clipboard" reason:@"literal text could not be prepared" userInfo:nil];
+    cuWindowChord(&lease,frame,0,kCGEventFlagMaskCommand);
+    cuCheckCancelled();
+    cuValidateElementIdentity((__bridge AXUIElementRef)element,args[@"target"]);
+    if(![attr((__bridge AXUIElementRef)element,@"AXFocused") boolValue]) @throw [NSException exceptionWithName:@"focus" reason:@"text target lost focus before paste" userInfo:nil];
+    if(board.changeCount != ownedCount) @throw [NSException exceptionWithName:@"clipboard" reason:@"clipboard changed before paste; no paste was sent" userInfo:nil];
+    cuWindowChord(&lease,frame,9,kCGEventFlagMaskCommand);
+    NSUInteger stable = 0;
+    for(int attempt = 0; attempt < 15; attempt++) {
+      usleep(80000);
+      cuCheckCancelled();
+      id fresh = cuResolvePathTarget(app.processIdentifier,args[@"target"]);
+      if(!fresh || !CFEqual((__bridge CFTypeRef)fresh,(__bridge CFTypeRef)element)) @throw [NSException exceptionWithName:@"stale" reason:@"text target changed after delivery" userInfo:nil];
+      cuValidateElementIdentity((__bridge AXUIElementRef)fresh,args[@"target"]);
+      id after = attr((__bridge AXUIElementRef)fresh,@"AXValue");
+      receipt[@"after"] = after ?: NSNull.null;
+      stable = [after isEqual:value] ? stable + 1 : 0;
+      if(stable >= 3) { receipt[@"verified"] = @YES; break; }
+    }
+  } @catch(NSException *error) {
+    receipt[@"error"] = error.reason ?: @"text replacement did not complete";
+  } @finally {
+    if(ownedCount >= 0) {
+      clipboardRestored = board.changeCount == ownedCount;
+      if(clipboardRestored) { [board clearContents]; if(saved.count) clipboardRestored = [board writeObjects:saved]; }
+    }
+    restored = cuBgLeaseEnd(&lease);
+  }
+  receipt[@"action_sent"] = @(sent);
+  receipt[@"clipboard_restored"] = @(clipboardRestored);
+  receipt[@"front_restored"] = @(restored);
+  cuLeaseAccounting(receipt,&lease);
+  if(![receipt[@"verified"] boolValue]) { receipt[@"outcome_unknown"] = @(sent); receipt[@"verification_required"] = @"observation"; }
+  return receipt;
+}
 static NSDictionary *windowAtPoint(NSArray *windows, CGPoint p) {
     NSMutableArray *skipped=[NSMutableArray array];
     for(NSDictionary *w in windows) {          // front to back
@@ -1184,7 +1297,7 @@ static id execute(NSDictionary *p) {
     return cuPostKey(args,[args[@"input_app_ref"][@"pid"] intValue]);
   }
   cuCheckCancelled();
-  if([tool isEqual:@"input_capabilities"]) return @{@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"focused_control":@1,@"window_record":@(cuResolveBgPointer()?1:0)};
+  if([tool isEqual:@"input_capabilities"]) return @{@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"focused_control":@1,@"window_record":@(cuResolveBgPointer()?1:0),@"observed_window_input":@1,@"targeted_keys":@1,@"literal_text_replace":@1};
   if([tool isEqual:@"front_lease_watchdog"]) {
     long long remaining = [args[@"deadline"] longLongValue] - (long long)([NSDate new].timeIntervalSince1970 * 1000);
     if(remaining > 0 && remaining < 30000) usleep((useconds_t)remaining * 1000);
@@ -1291,7 +1404,9 @@ static id execute(NSDictionary *p) {
     CFRelease(ax);
     if(!valid) @throw [NSException exceptionWithName:@"window" reason:@"the selected app window has no accessibility geometry; call list_windows for a valid window index" userInfo:nil];
     NSArray *windows=CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionAll,kCGNullWindowID));
-    return capturableWindow(windows,a.processIdentifier,a.localizedName,preferred);
+    NSMutableDictionary *result = [capturableWindow(windows,a.processIdentifier,a.localizedName,preferred) mutableCopy];
+    result[@"pid"] = @(a.processIdentifier);
+    return result;
   }
   // Which application owns the point a pointer event would land on. A global
   // pointer event goes to whatever is on top, so this is what stops a click
@@ -1483,6 +1598,7 @@ static id execute(NSDictionary *p) {
     if([tt isKindOfClass:NSDictionary.class]) {
       id el = cuResolvePathTarget(inputApp.processIdentifier, tt);
       if(!el) @throw [NSException exceptionWithName:@"stale" reason:@"element is no longer available; observe again" userInfo:nil];
+      cuValidateElementIdentity((__bridge AXUIElementRef)el,tt);
       focused = el;
     }
     return cuType(args, inputApp, focused, NO);
@@ -1518,6 +1634,7 @@ static id execute(NSDictionary *p) {
     if([t isKindOfClass:NSDictionary.class]) {
       anchor = cuResolvePathTarget(inputApp.processIdentifier, t);
       if(!anchor) @throw [NSException exceptionWithName:@"stale" reason:@"element is no longer available; observe again" userInfo:nil];
+      cuValidateElementIdentity((__bridge AXUIElementRef)anchor,t);
     } else anchor = cuFocusedElement(inputApp.processIdentifier);
     uint32_t keyWin = 0;
     CGRect keyFrame = CGRectZero;
@@ -1532,15 +1649,14 @@ static id execute(NSDictionary *p) {
       @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:why userInfo:nil];
     BOOL keyRestored = YES;
     @try {
-      for(int down = 1; down >= 0; down--) {
-        CGEventRef event = CGEventCreateKeyboardEvent(NULL, [args[@"code"] unsignedShortValue], down ? true : false);
-        CGEventSetFlags(event, [args[@"flags"] unsignedLongLongValue]);
-        cuPostEventRecord(&lease, event, CGPointMake(CGRectGetMidX(keyFrame) - keyFrame.origin.x, CGRectGetMidY(keyFrame) - keyFrame.origin.y));
-        CFRelease(event);
-        usleep(30000);
+      NSString *role = anchor ? attr((__bridge AXUIElementRef)anchor,@"AXRole") : nil;
+      if(t && cuTextRole(role) && ![role isEqual:@"AXWebArea"]) {
+        if(!cuFocusTextTarget(anchor)) @throw [NSException exceptionWithName:@"focus" reason:@"explicit key target could not be focused; no key was sent" userInfo:nil];
       }
+      if(t) cuValidateElementIdentity((__bridge AXUIElementRef)anchor,t);
+      cuWindowChord(&lease,keyFrame,[args[@"code"] unsignedShortValue],[args[@"flags"] unsignedLongLongValue]);
     } @finally { keyRestored = cuBgLeaseEnd(&lease); }
-    NSMutableDictionary *receipt = [@{@"action_sent":@YES, @"strategy":@"window-record", @"keyboard_delivery":@"window-record", @"front_lease":@(lease.swapped)} mutableCopy];
+    NSMutableDictionary *receipt = [@{@"action_sent":@YES, @"strategy":@"window-record", @"keyboard_delivery":@"window-record", @"front_lease":@(lease.swapped),@"window":@{@"id":@(lease.postWin)}} mutableCopy];
     if(winRole) receipt[@"window_role"] = winRole;
     if(lease.postPid != lease.targetPid) receipt[@"window_owner_pid"] = @(lease.postPid);
     if(lease.swapped) receipt[@"front_restored"] = @(keyRestored);
@@ -1571,8 +1687,12 @@ static id execute(NSDictionary *p) {
     AXUIElementRef appEl=AXUIElementCreateApplication(inputApp.processIdentifier);
     AXUIElementSetMessagingTimeout(appEl,2.0);
     axPrepare(appEl);
+    uint32_t observedNumber = 0;
+    CGRect observedFrame = CGRectZero;
+    BOOL pinned = args[@"observed_window"] != nil;
+    if(pinned) cuObservedWindow(args[@"observed_window"],inputApp.processIdentifier,p,&observedNumber,&observedFrame);
     AXUIElementRef raw=NULL;
-    AXError err=AXUIElementCopyElementAtPosition(appEl,(float)p.x,(float)p.y,&raw);
+    AXError err=pinned ? kAXErrorNoValue : AXUIElementCopyElementAtPosition(appEl,(float)p.x,(float)p.y,&raw);
     id hit=nil;
     if(err==kAXErrorSuccess && raw) {
       pid_t owner=0;
@@ -1601,6 +1721,10 @@ static id execute(NSDictionary *p) {
       else for(id w in attr(appEl,@"AXWindows")) {
         CGRect frame;
         if(!cuFrame((__bridge AXUIElementRef)w,&frame) || !CGRectContainsPoint(frame,p)) continue;
+        if(pinned) {
+          uint32_t matched = 0;
+          if(!CGRectEqualToRect(frame,observedFrame) || !cuWindowNumberForFrame(inputApp.processIdentifier,frame,&matched) || matched != observedNumber) continue;
+        }
         // A sheet owns the window's interaction, even when the sheet does not cover p.
         NSArray *sheets=attr((__bridge AXUIElementRef)w,@"AXSheets");
         if(sheets.count) {
@@ -1749,8 +1873,7 @@ static id execute(NSDictionary *p) {
     }
     if([tool isEqual:@"set_value"]) {
       NSString *role=attr((__bridge AXUIElementRef)el,@"AXRole");
-      if(axHasWebAncestor((__bridge AXUIElementRef)el))
-        @throw [NSException exceptionWithName:@"value" reason:@"this element lives in a web area, which ignores background AXValue writes (numeric controls may even coerce them to empty). No write was sent — focus the element and use type instead, then verify with get_value." userInfo:nil];
+      if(axHasWebAncestor((__bridge AXUIElementRef)el)) return cuReplaceWebText(args,a,el);
       BOOL numeric=[@[@"AXIncrementor",@"AXSlider",@"AXStepper",@"AXValueIndicator",@"AXProgressIndicator"] containsObject:role];
       id value=args[@"value"];
       if(numeric) {
