@@ -2,6 +2,8 @@
 
 ## 0.13.0 — release candidate
 
+- The skill pack now follows the published MCP Skills extension (SEP-2640). The server advertises it under `capabilities.extensions`, `skills/list` and `skills/get` return entries with verbatim frontmatter and `resources[{uri, digest, size}]` using `sha256:` digests, and results carry `ttlMs` and `cacheScope: "public"`. `skills/get` accepts only the skill's own `SKILL.md` URI. The older experimental `files`/`manifest` shapes are removed; no Codewhale release read them. (CW-7545)
+
 - Codewhale pairs once with Computer Use. The first request to read or operate the Mac opens the native approval panel; Trust until revoked covers apps, models and future tasks. The helper stores the approved installation key in Keychain, and each live connection proves possession of that key. Host labels do not grant access. Other hosts without a persistent pairing key receive connection-scoped access.
 
 - A small Codewhale controller names the app being operated, with a direct Stop computer use button and Pause in its menu. Stop ends all current computer sessions. The controller stays reachable when the target window is hidden or covered; the screenshot preview stays off until requested. The idle window shows Ready, with remembered access, previous connections and diagnostics in Settings. Turn off removes an installation's saved access and cancels its sessions; only a native authenticated decision can allow it again. The controller is Codewhale UI, distinct from macOS recording indicators.

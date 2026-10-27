@@ -2101,6 +2101,12 @@ const skillPack = (() => {
   return pack;
 })();
 const SKILL_DESCRIPTION = skillPack.find((f) => f.rel === "SKILL.md")?.frontmatter?.description ?? "Computer-use operating guide";
+const SKILL_TTL_MS = 24 * 60 * 60 * 1000;
+const skillEntry = Object.freeze({
+  uri: SKILL_ROOT_URI,
+  frontmatter: skillPack.find((f) => f.uri === SKILL_ROOT_URI).frontmatter,
+  resources: skillPack.map(({ uri, sha256, size }) => ({ uri, digest: `sha256:${sha256}`, size })),
+});
 
 /**
  * callTool plus optional trajectory recording. Recording wraps every call the
@@ -2128,7 +2134,7 @@ const HANDLERS = {
       capabilities: {
         tools: { listChanged: false },
         resources: { listChanged: false, subscribe: false },
-        experimental: { "io.modelcontextprotocol/skills": {} },
+        extensions: { "io.modelcontextprotocol/skills": {} },
       },
       instructions: skillPack.find((file) => file.uri === SKILL_ROOT_URI).text,
       serverInfo: { name: SERVER_NAME, version: APP_VERSION, platforms: ["darwin", "win32", "linux", "harmonyos"], transports: ["local", "ssh", "hdc"] },
@@ -2158,20 +2164,11 @@ const HANDLERS = {
     return { resourceTemplates: [] };
   },
   "skills/list"() {
-    return {
-      skills: [{
-        uri: SKILL_ROOT_URI, name: SKILL_NAME, description: SKILL_DESCRIPTION,
-        files: skillPack.map(({ uri, sha256, size }) => ({ uri, sha256, bytes: size })),
-      }],
-    };
+    return { ttlMs: SKILL_TTL_MS, cacheScope: "public", skills: [skillEntry] };
   },
   "skills/get"(params) {
-    const entry = skillPack.find((f) => f.uri === (params?.uri ?? SKILL_ROOT_URI));
-    if (!entry) throw paramError(`skill "${params?.uri ?? ""}" is unknown — skills/list names the catalog`);
-    return {
-      skill: { uri: entry.uri, name: entry.frontmatter?.name ?? SKILL_NAME, description: SKILL_DESCRIPTION, frontmatter: entry.frontmatter, content: entry.text },
-      manifest: skillPack.map(({ uri, sha256, size }) => ({ uri, sha256, bytes: size })),
-    };
+    if (params?.uri !== SKILL_ROOT_URI) throw paramError(`skill "${params?.uri ?? ""}" is unknown — skills/list names the catalog`);
+    return { ttlMs: SKILL_TTL_MS, cacheScope: "public", skill: skillEntry };
   },
   async "tools/call"(params) {
     if (params?.name === "stop_computer_control") return callTool(params);

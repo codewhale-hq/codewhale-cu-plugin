@@ -136,7 +136,7 @@ test("initialize advertises resources and the skills extension", async () => {
   assert.equal(init.result.instructions, fs.readFileSync(path.join(ROOT, "skills/computer-use/SKILL.md"), "utf8"));
   assert.ok(Buffer.byteLength(init.result.instructions) < 6500);
   assert.equal(init.result.capabilities.resources.listChanged, false);
-  assert.ok(init.result.capabilities.experimental["io.modelcontextprotocol/skills"], "the skills extension is advertised");
+  assert.ok(init.result.capabilities.extensions["io.modelcontextprotocol/skills"], "the skills extension is advertised");
 });
 
 test("resources/templates/list answers with an empty template list, never method-not-found", async () => {
@@ -175,22 +175,27 @@ test("resources/read refuses unknown URIs with invalid-params, never a traversal
   assert.equal(alsoBad.error.code, -32602);
 });
 
-test("skills/list and skills/get carry the manifest with matching sha256 digests", async () => {
+test("skills/list and skills/get carry published entries with matching sha256 digests", async () => {
   const skills = await rpc("skills/list", {});
+  assert.equal(skills.result.cacheScope, "public");
+  assert.ok(skills.result.ttlMs > 0);
   const entry = skills.result.skills[0];
-  assert.equal(entry.name, "computer-use");
-  assert.ok(entry.description.length > 40, "the description comes from SKILL.md frontmatter");
-  assert.equal(entry.files.length, 5);
+  assert.equal(entry.uri, "skill://codewhale-cu/SKILL.md");
+  assert.equal(entry.frontmatter.name, "computer-use");
+  assert.ok(entry.frontmatter.description.length > 40, "the description comes from SKILL.md frontmatter");
+  assert.equal(entry.resources.length, 5);
 
   const got = await rpc("skills/get", { uri: "skill://codewhale-cu/SKILL.md" });
-  assert.equal(got.result.skill.frontmatter.name, "computer-use");
-  for (const file of got.result.manifest) {
+  assert.deepEqual(got.result.skill, entry);
+  for (const file of got.result.skill.resources) {
     const rel = file.uri.replace("skill://codewhale-cu/", "");
     const bytes = fs.readFileSync(path.join(ROOT, "skills", rel === "recording/SKILL.md" ? rel : `computer-use/${rel}`));
     const digest = crypto.createHash("sha256").update(bytes).digest("hex");
-    assert.equal(file.sha256, digest, `${rel} sha256 must match the bytes`);
-    assert.equal(file.bytes, bytes.length);
+    assert.equal(file.digest, `sha256:${digest}`, `${rel} digest must match the bytes`);
+    assert.equal(file.size, bytes.length);
   }
+  const unknown = await rpc("skills/get", { uri: "skill://codewhale-cu/references/quick-reference.md" });
+  assert.equal(unknown.error.code, -32602);
 });
 
 test("tools/list still answers after the resource methods (no dispatch regressions)", async () => {
