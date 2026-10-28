@@ -11,12 +11,11 @@ const FIXTURE_APPS = [
   "Killed idle host", "Surviving host", "Killed active host",
   "Survivor", "Survivor again", "Disconnected host", "Revived",
 ];
-for (const name of FIXTURE_APPS) {
-  consent.record("local", consent.appKeys({ name }), "allow", { remember: false, name });
-}
-consent.record("local", ["pid:100"], "allow", { remember: false, name: "Practice" });
-
 export function create() {
+  for (const name of FIXTURE_APPS) {
+    consent.record("local", consent.appKeys({ name }), "allow", { remember: false, name });
+  }
+  consent.record("local", ["pid:100"], "allow", { remember: false, name: "Practice" });
   const instance = crypto.randomUUID();
   const log = process.env.CU_SESSION_CALLS;
   let appName = null;
