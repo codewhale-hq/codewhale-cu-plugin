@@ -2,6 +2,10 @@
 
 ## 0.13.0 — release candidate
 
+- Input through a Windows runner works again. The Windows desktop helper and an ssh-registered Windows computer have no `input_owner` query, and the server tolerated that only for macOS, so every click, type, key and scroll routed through them was refused with `unsupported_on_platform`, while the direct Windows route accepted the same input. A Windows runner now keeps the bound-app and window checks its direct route uses, as macOS does. (CW-7440)
+
+- The `computer {action:"list"}` note names the merged `computer {action:"switch", id}` form instead of the hidden `computer_switch` alias.
+
 - The skill pack now follows the published MCP Skills extension (SEP-2640). The server advertises it under `capabilities.extensions`, `skills/list` and `skills/get` return entries with verbatim frontmatter and `resources[{uri, digest, size}]` using `sha256:` digests, and results carry `ttlMs` and `cacheScope: "public"`. `skills/get` accepts only the skill's own `SKILL.md` URI. The older experimental `files`/`manifest` shapes are removed; no Codewhale release read them. (CW-7545)
 
 - Codewhale pairs once with Computer Use. The first request to read or operate the Mac opens the native approval panel; Trust until revoked covers apps, models and future tasks. The helper stores the approved installation key in Keychain, and each live connection proves possession of that key. Host labels do not grant access. Other hosts without a persistent pairing key receive connection-scoped access.

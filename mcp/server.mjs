@@ -1111,9 +1111,9 @@ function ownerVerdict(computerId, owner) {
 
 /**
  * Over the wire (desktop helper, ssh agent) the owner query is one more
- * allow-listed request. Only a macOS runner may lack it, because the macOS
- * backend gates input on the bound app instead; any other failure to name the
- * owner refuses the input.
+ * allow-listed request. macOS and Windows runners may lack it, because those
+ * backends gate input on the bound app and window instead, as their direct
+ * routes do; any other failure to name the owner refuses the input.
  */
 function remoteInputOwner(computer, remoteCall) {
   const platform = computer.platform ?? computer.platformHint ?? (computer.transport === "local" ? process.platform : "linux");
@@ -1121,7 +1121,7 @@ function remoteInputOwner(computer, remoteCall) {
     const r = await remoteCall({ tool: "input_owner", args: query }, { timeoutMs: 30_000 });
     if (r?.ok) return r.data ?? null;
     const code = r?.error?.code ?? "remote_error";
-    if (platform === "darwin" && (code === "unsupported_on_platform" || code === "tool_not_allowed")) return undefined;
+    if ((platform === "darwin" || platform === "win32") && (code === "unsupported_on_platform" || code === "tool_not_allowed")) return undefined;
     throw new ServerError(code === "tool_not_allowed" ? "app_upgrade_required" : code,
       code === "tool_not_allowed"
         ? "this computer's runner cannot report which app would receive input, so input is refused; update the desktop helper or the remote agent and retry"
@@ -1434,7 +1434,7 @@ async function callTool(params, bindWhen = null) {
       ok: true,
       active: activeComputerId,
       computers: Object.values(reg.computers).map((c) => ({ id: c.id, transport: c.transport, platform: c.platform ?? c.platformHint ?? null, label: c.label ?? null, host: c.host ?? null, owned: c.owned === true || undefined, container: c.container ?? undefined })),
-      note: "Pass `computer` on any tool to switch (sticky), or computer_switch to switch explicitly.",
+      note: "Pass `computer` on any tool to switch (sticky), or computer {action:\"switch\", id} to switch explicitly.",
     })) }] };
   }
 
