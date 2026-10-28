@@ -2,6 +2,8 @@
 
 ## 0.13.0 — release candidate
 
+- The operating guide that the server sends as MCP `instructions` now fits Codewhale's 4,096-byte limit. At 6,491 bytes, Codewhale cut it partway through "Observe, act, verify", so the model lost the rest of the loop and the pointers to the detailed references. The guide is now 4,015 bytes and keeps every consent, stop and safety rule. The full observe–act–verify loop and `run_actions` details moved verbatim to `references/quick-reference.md`, which the guide says to read before the first action.
+
 - Input through a Windows runner works again. The Windows desktop helper and an ssh-registered Windows computer have no `input_owner` query, and the server tolerated that only for macOS, so every click, type, key and scroll routed through them was refused with `unsupported_on_platform`, while the direct Windows route accepted the same input. A Windows runner now keeps the bound-app and window checks its direct route uses, as macOS does. (CW-7440)
 
 - The `computer {action:"list"}` note names the merged `computer {action:"switch", id}` form instead of the hidden `computer_switch` alias.

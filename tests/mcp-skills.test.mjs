@@ -134,7 +134,7 @@ after(() => { try { server.stdin.end(); } catch {} server?.kill("SIGTERM"); fs.r
 test("initialize advertises resources and the skills extension", async () => {
   const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {} });
   assert.equal(init.result.instructions, fs.readFileSync(path.join(ROOT, "skills/computer-use/SKILL.md"), "utf8"));
-  assert.ok(Buffer.byteLength(init.result.instructions) < 6500);
+  assert.ok(Buffer.byteLength(init.result.instructions) <= 4096);
   assert.equal(init.result.capabilities.resources.listChanged, false);
   assert.ok(init.result.capabilities.extensions["io.modelcontextprotocol/skills"], "the skills extension is advertised");
 });
