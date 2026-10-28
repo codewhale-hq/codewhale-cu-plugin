@@ -144,7 +144,7 @@ async function tool(name, args = {}) {
 
 before(() => {
   server = spawn("node", [path.join(ROOT, "mcp", "server.mjs")], {
-    env: { ...process.env, CODEWHALE_CU_STATE_DIR: stateDir, CODEWHALE_CU_RECORDINGS_DIR: path.join(stateDir, "rec") },
+    env: { ...process.env, CODEWHALE_CU_STATE_DIR: stateDir, CODEWHALE_CU_RECORDINGS_DIR: path.join(stateDir, "rec"), CODEWHALE_CU_APP: "off" },
     stdio: ["pipe", "pipe", "pipe"],
   });
   server.stdin.write(hostKeysLine());

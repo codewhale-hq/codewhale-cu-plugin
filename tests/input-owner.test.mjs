@@ -21,6 +21,7 @@ function startServer(t, owner, route = "direct") {
     env: {
       ...process.env,
       CODEWHALE_CU_STATE_DIR: path.join(dir, "state"),
+      CODEWHALE_CU_APP: "off",
       CODEWHALE_CU_RECORDINGS_DIR: path.join(dir, "rec"),
       CODEWHALE_CU_TEST_BACKEND: path.join(ROOT, "tests/fixtures/fake-backend.mjs"),
       FAKE_BACKEND_CALLS: calls,
