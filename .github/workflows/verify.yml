@@ -44,6 +44,21 @@ jobs:
         run: node --test --test-timeout=90000 tests/*.test.mjs
         timeout-minutes: 8
       - run: node scripts/check-receipts.mjs docs parity/results
+      - name: Build marketplace plugin archive
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist/marketplace
+          git archive --format=tar.gz --prefix=computer-use/ "$GITHUB_SHA" > dist/marketplace/computer-use.tar.gz
+          (cd dist/marketplace && sha256sum computer-use.tar.gz > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          tar -tzf dist/marketplace/computer-use.tar.gz computer-use/plugin.json computer-use/mcp.json computer-use/mcp/server.mjs > /dev/null
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: computer-use-marketplace-archive
+          path: |
+            dist/marketplace/computer-use.tar.gz
+            dist/marketplace/SHA256SUMS.txt
+          if-no-files-found: error
       - name: Build unsigned Windows preview
         if: runner.os == 'Windows'
         shell: pwsh
