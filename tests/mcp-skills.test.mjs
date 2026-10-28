@@ -133,7 +133,7 @@ after(() => { try { server.stdin.end(); } catch {} server?.kill("SIGTERM"); fs.r
 
 test("initialize advertises resources and the skills extension", async () => {
   const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {} });
-  assert.equal(init.result.instructions, fs.readFileSync(path.join(ROOT, "skills/computer-use/SKILL.md"), "utf8"));
+  assert.equal(init.result.instructions, fs.readFileSync(path.join(ROOT, "skills/computer-use/SKILL.md"), "utf8").replace(/\r\n/g, "\n"));
   assert.ok(Buffer.byteLength(init.result.instructions) <= 4096);
   assert.equal(init.result.capabilities.resources.listChanged, false);
   assert.ok(init.result.capabilities.extensions["io.modelcontextprotocol/skills"], "the skills extension is advertised");
@@ -145,7 +145,7 @@ test("resources/templates/list answers with an empty template list, never method
   assert.deepEqual(res.result.resourceTemplates, []);
 });
 
-test("resources/list names the pack; resources/read returns exact bytes with hashes", async () => {
+test("resources/list names the pack; resources/read returns normalized text", async () => {
   const list = await rpc("resources/list", {});
   const uris = list.result.resources.map((r) => r.uri);
   assert.ok(uris.includes("skill://codewhale-cu/SKILL.md"));
@@ -157,8 +157,8 @@ test("resources/list names the pack; resources/read returns exact bytes with has
     const read = await rpc("resources/read", { uri });
     const text = read.result.contents[0].text;
     const rel = uri.replace("skill://codewhale-cu/", "");
-    const onDisk = fs.readFileSync(path.join(ROOT, "skills", rel === "recording/SKILL.md" ? rel : `computer-use/${rel}`), "utf8");
-    assert.equal(text, onDisk, `${uri} must serve exactly the file on disk`);
+    const onDisk = fs.readFileSync(path.join(ROOT, "skills", rel === "recording/SKILL.md" ? rel : `computer-use/${rel}`), "utf8").replace(/\r\n/g, "\n");
+    assert.equal(text, onDisk, `${uri} must serve normalized file text`);
     if (uri === "skill://codewhale-cu/recording/SKILL.md") {
       assert.match(text, /raster_id/);
       assert.match(text, /raster_stale/);
@@ -189,7 +189,7 @@ test("skills/list and skills/get carry published entries with matching sha256 di
   assert.deepEqual(got.result.skill, entry);
   for (const file of got.result.skill.resources) {
     const rel = file.uri.replace("skill://codewhale-cu/", "");
-    const bytes = fs.readFileSync(path.join(ROOT, "skills", rel === "recording/SKILL.md" ? rel : `computer-use/${rel}`));
+    const bytes = Buffer.from(fs.readFileSync(path.join(ROOT, "skills", rel === "recording/SKILL.md" ? rel : `computer-use/${rel}`), "utf8").replace(/\r\n/g, "\n"), "utf8");
     const digest = crypto.createHash("sha256").update(bytes).digest("hex");
     assert.equal(file.digest, `sha256:${digest}`, `${rel} digest must match the bytes`);
     assert.equal(file.size, bytes.length);

@@ -2089,8 +2089,8 @@ const skillPack = (() => {
   const pack = [];
   for (const [rel, mime] of files) {
     try {
-      const bytes = fs.readFileSync(new URL(rel === "recording/SKILL.md" ? "../recording/SKILL.md" : rel, root));
-      const text = bytes.toString("utf8");
+      const text = fs.readFileSync(new URL(rel === "recording/SKILL.md" ? "../recording/SKILL.md" : rel, root), "utf8").replace(/\r\n/g, "\n");
+      const bytes = Buffer.from(text, "utf8");
       pack.push({
         rel, uri: `skill://codewhale-cu/${rel}`, mime, size: bytes.length, text,
         frontmatter: rel.endsWith("SKILL.md") ? parseFrontmatter(text) : null,
