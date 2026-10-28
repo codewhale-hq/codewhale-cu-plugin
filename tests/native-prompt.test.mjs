@@ -270,7 +270,7 @@ test("an open dialog leaves a 0600 marker with both pids, closes it, and removes
   const { prompt, fake, dir, flush } = makePrompt({ pid: 41_002, fake: fakeExec({ childPid: 77_002 }) });
   const asked = prompt.ask(request());
   const file = path.join(dir, MARKER_FILE);
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   const open = markerOf(dir);
   assert.equal(open.pid, 41_002);
   assert.equal(open.child_pid, 77_002);

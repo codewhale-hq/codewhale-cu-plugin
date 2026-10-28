@@ -705,7 +705,7 @@ test("daemon socket attack test: unconsented client cannot act, model-style cons
 
   for (const [tool, args] of [
     ["get_app_state", { app_ref: { name: "FakeApp" } }],
-    ["list_windows", { app_ref: { pid: 4242 } }],
+    ["list_windows", { app_ref: (process.env.CU_SELECTOR_PLATFORM || process.platform) === "linux" ? { name: "FakeApp" } : { pid: 4242 } }],
     ["left_click", { target: { type: "element", index: 1, path: [0, 1], app_ref: { name: "FakeApp" } } }],
     ["left_click", { target: { type: "element", index: 1, path: [0, 1] } }],
     ["screenshot", {}],
