@@ -6,7 +6,9 @@ The app starts quietly; connecting a model does not open Settings or take
 keyboard focus.
 
 1. In **Accessibility**, choose **Allow…**, then enable **Codewhale Computer
-   Use** in System Settings. This permits reading controls and sending input.
+   Use** in System Settings. If it is not listed, use **+** and select
+   **Codewhale Computer Use** from Applications. This permits reading controls
+   and sending input.
 2. In **Screen Recording**, choose **Allow…**, then enable the same app. This
    permits app screenshots. If it is not listed, use **+** in System Settings
    and select **Codewhale Computer Use** from Applications. macOS may require

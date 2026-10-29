@@ -237,7 +237,6 @@ static NSView *cuSeparator(void) {
 - (void)windowWillClose:(NSNotification *)notification { [self.timer invalidate]; self.timer=nil; [self.trustAuthContext invalidate]; self.trustAuthContext=nil; }
 - (void)menuWillOpen:(NSMenu *)menu { cuSend(@"status"); }
 - (void)openAccessibility:(id)sender {
-  NSDictionary *options=@{(__bridge NSString *)kAXTrustedCheckOptionPrompt:@YES}; if(!AXIsProcessTrusted()) AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
   [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]];
 }
 - (void)openScreen:(id)sender {
