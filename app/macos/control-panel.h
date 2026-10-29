@@ -142,7 +142,9 @@ static NSView *cuSeparator(void) {
   self.window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,260) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable backing:NSBackingStoreBuffered defer:NO];
   self.window.title=@"Computer Use"; self.window.releasedWhenClosed=NO; self.window.delegate=self;
   self.window.collectionBehavior=NSWindowCollectionBehaviorMoveToActiveSpace;
-  NSImageView *icon=[NSImageView imageViewWithImage:[NSImage imageNamed:NSImageNameApplicationIcon]];
+  NSImage *appIcon=[[[NSImage alloc] initWithContentsOfFile:[NSBundle.mainBundle pathForResource:@"AppIcon" ofType:@"icns"]] autorelease];
+  if(!appIcon) appIcon=[NSImage imageNamed:NSImageNameApplicationIcon];
+  NSImageView *icon=[NSImageView imageViewWithImage:appIcon];
   [icon.widthAnchor constraintEqualToConstant:32].active=YES; [icon.heightAnchor constraintEqualToConstant:32].active=YES;
   NSTextField *byline=cuLabel(@"By Codewhale",12,NSFontWeightRegular); byline.textColor=NSColor.secondaryLabelColor;
   NSStackView *head=cuStack(@[icon,cuStack(@[cuLabel(@"Computer Use",20,NSFontWeightSemibold),byline],NSUserInterfaceLayoutOrientationVertical,3)],NSUserInterfaceLayoutOrientationHorizontal,14);
