@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import { runOk, withSignal } from "../../src/exec.mjs";
 import * as consent from "../../src/consent.mjs";
 
-const FIXTURE_APPS = [
+export const FIXTURE_APPS = [
   "Practice", "Reopened", "Lease owner", "Re-leased owner", "Editor A", "Editor B",
   "Open", "Visible", "Cancelled queue", "Host A", "Host B", "Stopped host",
   "Local host A", "Retiring alias owner", "Alias retirement survivor",

@@ -1,6 +1,7 @@
 // Exercise the actual helper socket and MCP lifecycle with recording backends.
 // Child-process cancellation must prevent delayed input, not just hide replies.
-import { hostKeysLine, attest, attestParams } from "./fixtures/host-decision.mjs";
+import { hostKeysLine, attest, attestParams, ledgerMac } from "./fixtures/host-decision.mjs";
+import { FIXTURE_APPS } from "./fixtures/session-backend.mjs";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -12,6 +13,17 @@ import { spawn } from "node:child_process";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cu-session-"));
 const log = path.join(dir, "calls.jsonl");
+if (process.platform === "linux") {
+  const at = new Date().toISOString();
+  const computers = Object.fromEntries(["local", "retiring-helper-alias"].map(id => [id, {
+    apps: Object.fromEntries(FIXTURE_APPS.map(name => {
+      const key = `name:${name.toLowerCase()}`;
+      const entry = { decision: "allow", at, name };
+      return [key, { ...entry, mac: ledgerMac(id, key, entry) }];
+    })),
+  }]));
+  fs.writeFileSync(path.join(dir, "consent.json"), JSON.stringify({ version: 1, computers }));
+}
 const env = {
   ...process.env,
   CODEWHALE_CU_STATE_DIR: dir,
@@ -73,6 +85,12 @@ async function closeHost(host) {
   host.child.stdin.end();
   await exit;
   hosts.delete(host.child);
+}
+
+async function consentFixture(host, args) {
+  if (process.platform === "linux") return;
+  const result = await host.tool("consent", { action: "allow", ...args });
+  assert.equal(result.ok, true, JSON.stringify(result));
 }
 
 before(async () => {
@@ -205,10 +223,10 @@ test("disconnect cancels the child process and a queued request never posts inpu
 test("MCP cancellation drains input, keeps the host alive, and isolates a second host", async () => {
   const a = mcp();
   const b = mcp();
-  await a.tool("consent", { action: "allow", app: "Host A" });
+  await consentFixture(a, { app: "Host A" });
   await a.tool("get_app_state", { app_ref: { name: "Host A" } });
   assert.equal((await b.tool("type", { text: "unbound host B" })).error.code, "target_app_required");
-  await b.tool("consent", { action: "allow", app: "Host B" });
+  await consentFixture(b, { app: "Host B" });
   await b.tool("get_app_state", { app_ref: { name: "Host B" } });
   const id = a.start("hold_key", { text: "mcp-cancel", duration: 10 });
   await until(() => calls().some((item) => item.method === "child_started" && item.text === "mcp-cancel"));
@@ -223,7 +241,7 @@ test("MCP cancellation drains input, keeps the host alive, and isolates a second
 
 test("stop cancels active and queued actions, releases held input, and leaves probes usable", async () => {
   const host = mcp();
-  await host.tool("consent", { action: "allow", app: "Stopped host" });
+  await consentFixture(host, { app: "Stopped host" });
   await host.tool("get_app_state", { app_ref: { name: "Stopped host" } });
   await host.tool("left_mouse_down", { target: { type: "coordinate", space: "screen", x: 10, y: 10 } });
   const hold = host.start("hold_key", { text: "mcp-stop", duration: 10 });
@@ -246,7 +264,7 @@ test("stop cancels active and queued actions, releases held input, and leaves pr
 test("another MCP host cannot redirect the selected computer", async () => {
   const a = mcp();
   const b = mcp();
-  await a.tool("consent", { action: "allow", app: "Local host A" });
+  await consentFixture(a, { app: "Local host A" });
   await a.tool("get_app_state", { app_ref: { name: "Local host A" } });
   await b.tool("computer_register", { computer: "session-test-pad", transport: "hdc" });
   await b.tool("computer_switch", { computer: "session-test-pad" });
@@ -269,9 +287,9 @@ test("retiring a helper-backed local alias closes only that MCP host's session",
   survivor.child.stderr.on("data", chunk => { survivorErrors += chunk; });
   const alias = "retiring-helper-alias";
   assert.equal((await retiring.tool("computer_register", { computer: alias, transport: "local" })).ok, true);
-  await retiring.tool("consent", { action: "allow", app: "Retiring alias owner", computer: alias });
+  await consentFixture(retiring, { app: "Retiring alias owner", computer: alias });
   assert.equal((await retiring.tool("get_app_state", { computer: alias, app_ref: { name: "Retiring alias owner" } })).ok, true);
-  await survivor.tool("consent", { action: "allow", app: "Alias retirement survivor" });
+  await consentFixture(survivor, { app: "Alias retirement survivor" });
   assert.equal((await survivor.tool("get_app_state", { app_ref: { name: "Alias retirement survivor" } })).ok, true);
   const owner = calls().find(item => item.method === "get_app_state" && item.appName === "Retiring alias owner").instance;
   const other = calls().find(item => item.method === "get_app_state" && item.appName === "Alias retirement survivor").instance;
@@ -315,9 +333,9 @@ test("retiring a helper-backed local alias closes only that MCP host's session",
 test("MCP forced exit releases idle held input without waiting for another client", async () => {
   const dead = mcp();
   const survivor = mcp();
-  await dead.tool("consent", { action: "allow", app: "Killed idle host" });
+  await consentFixture(dead, { app: "Killed idle host" });
   await dead.tool("get_app_state", { app_ref: { name: "Killed idle host" } });
-  await survivor.tool("consent", { action: "allow", app: "Surviving host" });
+  await consentFixture(survivor, { app: "Surviving host" });
   await survivor.tool("get_app_state", { app_ref: { name: "Surviving host" } });
   await dead.tool("left_mouse_down", { target: { type: "coordinate", space: "screen", x: 10, y: 10 } });
   assert.equal((await survivor.tool("type", {text:"must wait for held pointer"})).error.code,"input_busy");
@@ -333,7 +351,7 @@ test("MCP forced exit releases idle held input without waiting for another clien
 
 test("MCP forced exit cancels its active child before delayed input can post", async () => {
   const host = mcp();
-  await host.tool("consent", { action: "allow", app: "Killed active host" });
+  await consentFixture(host, { app: "Killed active host" });
   await host.tool("get_app_state", { app_ref: { name: "Killed active host" } });
   host.start("hold_key", { text: "killed-active", duration: 10 });
   await until(() => calls().some((item) => item.method === "child_started" && item.text === "killed-active"));
@@ -366,7 +384,7 @@ test("an app update re-leases live sessions transparently; an absent app still f
 
 test("MCP EOF releases a completed mouse-down and helper shutdown aborts active children", async () => {
   const host = mcp();
-  await host.tool("consent", { action: "allow", app: "Disconnected host" });
+  await consentFixture(host, { app: "Disconnected host" });
   await host.tool("get_app_state", { app_ref: { name: "Disconnected host" } });
   await host.tool("left_mouse_down", { target: { type: "coordinate", space: "screen", x: 10, y: 10 } });
   await closeHost(host);
