@@ -4,7 +4,7 @@
 
 - The macOS control panel loads the bundled Computer Use whale-and-pointer icon directly.
 
-- The standalone Linux helper cannot yet receive approvals. The server now refuses at the approval step instead of reporting an approval that the helper cannot use; direct development mode does not support held gestures.
+- The Linux helper has a GTK control window and per-app, per-session polkit approval. It keeps the helper's private control channel, requires a root-owned matching policy and a fresh authentication challenge, and stops on controller disconnect. The source candidate has only been exercised in a disposable Linux environment; real desktop qualification remains open. Direct development mode has no helper controls or held gestures.
 
 - Linux X11 non-ASCII typing keeps a temporary key mapping in place briefly around each keystroke, without using the clipboard. Concurrent Unicode typing requests for the same user serialize, and the mapping is restored on completion, cancellation or owner disconnect. Python 3 and xmodmap are required; verify the resulting text. (CW-7390)
 

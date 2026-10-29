@@ -428,7 +428,7 @@ export function createConsentController({
         return { ok: false, error: { code: "consent_needs_user", message: "The running Codewhale Computer Use helper does not support the approval panel; update and restart the Computer Use app." } };
       }
       if (active || liveMarker({ fs, dir: stateDir() })?.state === "open") {
-        return { ok: false, error: { code: "consent_pending", message: "A Computer Use approval dialog is already open on this Mac; wait for the person to answer it." } };
+        return { ok: false, error: { code: "consent_pending", message: "A Computer Use approval dialog is already open on this computer; wait for the person to answer it." } };
       }
       const trusted = consent.status("local").host;
       if (trusted?.trusted && ["allow_app", "allow_foreground"].includes(req?.kind)) {
@@ -565,7 +565,7 @@ export function createConsentController({
         return { ok: false, error: { code: "consent_needs_user", message: "The running Codewhale Computer Use helper does not support the approval panel; update and restart the Computer Use app." } };
       }
       if (active || liveMarker({ fs, dir: stateDir() })?.state === "open") {
-        return { ok: false, error: { code: "consent_pending", message: "A Computer Use approval dialog is already open on this Mac; wait for the person to answer it." } };
+        return { ok: false, error: { code: "consent_pending", message: "A Computer Use approval dialog is already open on this computer; wait for the person to answer it." } };
       }
       const lateRate = checkRate();
       if (lateRate) return lateRate;
@@ -624,7 +624,7 @@ export function createConsentController({
 function policyRefusal(tool, args, computerId) {
   if (computerId === "local" && tool !== "list_sessions" && !(tool === "list_apps" && args.all !== true && args.installed !== true)
       && (daemonPromptOpen || liveMarker({ fs, dir: stateDir() })?.state === "open")) {
-    return { code: "consent_pending", message: "A Computer Use approval dialog is open on this Mac; this runner refuses input and observation from every caller until the person answers it." };
+    return { code: "consent_pending", message: "A Computer Use approval dialog is open on this computer; this runner refuses input and observation from every caller until the person answers it." };
   }
   let targets = namedApps(tool, args);
   if (tool === "open_application") {

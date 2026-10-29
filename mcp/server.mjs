@@ -202,7 +202,7 @@ async function requireUserDecision(params, name, args) {
       && ((name === "consent_allow" && typeof args.confirm !== "string") || name === "app_script")) {
     app = process.env.CODEWHALE_CU_APP === "off" ? null : await hello({ timeoutMs: 1_500 });
     if (app && process.platform === "linux" && !(Number(app.consentProtocol) >= 1)) {
-      throw new ServerError("consent_needs_user", "The Linux Computer Use helper cannot receive approvals yet. If you choose direct mode for development, set CODEWHALE_CU_APP=off before starting the host; direct mode has no helper controls or held gestures.");
+      throw new ServerError("consent_needs_user", "Linux Computer Use approvals are unavailable. Open Computer Use, complete its Linux approval setup, then quit and reopen it. If you choose direct mode for development, set CODEWHALE_CU_APP=off before starting the host; direct mode has no helper controls or held gestures.");
     }
     if (app && Number(app.consentProtocol) >= 1) {
       if (name === "consent_allow" && args.scope === "foreground") {

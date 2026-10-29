@@ -50,10 +50,9 @@ under test.
 
 ## Resolved non-green rows (2026-09-16)
 
-These runs predate the current consent path and are historical results. The
-standalone Linux helper cannot currently receive user approval, so its older
-parity results do not establish that the current helper route works. See
-`docs/LIMITATIONS.md` for direct mode and held-input limitations.
+These runs predate the current consent path and are historical results. Older
+helper results do not establish the current GTK/polkit approval route. See
+`docs/LIMITATIONS.md` for its setup and held-input limitations.
 
 `docker/run.sh parity --repeats 5` on 2026-09-16 (Chromium 152, Debian 12,
 node 24.21, Xvfb 1600x1200) is **25/27 demonstrated**: every row green except

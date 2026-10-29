@@ -125,10 +125,11 @@ image directly.
 The native setup panel, background check and updater require **macOS 13.5+**
 for the self-contained bundle. The source MCP server includes experimental
 Windows and Linux backends, with HarmonyOS devices over hdc. Windows ships
-only as an unsigned x64 preview ZIP and Linux remains source and Docker:
-neither has the native human controls, exact-window targeting or a qualified
-signed installer, and both are excluded from the plugin's public host
-eligibility until those gates pass. Their raw input uses the shared desktop
+only as an unsigned x64 preview ZIP and Linux remains source and Docker.
+The Linux source candidate adds an approval and Pause/Stop window; neither
+platform has qualified exact-window targeting or a signed installer, and both
+are excluded from the plugin's public host eligibility until those gates pass.
+Their raw input uses the shared desktop
 and must not be treated as background control. Windows semantic mutations
 bind the observed window and element runtime identities and refuse stale
 paths. See the
@@ -136,6 +137,26 @@ paths. See the
 [porting plan](docs/PORTING.md).
 The SSH route remains experimental. See the platform-specific
 [limitations](docs/LIMITATIONS.md).
+
+**Linux approval setup (source candidate).** The Linux helper uses a GTK 3
+control window and a system authentication prompt for each app approval. It
+requires Python 3 with GTK 3 bindings, polkit, and a desktop authentication
+agent. After building and installing the app, an administrator can install
+its bundled policy using the default installation path:
+
+```bash
+sudo install -o root -g root -m 0644 "$HOME/.local/share/codewhale-computer-use/plugin/app/linux/net.codewhale.computer-use.policy" /usr/share/polkit-1/actions/net.codewhale.computer-use.policy
+```
+
+If `XDG_DATA_HOME` was changed, use the installed app's policy path instead.
+Quit and reopen Computer Use after installing the policy. If the policy, GTK,
+or an authentication agent is unavailable, approvals fail closed. The session
+must be local and active. After authentication, the controller minimizes before
+granting access, and remains available from the desktop's window controls. If
+the desktop cannot confirm it minimized, the request is refused. The helper
+does not offer macOS-style remembered host trust on Linux. This controller has
+only been exercised on a disposable Linux desktop; real distributions and
+desktop environments still need qualification.
 
 The server works with MCP hosts including Codewhale, Kimi Code, Claude Code,
 Codex CLI and Cursor. It has zero runtime npm dependencies. Developer
@@ -656,10 +677,11 @@ X11 desktops (Xvfb with openbox, and a full XFCE session) and in the Docker
 test image, at repeats 5 over the 27-task suite. GNOME and KDE sessions have
 not been tested.
 
-These 2026-10-11 results are historical; the current Linux helper cannot
-receive a user approval, so they do not establish a working helper route in
-the 0.13.0 source candidate. Direct mode remains available for development
-when explicitly selected by the user and does not support held gestures.
+These 2026-10-11 results are historical and do not establish the current
+helper route. The 0.13.0 source candidate has a GTK/polkit approval controller;
+its isolated Linux checks do not qualify other desktops. Direct mode remains
+available for development when explicitly selected by the user and does not
+support held gestures.
 
 | route | demonstrated | not demonstrated |
 |---|---|---|
@@ -688,9 +710,8 @@ only), the clipboard and the accessibility tree. Hyprland is unit-tested only.
 Not tested: GNOME or KDE sessions, a real sway login session, real XWayland
 on a desktop, multiple monitors, HiDPI, SSH remote. Receipts are in
 `parity/results/`; [docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md) and
-[docs/LIMITATIONS.md](docs/LIMITATIONS.md) have the detail. The current Linux
-helper approval path and held gestures remain unavailable pending a secure
-approval controller.
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md) have the detail. The Linux helper
+requires the system approval setup above before it can perform held gestures.
 
 **Background input has a native AppKit verification harness** with an independent
 foreground/cursor observer: `node scripts/verify-background-macos.mjs`.

@@ -208,7 +208,13 @@ if [ -z "$NODE" ] || [ ! -x "$NODE" ]; then
   exit 1
 fi
 export CODEWHALE_CU_APP_BUNDLE="$HERE"
-exec "$NODE" "$HERE/plugin/app/daemon.mjs" >> "$LOGDIR/app.log" 2>&1
+PYTHON=/usr/bin/python3
+if [ ! -x "$PYTHON" ] || ! "$PYTHON" -c 'import gi; gi.require_version("Gtk", "3.0"); from gi.repository import Gtk' >> "$LOGDIR/app.log" 2>&1; then
+  echo "$(date -u +%FT%TZ) ${APP_NAME}: Python 3 with GTK 3 is required" >> "$LOGDIR/app.log"
+  command -v notify-send >/dev/null 2>&1 && notify-send "${APP_NAME}" "Install Python 3 and GTK 3 support, then reopen Computer Use."
+  exit 1
+fi
+exec "$PYTHON" "$HERE/plugin/app/linux/controller.py" "$NODE" "$HERE/plugin/app/daemon.mjs" >> "$LOGDIR/app.log" 2>&1
 `;
 
 export function desktopEntry(execPath) {
