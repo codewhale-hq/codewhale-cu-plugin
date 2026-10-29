@@ -2,6 +2,10 @@
 
 ## 0.13.0 — release candidate
 
+- The macOS control panel loads the bundled Computer Use whale-and-pointer icon directly.
+
+- The standalone Linux helper cannot yet receive approvals. The server now refuses at the approval step instead of reporting an approval that the helper cannot use; direct development mode does not support held gestures.
+
 - Linux X11 non-ASCII typing keeps a temporary key mapping in place briefly around each keystroke, without using the clipboard. Concurrent Unicode typing requests for the same user serialize, and the mapping is restored on completion, cancellation or owner disconnect. Python 3 and xmodmap are required; verify the resulting text. (CW-7390)
 
 - The macOS preview has a Close button and a **Close preview** menu-bar action, and hides when its session goes idle or closes. A lost session also expires the panel. Closing it stops that session's preview capture; concurrent sessions no longer share preview files or hide one another's panel. Preview remains off until requested. (CW-7643)
