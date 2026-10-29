@@ -533,7 +533,8 @@ permission** — it never guesses and never half-acts.
 - **Windows** — PowerShell (built in). Recording is unavailable pending
   session-owned recorder cleanup.
 - **Linux** — X11: xdotool, wmctrl, scrot or imagemagick, xclip, and ffmpeg
-  for recording (`x11grab`); python3-pyatspi for the accessibility tree.
+  for recording (`x11grab`); Python 3 and xmodmap for non-ASCII typing;
+  python3-pyatspi for the accessibility tree.
   Wayland: grim screenshots, wl-clipboard and AT-SPI. Keyboard and pointer
   input work on sway and Hyprland (python3 and libxkbcommon, both present
   on those desktops), where the compositor names the app that would
@@ -669,8 +670,9 @@ not been tested.
 
 Known limits: a dialog that is modal only inside its toolkit (Tk's
 `simpledialog`) can let typed text reach the parent window, so click into the
-dialog first; non-ASCII text typed into Chromium can drop characters, so read it
-back with `get_value`. On Wayland, input goes only to the app that sway or
+dialog first. X11 non-ASCII typing holds a temporary key mapping while sending
+input, but delivery is not guaranteed; read it back with `get_value`. On
+Wayland, input goes only to the app that sway or
 Hyprland names as its receiver: the focused window's process for keys, and the
 window under the point for the pointer. It is refused where that cannot be
 told: overlapping floating windows of different apps, overlapping XWayland

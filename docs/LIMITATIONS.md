@@ -696,10 +696,14 @@ recording-file listing remain available on every platform.
   result rather than assuming it.
 - **Keystroke loss is not ruled out.** Thirty controlled click-then-type pairs
   with exact read-back lost nothing, but two earlier mixed runs dropped a
-  character that could not be reproduced. Non-ASCII text typed into Chromium
-  through XTEST drops a character in some strings (30/40 exact under load,
-  35-37/40 idle); GTK and Tk read back exact. For element targets, confirm the
-  text with `get_value`.
+  character that could not be reproduced. Earlier non-ASCII XTEST typing into
+  Chromium dropped characters (30/40 exact under load, 35–37/40 idle). The X11
+  path now holds a spare key mapping while input is sent and restores it on
+  completion, cancellation or owner disconnect. It requires Python 3 and
+  xmodmap; a force-killed helper or a conflicting keymap change may leave a
+  mapping in place.
+  Broader desktop qualification is still needed. For element targets, confirm
+  the text with `get_value`.
 - **AT-SPI needs a `python3` on PATH that imports pyatspi.** The tree walk stops
   at depth 10 and 500 elements.
 - **`get_value` reads at most 4000 characters.** `select_text` with no

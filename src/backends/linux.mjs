@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { run as nativeRun, ExecError, tryJson, have as nativeHave, withSignal, throwIfAborted, wait } from "../exec.mjs";
 import { pngSize } from "../png-size.mjs";
 import { createBrowser } from "../browser-cdp.mjs";
@@ -159,7 +160,7 @@ export function create({ exec } = {}) {
       e.code = "no_session";
       throw e;
     }
-    for (const t of ["xdotool", "wmctrl", "scrot", "import", "grim", "slurp", "wtype", "ydotool", "wf-recorder", "ffmpeg", "magick", "convert", "xclip", "xsel", "wl-copy", "wl-paste", "python3", "xrandr", "swaymsg", "hyprctl"]) {
+    for (const t of ["xdotool", "wmctrl", "scrot", "import", "grim", "slurp", "wtype", "ydotool", "wf-recorder", "ffmpeg", "magick", "convert", "xclip", "xsel", "xmodmap", "wl-copy", "wl-paste", "python3", "xrandr", "swaymsg", "hyprctl"]) {
       tools[t] = await have(t);
     }
     tools.pyatspi = tools.python3 && (await run("python3", ["-c", "import pyatspi"], { timeoutMs: 10_000 })).code === 0;
@@ -979,41 +980,29 @@ print(json.dumps({"found": True, "reason": None, "element": {
       await probeSession();
       await assertKeyboardReady({ target });
       if (session === "x11") {
-        // xdotool `type` remaps a spare keycode for characters absent from the
-        // current keymap. Two failure modes follow: a cased letter produces a
-        // single-symbol key whose XKB level 0 is the lowercase form (Ü → ü),
-        // and consecutive remaps inside one `type` call race the X server's
-        // keymap-change propagation, so non-ASCII chars intermittently drop or
-        // arrive mangled (héllo → hllo, 日本 → 本). Route every non-ASCII char
-        // through `key U<hex>` — one synchronous remap+press+restore per char —
-        // adding Shift only when the char is cased-uppercase, and batch ASCII
-        // runs through `type` as before.
-        let runText = "";
-        const chunks = [];
-        for (const ch of String(text)) {
-          if (ch.codePointAt(0) > 127) {
-            if (runText) { chunks.push(runText); runText = ""; }
-            chunks.push(ch);
-          } else runText += ch;
-        }
-        if (runText) chunks.push(runText);
-        for (const chunk of chunks) {
-          // Supplementary-plane chars are one code point but length 2; test
-          // the code point, not the string length.
-          if (chunk.codePointAt(0) > 127) {
-            const hex = chunk.codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
-            const shift = chunk !== chunk.toLowerCase() ? "shift+" : "";
-            await xdotool(["key", `${shift}U${hex}`]);
-            // Each temp remap restores the keymap as soon as the event is
-            // queued; a lagging app can then read the press against the
-            // restored map and drop it. A short settle narrows that window.
-            // Under heavy host saturation XTEST drops remain possible — that
-            // residual is documented in the suite's known_limitations.
-            await new Promise((r) => setTimeout(r, 30));
-          } else {
-            await xdotool(["type", "--delay", "12", "--", chunk]);
+        if (/[^\x00-\x7f]/u.test(text)) {
+          need("python3", "Unicode input on X11");
+          need("xmodmap", "Unicode input on X11");
+          const owner = await keyboardOwner();
+          const helper = fileURLToPath(new URL("./x11-unicode.py", import.meta.url));
+          if (!fs.existsSync(helper)) throw Object.assign(new ExecError("Update Computer Use to send Unicode on X11."), { code: "app_upgrade_required" });
+          const nonAscii = [...String(text)].filter(ch => ch.codePointAt(0) > 127).length;
+          const timeoutMs = Math.min(120_000, 20_000 + text.length * 15 + nonAscii * 400);
+          const result = await run("python3", [helper], {
+            ownerPipe: true, timeoutMs,
+            onSpawn: child => child.stdin.write(JSON.stringify({ text, window: owner.window }) + "\n"),
+          });
+          const reply = tryJson(result.stdout.trim().split("\n").pop() ?? "", null);
+          if (!reply?.ok || result.aborted || result.timedOut) {
+            throw Object.assign(new ExecError("Unicode input did not complete; observe the target before retrying."), {
+              code: reply?.error ?? (result.aborted ? "cancelled" : "input_outcome_unknown"),
+              requestDispatched: reply?.action_sent !== false,
+            });
           }
+          lastTypedAt = Date.now();
+          return { action_sent: true, chars: text.length, strategy: "x11-keymap", verified: false, verification_required: "observation" };
         }
+        await xdotool(["type", "--delay", "12", "--", text]);
         lastTypedAt = Date.now();
         return { action_sent: true, chars: text.length };
       }
