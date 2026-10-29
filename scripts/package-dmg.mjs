@@ -91,14 +91,26 @@ run("xcrun",["stapler","validate",image]);
 const assessment=spawnSync("spctl",["--assess","--type","open","--context","context:primary-signature","--verbose=2",image],{encoding:"utf8"});
 if(assessment.status!==0||!/source=Notarized Developer ID/.test(assessment.stderr+assessment.stdout)) { fs.rmSync(image,{force:true}); throw new Error(`Gatekeeper did not accept the disk image: ${assessment.stderr||assessment.stdout}`); }
 // Mount the finished image and check what a person will see before recording it.
-const mountPoint=fs.mkdtempSync(path.join(os.tmpdir(),"codewhale-cu-mount-"));
-run("hdiutil",["attach","-nobrowse","-readonly","-noautoopen","-mountpoint",mountPoint,image]);
+const attached=run("hdiutil",["attach","-plist","-nobrowse","-readonly","-noautoopen",image]);
+const devices=[...new Set([...attached.matchAll(/<key>dev-entry<\/key>\s*<string>(\/dev\/disk\d+)(?:s\d+)?<\/string>/g)].map(match=>match[1]))];
 try {
+  const converted=spawnSync("plutil",["-convert","json","-o","-","-"],{input:attached,encoding:"utf8"});
+  if(converted.status!==0) throw new Error(`Could not read disk image mount information: ${converted.stderr}`);
+  const mounted=JSON.parse(converted.stdout)["system-entities"]?.filter(entity=>typeof entity["mount-point"]==="string")??[];
+  if(mounted.length!==1 || !devices.length) throw new Error("The disk image did not mount as one identifiable volume.");
+  const mountPoint=mounted[0]["mount-point"];
   const mountedApp=path.join(mountPoint,`${APP_NAME}.app`);
   if(!fs.existsSync(mountedApp)) throw new Error("The disk image does not contain the app.");
   if(fs.readlinkSync(path.join(mountPoint,"Applications"))!=="/Applications") throw new Error("The disk image lacks the Applications shortcut.");
   verifyReleaseBundle(mountedApp);
-} finally { spawnSync("hdiutil",["detach",mountPoint,"-force"]); fs.rmSync(mountPoint,{recursive:true,force:true}); }
+} finally {
+  const failures=[];
+  for(const device of devices) {
+    const detached=spawnSync("hdiutil",["detach",device,"-force"],{encoding:"utf8"});
+    if(detached.status!==0) failures.push(`${device}: ${detached.stderr || detached.stdout}`);
+  }
+  if(failures.length) throw new Error(`Could not detach disk image: ${failures.join("; ")}`);
+}
 const bytes=fs.readFileSync(image),sha256=crypto.createHash("sha256").update(bytes).digest("hex");
 fs.appendFileSync(path.join(output,"SHA256SUMS.txt"),`${sha256}  ${name}\n`);
 receipt.dmg={archive:name,size:bytes.length,sha256,notarized:true,submissionId:notarization?.id??null};
