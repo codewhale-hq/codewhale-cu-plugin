@@ -320,6 +320,16 @@ async function runStep(step, { task, repCtx, server, ctx, vars, rep, counts }) {
   const stepInfo = { index: counts.index, step: sanitize(step) };
   if (step.restart_server) {
     await server.restart();
+    if (process.platform === "linux") {
+      const originalIndex = counts.index;
+      counts.index = -1;
+      stepInfo.reapproved = [];
+      try {
+        for (const approval of (desktop.prelude?.(task, repCtx) ?? []).filter(s => s.call === "consent_allow")) {
+          stepInfo.reapproved.push(await runStep(approval, { task, repCtx, server, ctx, vars, rep, counts }));
+        }
+      } finally { counts.index = originalIndex; }
+    }
     // Keep currentRaster: its geometry is still needed to convert client
     // sugar into raster pixels — the *server* must be the one rejecting
     // stale state (no_raster / unknown_state), not the runner.
