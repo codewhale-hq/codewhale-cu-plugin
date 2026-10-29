@@ -50,10 +50,10 @@ under test.
 
 ## Resolved non-green rows (2026-09-16)
 
-This run predates the consent check on the app receiving each input, so the
-25/27 below is a historical result, not the current state. The current Docker
-results are the 2026-10-11 rows in `docs/PARITY_MATRIX.md` (23/27 at 5
-repeats, directly and through the desktop helper).
+These runs predate the current consent path and are historical results. The
+standalone Linux helper cannot currently receive user approval, so its older
+parity results do not establish that the current helper route works. See
+`docs/LIMITATIONS.md` for direct mode and held-input limitations.
 
 `docker/run.sh parity --repeats 5` on 2026-09-16 (Chromium 152, Debian 12,
 node 24.21, Xvfb 1600x1200) is **25/27 demonstrated**: every row green except

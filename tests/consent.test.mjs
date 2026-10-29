@@ -686,7 +686,7 @@ test("daemon socket attack test: unconsented client cannot act, model-style cons
   const oldRefusal = await sOld.tool("consent", { action: "allow", app: "FakeApp" });
   assert.equal(oldRefusal.ok, false);
   assert.equal(oldRefusal.error.code, "consent_needs_user");
-  assert.match(oldRefusal.error.message, /Update and restart the Codewhale Computer Use app/);
+  assert.match(oldRefusal.error.message, process.platform === "linux" ? /Linux Computer Use helper cannot receive approvals yet/ : /Update and restart the Codewhale Computer Use app/);
 
   // 2. Helper announces consent capability on fd 3.
   control.write(JSON.stringify({ id: 1, command: "capabilities", consent: 1 }) + "\n");

@@ -62,6 +62,13 @@ See [the release checklist](RELEASE_CHECKLIST.md).
   cannot enforce the exclusions; scoped allowed-app capture remains available.
 - **Other platforms have no equivalent native trust panel.** Windows, Linux,
   HarmonyOS and remote transport qualification remain as described below.
+- **The Linux helper cannot currently receive user approval.** Its standalone
+  launcher does not provide the control channel the helper requires. Requests
+  to approve access are refused; held gestures therefore remain unavailable.
+  An operator may explicitly choose direct mode for development with
+  `CODEWHALE_CU_APP=off` before starting the host, but that mode has no helper
+  controls and cannot perform held gestures. It must not be used to bypass a
+  user's Pause or Stop.
 
 The opt-in `CODEWHALE_CU_NATIVE_PROMPT=1` fallback uses `osascript` only for
 macOS decisions without a helper or host decision path. It is off by default.
@@ -585,8 +592,9 @@ an abruptly killed MCP client from leaving a persistent press behind. A
 mouse-up also refuses when this session owns no press. The gate stays on
 standalone Linux on purpose: X does not release a button or key that a crashed
 client pressed through XTEST, so even an atomic drag can leave a stuck button
-if the server dies mid-gesture. Connect the desktop helper to drag or hold
-keys. On Windows the helper route now carries input once the backend names
+if the server dies mid-gesture. The current Linux helper cannot receive user
+approval, so those gestures remain unavailable until its approval path is
+implemented. On Windows the helper route now carries input once the backend names
 the receiving window (source-only, not yet run on Windows); held input still
 needs the helper and has no native stop control there. UWP and Store apps
 share one host process (`ApplicationFrameHost`), so one approval covers all

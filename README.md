@@ -656,6 +656,11 @@ X11 desktops (Xvfb with openbox, and a full XFCE session) and in the Docker
 test image, at repeats 5 over the 27-task suite. GNOME and KDE sessions have
 not been tested.
 
+These 2026-10-11 results are historical; the current Linux helper cannot
+receive a user approval, so they do not establish a working helper route in
+the 0.13.0 source candidate. Direct mode remains available for development
+when explicitly selected by the user and does not support held gestures.
+
 | route | demonstrated | not demonstrated |
 |---|---|---|
 | isolated Xvfb, direct | 24/27 | the two drag tasks (need the desktop helper); `native.modal_dialog` 0/5 |
@@ -683,8 +688,9 @@ only), the clipboard and the accessibility tree. Hyprland is unit-tested only.
 Not tested: GNOME or KDE sessions, a real sway login session, real XWayland
 on a desktop, multiple monitors, HiDPI, SSH remote. Receipts are in
 `parity/results/`; [docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md) and
-[docs/LIMITATIONS.md](docs/LIMITATIONS.md) have the detail. Helper-route input
-consent needs a plugin release that includes the CW-7245 fix.
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md) have the detail. The current Linux
+helper approval path and held gestures remain unavailable pending a secure
+approval controller.
 
 **Background input has a native AppKit verification harness** with an independent
 foreground/cursor observer: `node scripts/verify-background-macos.mjs`.
