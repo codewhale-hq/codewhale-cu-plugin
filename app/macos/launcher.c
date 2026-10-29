@@ -160,6 +160,13 @@ static NSString *cuPreviewDirectory(void) {
   return [dir stringByAppendingPathComponent:@"preview"];
 }
 
+static NSRect cuPreviewFrame(NSRect screen) {
+  CGFloat insetX=MIN(10,MAX(0,(NSWidth(screen)-38)/2));
+  CGFloat insetY=MIN(10,MAX(0,(NSHeight(screen)-38)/2));
+  CGFloat width=MIN(560,NSWidth(screen)-2*insetX), height=MIN(360,NSHeight(screen)-2*insetY);
+  return NSMakeRect(NSMaxX(screen)-width-insetX,NSMinY(screen)+insetY,width,height);
+}
+
 @interface CUAppDelegate : NSObject <NSApplicationDelegate>
 - (void)pollChild:(NSTimer *)timer;
 - (void)updatePreview:(NSNotification *)notification;
@@ -181,6 +188,7 @@ static NSString *cuPreviewDirectory(void) {
   [self.controls show:nil]; return YES;
 }
 - (void)dismissPreview:(id)sender {
+  if(!self.previewPanel.isVisible) return;
   NSString *owner=self.previewOwner;
   if(owner && ![owner isEqualToString:@"legacy"]) {
     [self.retiredPreviews addObject:owner];
@@ -188,10 +196,10 @@ static NSString *cuPreviewDirectory(void) {
     [@"dismissed" writeToFile:marker atomically:YES encoding:NSUTF8StringEncoding error:nil];
   } else self.legacyPreviewDismissed=YES;
   [self.previewTimer invalidate]; self.previewTimer=nil;
-  [self.previewPanel orderOut:nil]; self.previewOwner=nil;
+  [self.previewPanel orderOut:nil]; self.previewOwner=nil; self.controls.previewItem.enabled=NO;
 }
 - (void)expirePreview:(NSTimer *)timer {
-  [self.previewPanel orderOut:nil]; self.previewOwner=nil; self.previewTimer=nil;
+  [self.previewPanel orderOut:nil]; self.previewOwner=nil; self.previewTimer=nil; self.controls.previewItem.enabled=NO;
 }
 - (void)updatePreview:(NSNotification *)notification {
   NSDictionary *data=notification.userInfo;
@@ -203,7 +211,7 @@ static NSString *cuPreviewDirectory(void) {
     if(owner) [self.retiredPreviews addObject:owner]; else self.legacyPreviewDismissed=NO;
     if([self.previewOwner isEqualToString:key]) {
       [self.previewTimer invalidate]; self.previewTimer=nil;
-      [self.previewPanel orderOut:nil]; self.previewOwner=nil;
+      [self.previewPanel orderOut:nil]; self.previewOwner=nil; self.controls.previewItem.enabled=NO;
     }
     return;
   }
@@ -212,16 +220,18 @@ static NSString *cuPreviewDirectory(void) {
   if(![data[@"show"] boolValue] && ![self.previewOwner isEqualToString:key]) return;
   if([data[@"show"] boolValue]) self.previewOwner=key;
   if (!self.previewPanel) {
-    NSRect screen=NSScreen.mainScreen.visibleFrame;
-    self.previewPanel=[[CUPreviewPanel alloc] initWithContentRect:NSMakeRect(NSMaxX(screen)-580,NSMinY(screen)+40,560,360) styleMask:NSWindowStyleMaskBorderless|NSWindowStyleMaskNonactivatingPanel backing:NSBackingStoreBuffered defer:NO];
+    NSScreen *screen=NSScreen.mainScreen?:NSScreen.screens.firstObject;
+    if(!screen) return;
+    NSRect frame=cuPreviewFrame(screen.visibleFrame);
+    self.previewPanel=[[CUPreviewPanel alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskBorderless|NSWindowStyleMaskNonactivatingPanel backing:NSBackingStoreBuffered defer:NO];
     self.previewPanel.releasedWhenClosed=NO; self.previewPanel.hidesOnDeactivate=NO;
     self.previewPanel.movableByWindowBackground=YES; self.previewPanel.hasShadow=YES;
     self.previewPanel.opaque=NO; self.previewPanel.backgroundColor=[NSColor clearColor];
-    self.previewView=[[CUPreviewView alloc] initWithFrame:NSMakeRect(0,0,560,360)];
+    self.previewView=[[CUPreviewView alloc] initWithFrame:NSMakeRect(0,0,NSWidth(frame),NSHeight(frame))];
     self.previewView.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
     self.previewView.wantsLayer=YES; self.previewView.layer.cornerRadius=10; self.previewView.layer.masksToBounds=YES;
     self.previewPanel.contentView=self.previewView;
-    CUPreviewCloseButton *close=[[[CUPreviewCloseButton alloc] initWithFrame:NSMakeRect(522,8,30,30)] autorelease];
+    CUPreviewCloseButton *close=[[[CUPreviewCloseButton alloc] initWithFrame:NSMakeRect(MAX(0,NSWidth(frame)-38),MIN(8,MAX(0,NSHeight(frame)-30)),MIN(30,NSWidth(frame)),MIN(30,NSHeight(frame)))] autorelease];
     close.bordered=NO; close.image=[NSImage imageWithSystemSymbolName:@"xmark.circle.fill" accessibilityDescription:@"Close preview"];
     close.contentTintColor=NSColor.whiteColor; close.toolTip=@"Close preview";
     [close setAccessibilityLabel:@"Close preview"];
@@ -236,7 +246,16 @@ static NSString *cuPreviewDirectory(void) {
   self.previewView.userX=data[@"user_x"]?[data[@"user_x"] doubleValue]:-1; self.previewView.userY=data[@"user_y"]?[data[@"user_y"] doubleValue]:-1;
   self.previewView.caption=[data[@"title"] isKindOfClass:NSString.class]?data[@"title"]:@"Codewhale activity";
   [self.previewView setNeedsDisplay:YES];
-  if([data[@"show"] boolValue]) [self.previewPanel orderFrontRegardless];
+  BOOL show=[data[@"show"] boolValue];
+  if(show || self.previewPanel.isVisible) {
+    BOOL onScreen=NO;
+    for(NSScreen *screen in NSScreen.screens) if(NSContainsRect(screen.visibleFrame,self.previewPanel.frame)) { onScreen=YES; break; }
+    NSScreen *screen=NSScreen.mainScreen?:NSScreen.screens.firstObject;
+    if(!onScreen && screen) [self.previewPanel setFrame:cuPreviewFrame(screen.visibleFrame) display:NO];
+  }
+  if(show) {
+    [self.previewPanel orderFrontRegardless]; self.controls.previewItem.enabled=YES;
+  }
   [self.previewTimer invalidate];
   self.previewTimer=[NSTimer scheduledTimerWithTimeInterval:65 target:self selector:@selector(expirePreview:) userInfo:nil repeats:NO];
 }

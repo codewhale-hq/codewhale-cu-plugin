@@ -2,7 +2,7 @@
 
 ## 0.13.0 — release candidate
 
-- The macOS preview has a Close button and hides when its session goes idle or closes. A lost session also expires the panel. Closing it stops that session's preview capture; concurrent sessions no longer share preview files or hide one another's panel. Preview remains off until requested. (CW-7643)
+- The macOS preview has a Close button and a **Close preview** menu-bar action, and hides when its session goes idle or closes. A lost session also expires the panel. Closing it stops that session's preview capture; concurrent sessions no longer share preview files or hide one another's panel. Preview remains off until requested. (CW-7643)
 
 - The operating guide that the server sends as MCP `instructions` now fits Codewhale's 4,096-byte limit. At 6,491 bytes, Codewhale cut it partway through "Observe, act, verify", so the model lost the rest of the loop and the pointers to the detailed references. The guide is now 4,015 bytes and keeps every consent, stop and safety rule. The full observe–act–verify loop and `run_actions` details moved verbatim to `references/quick-reference.md`, which the guide says to read before the first action.
 

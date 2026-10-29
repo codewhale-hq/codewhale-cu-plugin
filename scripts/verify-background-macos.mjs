@@ -65,7 +65,7 @@ const parseLines = (stream, consume) => {
 };
 try {
   const probe = start(compile("parity/darwin-probe.m", "probe"), ["--watch"], { stdio: ["ignore", "pipe", "inherit"] });
-  parseLines(probe.stdout, sample => { if (sampling) receipt.samples.push(sample); });
+  parseLines(probe.stdout, sample => { if (sampling) receipt.samples.push({ ...sample, observedAt: new Date().toISOString() }); });
   let initial = await until(() => {
     if(probe.exitCode !== null || probe.signalCode !== null) throw new Error(`Desktop observer exited: ${probe.signalCode ?? probe.exitCode}`);
     return receipt.samples[0];
@@ -176,10 +176,20 @@ try {
   }, "desktop is still after native approval");
   receipt.sampleStart = receipt.samples.length;
   initial = await until(() => receipt.samples[receipt.sampleStart], "post-approval desktop observer");
-  const fixture = start(fixtureBinary, [oracleFile, "--background"], { stdio: "ignore" });
+  const fixtureBundle = path.join(scratch, "Background Fixture.app");
+  const fixtureExecutable = path.join(fixtureBundle, "Contents", "MacOS", "fixture");
+  fs.mkdirSync(path.dirname(fixtureExecutable), { recursive: true });
+  fs.copyFileSync(fixtureBinary, fixtureExecutable);
+  fs.writeFileSync(path.join(fixtureBundle, "Contents", "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>net.codewhale.parity.background.${crypto.randomUUID()}</string><key>CFBundleExecutable</key><string>fixture</string><key>CFBundleName</key><string>Codewhale Background Fixture</string><key>CFBundlePackageType</key><string>APPL</string><key>LSUIElement</key><true/></dict></plist>\n`);
+  start("open", ["-n", "-g", "-W", fixtureBundle, "--args", oracleFile, "--background"], { stdio: "ignore" });
   await until(() => oracle()?.origin, "background fixture");
+  const fixture = { pid: oracle().pid };
+  assert.ok(Number.isSafeInteger(fixture.pid) && fixture.pid > 0, "owned fixture records its process identity");
+  ownedApps.push(fixture.pid);
   receipt.targetPid = fixture.pid;
-  assert.notEqual(initial.frontmost_pid, fixture.pid, "the fixture remains in the background after approval");
+  receipt.fixtureBeforeBind = receipt.samples.at(-1);
+  assert.notEqual(receipt.fixtureBeforeBind?.frontmost_pid, fixture.pid, "the fixture remains in the background before Codewhale binds");
   await tool("open_application", { pid: fixture.pid, activate: false });
   let state = await observe();
   assert.equal(state.pid, fixture.pid);
@@ -334,12 +344,12 @@ try {
     receipt.pairing.cleanup = `Revoke Codewhale release check (Key ${receipt.pairing.helperKeyLabel}) in Computer Use. No private key is saved by this verifier.`;
     process.stderr.write(`${receipt.pairing.cleanup}\n`);
   }
-  // LaunchServices owns the decoy process; its PID comes from the unique,
-  // locally created fixture oracle, never a user's app lookup.
+  // LaunchServices owns these processes; their PIDs come from locally created
+  // fixture oracles, never a user's app lookup.
   for (const pid of ownedApps) {
     try { process.kill(pid, "SIGTERM"); } catch (error) {
       if (error.code !== "ESRCH") {
-        (receipt.cleanupErrors ??= []).push(`Decoy ${pid}: ${error.message}`);
+        (receipt.cleanupErrors ??= []).push(`Fixture ${pid}: ${error.message}`);
         receipt.ok = false; process.exitCode = 1;
       }
     }

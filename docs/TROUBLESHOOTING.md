@@ -48,7 +48,8 @@ The candidate's compact **Codewhale controller** names the app and has a direct
 reachable when the app is hidden or covered. It is Codewhale UI, not an
 identical macOS system indicator. The
 live screenshot preview stays off unless you ask to watch; `preview` with
-`enabled:true` opens it. Its Close button or `enabled:false` stops watching.
+`enabled:true` opens it. Its Close button, the menu-bar **Close preview** action,
+or `enabled:false` stops watching.
 It also hides after 60 seconds of session inactivity or when the session ends.
 
 **Pause** cancels pending requests and releases held input. **Resume** allows

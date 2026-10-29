@@ -77,6 +77,7 @@ static NSView *cuSeparator(void) {
 @property(retain) NSButton *pauseButton;
 @property(retain) NSButton *stopButton;
 @property(retain) NSButton *updateButton;
+@property(retain) NSMenuItem *previewItem;
 @property(retain) NSMenuItem *pauseItem;
 @property(retain) NSMenuItem *stopItem;
 @property(retain) NSDictionary *state;
@@ -113,6 +114,8 @@ static NSView *cuSeparator(void) {
   NSMenu *menu=[NSMenu new];
   menu.autoenablesItems=NO;
   NSMenuItem *show=[menu addItemWithTitle:@"Computer Use…" action:@selector(show:) keyEquivalent:@""]; show.target=self;
+  self.previewItem=[menu addItemWithTitle:@"Close preview" action:@selector(dismissPreview:) keyEquivalent:@""];
+  self.previewItem.target=NSApp.delegate; self.previewItem.enabled=NO;
   [menu addItem:NSMenuItem.separatorItem];
   self.pauseItem=[menu addItemWithTitle:@"Pause" action:@selector(pause:) keyEquivalent:@""]; self.pauseItem.target=self;
   self.stopItem=[menu addItemWithTitle:@"Stop computer use" action:@selector(stop:) keyEquivalent:@""]; self.stopItem.target=self;

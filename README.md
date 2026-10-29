@@ -355,7 +355,8 @@ containing the controlled app and a cyan cursor labeled Codewhale. The preview
 refreshes on a timer while a session is bound (`CODEWHALE_CU_PREVIEW_REFRESH_MS`,
 default 1000; 0 disables), so it behaves like a live view of the app instead of
 a frozen still; its cursor is separate from the hardware pointer. Use the
-Close button or `enabled: false` to stop watching. The panel also hides after
+Close button, **Close preview** in the Computer Use menu bar, or `enabled: false`
+to stop watching. The panel also hides after
 60 seconds without session activity or when that session closes; a session
 that disappears stops renewing the panel, which then expires.
 
