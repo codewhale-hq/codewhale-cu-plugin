@@ -8,7 +8,10 @@ keyboard focus.
 1. In **Accessibility**, choose **Allow…**, then enable **Codewhale Computer
    Use** in System Settings. This permits reading controls and sending input.
 2. In **Screen Recording**, choose **Allow…**, then enable the same app. This
-   permits app screenshots. macOS may require quitting and reopening the app.
+   permits app screenshots. If it is not listed, use **+** in System Settings
+   and select **Codewhale Computer Use** from Applications. macOS may require
+   quitting and reopening the app, or show another screen-capture approval when
+   you first use it.
 3. Return to the panel. It should show **Ready**. The granted permission rows
    remain available under **Settings…**.
 4. In Codewhale's **Connectors**, install, review and enable the ordinary

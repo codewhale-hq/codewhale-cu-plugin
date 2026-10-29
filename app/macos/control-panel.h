@@ -52,12 +52,31 @@ static NSView *cuSeparator(void) {
 #include "consent-panel.h"
 #include "session-pill.h"
 
+@interface CUControlDocumentView : NSView
+@end
+@implementation CUControlDocumentView
+- (BOOL)isFlipped { return YES; }
+@end
+
+@interface CUControlWindow : NSWindow
+@end
+@implementation CUControlWindow
+- (BOOL)makeFirstResponder:(NSResponder *)responder {
+  BOOL accepted=[super makeFirstResponder:responder];
+  if(accepted && [responder isKindOfClass:NSView.class]) [(NSView *)responder scrollRectToVisible:[(NSView *)responder bounds]];
+  return accepted;
+}
+@end
+
 @interface CUControlPanel : NSObject <NSMenuDelegate, NSWindowDelegate>
 @property(retain) CUConsentPanel *consent;
 @property(retain) CUSessionPillController *sessionPill;
 @property(retain) NSStatusItem *item;
 @property(retain) NSTimer *timer;
 @property(retain) NSWindow *window;
+@property(retain) NSScrollView *bodyScroll;
+@property(retain) NSView *bodyDocument;
+@property(retain) NSStackView *body;
 @property(retain) NSTextField *accessStatus;
 @property(retain) NSTextField *screenStatus;
 @property(retain) NSTextField *activity;
@@ -67,6 +86,7 @@ static NSView *cuSeparator(void) {
 @property(retain) NSTextField *updateStatus;
 @property(retain) NSTextField *trustError;
 @property(retain) NSStackView *hostRows;
+@property(retain) NSScrollView *hostsScroll;
 @property(retain) NSLayoutConstraint *hostsHeight;
 @property(retain) NSDictionary *renderedHosts;
 @property(retain) LAContext *trustAuthContext;
@@ -139,7 +159,7 @@ static NSView *cuSeparator(void) {
   cuSend(@"status");
 }
 - (void)buildWindow {
-  self.window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,480,260) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable backing:NSBackingStoreBuffered defer:NO];
+  self.window=[[CUControlWindow alloc] initWithContentRect:NSMakeRect(0,0,480,260) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable backing:NSBackingStoreBuffered defer:NO];
   self.window.title=@"Computer Use"; self.window.releasedWhenClosed=NO; self.window.delegate=self;
   self.window.collectionBehavior=NSWindowCollectionBehaviorMoveToActiveSpace;
   NSImage *appIcon=[[[NSImage alloc] initWithContentsOfFile:[NSBundle.mainBundle pathForResource:@"AppIcon" ofType:@"icns"]] autorelease];
@@ -166,6 +186,7 @@ static NSView *cuSeparator(void) {
   NSStackView *activity=cuStack(@[self.activity,self.targets,self.activityButtons,self.errorLabel],NSUserInterfaceLayoutOrientationVertical,10);
   self.hostRows=cuStack(@[],NSUserInterfaceLayoutOrientationVertical,12); self.hostRows.translatesAutoresizingMaskIntoConstraints=YES;
   NSScrollView *hostsScroll=[[[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,432,40)] autorelease];
+  self.hostsScroll=hostsScroll;
   hostsScroll.translatesAutoresizingMaskIntoConstraints=NO; hostsScroll.hasVerticalScroller=YES; hostsScroll.hasHorizontalScroller=NO; hostsScroll.autohidesScrollers=YES; hostsScroll.drawsBackground=NO;
   hostsScroll.documentView=self.hostRows;
   self.hostsHeight=[hostsScroll.heightAnchor constraintEqualToConstant:40]; self.hostsHeight.active=YES;
@@ -186,9 +207,15 @@ static NSView *cuSeparator(void) {
   NSButton *done=cuButton(@"Done",self,@selector(close:));
   NSStackView *navigation=cuStack(@[self.settingsButton,done],NSUserInterfaceLayoutOrientationHorizontal,8);
   NSStackView *body=cuStack(@[head,activity,self.trustError,self.setupSection,self.settingsSection,navigation],NSUserInterfaceLayoutOrientationVertical,20);
+  self.body=body;
   body.detachesHiddenViews=YES;
-  [self.window.contentView addSubview:body];
-  [NSLayoutConstraint activateConstraints:@[[body.topAnchor constraintEqualToAnchor:self.window.contentView.topAnchor constant:24],[body.leadingAnchor constraintEqualToAnchor:self.window.contentView.leadingAnchor constant:24],[body.trailingAnchor constraintEqualToAnchor:self.window.contentView.trailingAnchor constant:-24],[body.bottomAnchor constraintLessThanOrEqualToAnchor:self.window.contentView.bottomAnchor constant:-24]]];
+  NSScrollView *scroll=[[[NSScrollView alloc] initWithFrame:self.window.contentView.bounds] autorelease];
+  scroll.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable; scroll.borderType=NSNoBorder;
+  scroll.drawsBackground=NO; scroll.hasVerticalScroller=YES; scroll.hasHorizontalScroller=NO; scroll.autohidesScrollers=YES; scroll.scrollerStyle=NSScrollerStyleOverlay;
+  NSView *document=[[[CUControlDocumentView alloc] initWithFrame:self.window.contentView.bounds] autorelease];
+  scroll.documentView=document; self.bodyScroll=scroll; self.bodyDocument=document;
+  [self.window.contentView addSubview:scroll]; [document addSubview:body];
+  [NSLayoutConstraint activateConstraints:@[[body.topAnchor constraintEqualToAnchor:document.topAnchor constant:24],[body.leadingAnchor constraintEqualToAnchor:document.leadingAnchor constant:24],[body.trailingAnchor constraintEqualToAnchor:document.trailingAnchor constant:-24],[body.bottomAnchor constraintLessThanOrEqualToAnchor:document.bottomAnchor constant:-24]]];
   for(NSView *view in body.arrangedSubviews) [view.widthAnchor constraintEqualToAnchor:body.widthAnchor].active=YES;
   for(NSView *view in @[self.targets,self.checkResult,self.errorLabel,self.updateStatus,trustDetail,self.trustError]) [view.widthAnchor constraintEqualToConstant:432].active=YES;
   [self renderHosts];
@@ -231,6 +258,7 @@ static NSView *cuSeparator(void) {
   NSArray *records=[(cuHostTrustRecords?:@[]) filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *record, NSDictionary *bindings) { return showHistory || [record[@"decision"] isEqual:@"allow"]; }]];
   NSDictionary *viewState=@{@"snapshot":snapshot,@"records":records,@"authenticating":@(self.trustAuthContext!=nil),@"actionError":self.trustActionError?:@"",@"connected":@(cuControlFD>=0)};
   if([self.renderedHosts isEqual:viewState]) return;
+  BOOL recordsChanged=![self.renderedHosts[@"records"] isEqual:records];
   self.renderedHosts=viewState;
   for(NSView *row in [[self.hostRows.arrangedSubviews copy] autorelease]) { [self.hostRows removeArrangedSubview:row]; [row removeFromSuperview]; }
   if(!records.count) {
@@ -267,6 +295,10 @@ static NSView *cuSeparator(void) {
   [self.hostRows layoutSubtreeIfNeeded];
   CGFloat height=MAX(24,self.hostRows.fittingSize.height);
   self.hostRows.frame=NSMakeRect(0,0,412,height); self.hostsHeight.constant=MIN(180,height);
+  if(recordsChanged) {
+    [self.hostsScroll.contentView scrollToPoint:NSMakePoint(0,MAX(0,height-self.hostsHeight.constant))];
+    [self.hostsScroll reflectScrolledClipView:self.hostsScroll.contentView];
+  }
 }
 - (void)toggleHost:(NSSwitch *)sender {
   BOOL enabling=sender.state==NSControlStateValueOn;
@@ -342,16 +374,25 @@ static NSView *cuSeparator(void) {
     self.updateButton.title=[state[@"update"][@"available"] boolValue]?[NSString stringWithFormat:@"Install %@…",state[@"update"][@"version"]]:@"Check for updates…";
   }
   self.updateStatus.hidden=self.updateStatus.stringValue.length==0;
-  [self.window.contentView layoutSubtreeIfNeeded];
-  // Intrinsic rows grow for several targets, errors and larger system fonts.
-  CGFloat height=MAX(240,self.window.contentView.subviews.firstObject.fittingSize.height+48);
-  if(fabs(height-self.window.contentView.bounds.size.height)>1) [self.window setContentSize:NSMakeSize(480,height)];
+  [self.bodyDocument layoutSubtreeIfNeeded];
+  CGFloat height=MAX(240,self.body.fittingSize.height+48);
+  NSScreen *screen=self.window.screen?:NSScreen.mainScreen?:NSScreen.screens.firstObject;
+  NSRect visible=screen?screen.visibleFrame:NSZeroRect;
+  CGFloat chrome=NSHeight([self.window frameRectForContentRect:NSMakeRect(0,0,480,height)])-height;
+  CGFloat windowHeight=screen?MIN(height,MAX(1,NSHeight(visible)-chrome)):height;
+  if(fabs(windowHeight-self.window.contentView.bounds.size.height)>1) [self.window setContentSize:NSMakeSize(480,windowHeight)];
+  [self.bodyDocument setFrameSize:NSMakeSize(480,MAX(height,self.bodyScroll.contentSize.height))];
+  if(screen) {
+    NSRect frame=self.window.frame;
+    NSPoint origin=NSMakePoint(MAX(NSMinX(visible),MIN(NSMinX(frame),NSMaxX(visible)-NSWidth(frame))),MAX(NSMinY(visible),MIN(NSMinY(frame),NSMaxY(visible)-NSHeight(frame))));
+    if(!NSEqualPoints(origin,frame.origin)) [self.window setFrameOrigin:origin];
+  }
 }
 - (void)tick:(NSTimer *)timer {
   BOOL ax=AXIsProcessTrusted(), sc=CGPreflightScreenCaptureAccess();
   self.setupSection.hidden=ax && sc && !self.settingsVisible;
   self.accessStatus.stringValue=ax?@"Granted · read controls and send input":@"Required to read controls and send input";
-  self.screenStatus.stringValue=sc?@"Granted · capture app windows":@"Required for app screenshots";
+  self.screenStatus.stringValue=sc?@"Granted · capture app windows":@"Required for screenshots. If missing in Settings, add Computer Use with +.";
   self.accessButton.title=ax?@"Settings…":@"Allow…"; self.screenButton.title=sc?@"Settings…":@"Allow…";
   cuSend(@"status");
 }
