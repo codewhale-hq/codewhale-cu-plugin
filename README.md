@@ -695,9 +695,13 @@ support held gestures.
 | XFCE session, desktop helper | 24/27 | `browser.unicode_type` 4/5; `control.permission_denied`; `native.modal_dialog` 0/5 |
 | Wayland: headless sway 1.9 (XWayland for Tk), direct | 21/27 | the two drag tasks; `browser.upload` 0/5 (GTK's header-bar file chooser puts Open where the task's X11-layout click does not reach); `browser.unicode_type` 0/5 (Chromium on Wayland drops 🐳); `native.unicode_type` 4/5; `native.modal_dialog` 0/5 |
 
-Known limits: a dialog that is modal only inside its toolkit (Tk's
-`simpledialog`) can let typed text reach the parent window, so click into the
-dialog first. X11 non-ASCII typing holds a temporary key mapping while sending
+Known limits: on X11, input to a window is refused while a visible dialog
+explicitly identifies that window as its parent. Interact with the dialog or
+close it before returning to the parent. This conservative rule also blocks
+some non-modal dialogs, and cannot identify every toolkit dialog or eliminate
+window changes between the check and input. On Wayland a toolkit-modal dialog
+can still let typed text reach its parent, so click into the dialog first.
+X11 non-ASCII typing holds a temporary key mapping while sending
 input, but delivery is not guaranteed; read it back with `get_value`. On
 Wayland, input goes only to the app that sway or
 Hyprland names as its receiver: the focused window's process for keys, and the

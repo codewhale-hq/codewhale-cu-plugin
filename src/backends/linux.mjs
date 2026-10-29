@@ -228,7 +228,7 @@ export function create({ exec } = {}) {
   }
 
   /** Managed windows bottom to top: id, owner (wm class, process, pid), client and frame rectangles. Null without a window manager. */
-  async function x11Windows() {
+  async function x11Windows({ requireMetadata = false } = {}) {
     const stack = await softRun("xprop", ["-root", "_NET_CLIENT_LIST_STACKING"]);
     if (!/_NET_CLIENT_LIST_STACKING\(WINDOW\)/.test(stack)) return null;
     const order = [...stack.matchAll(/0x[0-9a-f]+/gi)].map((m) => normWindowId(m[0])).filter(Boolean);
@@ -236,7 +236,7 @@ export function create({ exec } = {}) {
     const windows = [];
     for (const id of order) {
       const meta = listed.get(id);
-      if (!meta) continue;
+      if (!meta) { if (requireMetadata) return null; continue; }
       const client = parseXwininfo(await softRun("xwininfo", ["-id", id]));
       const ext = parseFrameExtents(await softRun("xprop", ["-id", id, "_NET_FRAME_EXTENTS"]));
       const frame = client ? {
@@ -258,6 +258,37 @@ export function create({ exec } = {}) {
   }
 
   const ownerUnknown = (message) => Object.assign(new ExecError(message), { code: "input_owner_unknown" });
+
+  async function assertNoRelatedDialog(win, windows) {
+    if (!win) return;
+    for (const candidate of windows) {
+      if (candidate.id === win.id) continue;
+      if (!candidate.frame) throw ownerUnknown("a window's geometry could not be read while checking for an open dialog; observe the desktop and retry");
+      if (!candidate.viewable) continue;
+      const result = await run("xprop", ["-id", candidate.id, "WM_TRANSIENT_FOR", "_NET_WM_WINDOW_TYPE"], { timeoutMs: 5_000 });
+      throwIfAborted();
+      if (result.code !== 0) throw ownerUnknown("a window changed while checking for an open dialog; observe the desktop and retry");
+      const parent = /WM_TRANSIENT_FOR\(WINDOW\):\s*window id #\s*(0x[0-9a-f]+)/i.exec(result.stdout)?.[1];
+      if (normWindowId(parent) === win.id && /_NET_WM_WINDOW_TYPE_DIALOG\b/.test(result.stdout)) {
+        throw Object.assign(new ExecError("A related dialog is open. Interact with the dialog, or close it before interacting with its parent window."), { code: "window_blocked_by_dialog" });
+      }
+    }
+  }
+
+  async function assertPointerWindowReady(x, y) {
+    await probeSession();
+    if (session !== "x11") return;
+    const windows = await x11Windows({ requireMetadata: true });
+    if (!windows) throw ownerUnknown("the window manager's stacking order or window metadata could not be read; observe the desktop and retry");
+    let win = null;
+    for (const candidate of [...windows].reverse()) {
+      if (!candidate.frame) throw ownerUnknown("a window's geometry could not be read while checking for an open dialog");
+      if (!candidate.viewable) continue;
+      const f = candidate.frame;
+      if (x >= f.x && y >= f.y && x < f.x + f.w && y < f.y + f.h) { win = candidate; break; }
+    }
+    await assertNoRelatedDialog(win, windows);
+  }
 
   /** The app whose window has keyboard focus. Fails closed: never guesses. */
   async function keyboardOwner() {
@@ -330,6 +361,14 @@ export function create({ exec } = {}) {
 
   /** Refuse keystrokes when an open menu would take them, or when the element's window is not the active one. */
   async function assertKeyboardReady({ target, allowEscape = false } = {}) {
+    if (session === "x11") {
+      const windows = await x11Windows({ requireMetadata: true });
+      if (!windows) throw ownerUnknown("the window manager's stacking order or window metadata could not be read; observe the desktop and retry");
+      const active = normWindowId((await softRun("xdotool", ["getactivewindow"])).trim());
+      const win = windows.find((w) => w.id === active);
+      if (!win?.frame || !win.viewable) throw ownerUnknown("no readable, visible managed application window has keyboard focus; click the target app's window first, then retry");
+      await assertNoRelatedDialog(win, windows);
+    }
     if (target?.app_ref?.name) {
       const owner = await keyboardOwner();
       if (!(await ownerIsApp(owner, target.app_ref.name))) {
@@ -936,6 +975,8 @@ print(json.dumps({"found": True, "reason": None, "element": {
     mouse_move: ({ target }) => inputMove(target.x, target.y),
     left_click_drag: async ({ from_target: from, to }) => {
       requireInputOwner();
+      await assertPointerWindowReady(from.x, from.y);
+      await assertPointerWindowReady(to.x, to.y);
       await inputMove(from.x, from.y);
       throwIfAborted();
       mouseHeld = true;
@@ -952,6 +993,8 @@ print(json.dumps({"found": True, "reason": None, "element": {
     left_mouse_down: async ({ target } = {}) => {
       requireInputOwner();
       await probeSession();
+      const at = target ?? await cursorPoint();
+      await assertPointerWindowReady(at.x, at.y);
       if (target) await inputMove(target.x, target.y);
       throwIfAborted();
       mouseHeld = true;
@@ -967,6 +1010,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
       return { action_sent: true };
     },
     scroll: async ({ target, direction = "down", amount = 3 }) => {
+      await assertPointerWindowReady(target.x, target.y);
       await inputMove(target.x, target.y);
       if (session === "x11") {
         const buttons = { down: 5, up: 4, right: 7, left: 6 };
@@ -1402,6 +1446,7 @@ print(json.dumps({"found": True, "reason": None, "element": {
   }
 
   async function inputChain(x, y, act) {
+    await assertPointerWindowReady(x, y);
     await inputMove(x, y);
     await act();
     return { action_sent: true, at: { x: Number(x), y: Number(y) } };

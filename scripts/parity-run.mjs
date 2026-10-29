@@ -524,9 +524,10 @@ async function runStep(step, { task, repCtx, server, ctx, vars, rep, counts }) {
       if (name === "get_app_state" && res.parsed?.ok) {
         lastAppState = { state_id: res.parsed.state_id, elements: res.parsed.elements ?? [], truncated: res.parsed.truncated, args };
       }
-      if (step.expect_error) {
-        if (!(res.isError && res.parsed?.error?.code === step.expect_error)) {
-          throw new Error(`expected error ${step.expect_error}, got ${res.isError ? res.parsed?.error?.code : "ok"}`);
+      const expectedError = step.expect_error_by_session?.[desktop.sessionType()] ?? step.expect_error;
+      if (expectedError) {
+        if (!(res.isError && res.parsed?.error?.code === expectedError)) {
+          throw new Error(`expected error ${expectedError}, got ${res.isError ? res.parsed?.error?.code : "ok"}`);
         }
         if (step.expect_message_contains && !String(res.parsed?.error?.message ?? "").includes(step.expect_message_contains)) {
           throw new Error(`error message lacks "${step.expect_message_contains}": ${res.parsed?.error?.message}`);

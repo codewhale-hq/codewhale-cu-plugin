@@ -62,7 +62,16 @@ function fakeLinux(t, kind, onRun, waylandInput) {
     run: async (cmd, args) => {
       const call = { cmd, args, signal: currentSignal() };
       calls.push(call);
-      return await onRun?.(call) ?? success;
+      const result = await onRun?.(call);
+      if (result) return result;
+      if (kind === "x11") {
+        if (cmd === "xprop" && args[0] === "-root") return { ...success, stdout: "_NET_CLIENT_LIST_STACKING(WINDOW): window id # 0x42\n" };
+        if (cmd === "wmctrl" && args[0] === "-lpx") return { ...success, stdout: "0x00000042 0 123 fixture.Fixture localhost Fixture\n" };
+        if (cmd === "xwininfo") return { ...success, stdout: "Absolute upper-left X: 0\nAbsolute upper-left Y: 0\nWidth: 800\nHeight: 600\nMap State: IsViewable\n" };
+        if (cmd === "xprop" && args[0] === "-id") return { ...success, stdout: "_NET_FRAME_EXTENTS(CARDINAL) = 0, 0, 0, 0\n" };
+        if (cmd === "xdotool" && args[0] === "getactivewindow") return { ...success, stdout: "66\n" };
+      }
+      return success;
     },
   } });
   return { backend, calls };

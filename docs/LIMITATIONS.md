@@ -332,9 +332,9 @@ desktop the user's pointer lives on, here Xvfb `:0` with openbox standing in
 for a login session): direct 23/27, desktop helper 25/27. Summaries:
 `parity/results/linux-xvfb-isolated-2026-10-11.json`,
 `linux-xvfb-isolated-helper-2026-10-11.json`, `linux-x11-2026-10-11.json`,
-`linux-x11-helper-2026-10-11.json`. Every task is demonstrated on at least
-one route except `native.modal_dialog` (0/5 everywhere, the Tk toolkit-modal
-limitation below). The drag rows need the helper and are untested on the
+`linux-x11-helper-2026-10-11.json`. In those runs every task was demonstrated on
+at least one route except `native.modal_dialog` (0/5 everywhere). The drag
+rows need the helper and are untested on the
 direct route; `control.permission_denied` is a direct-route check and is
 untested on the helper route; shared direct `browser.unicode_type` was 4/5
 (one dropped non-ASCII character, the XTEST limitation below). Those four runs
@@ -626,17 +626,17 @@ recording-file listing remain available on every platform.
   across the agent's own tool calls is 0px on every macOS task (the cursor is
   restored); the foreground is taken on the tasks whose gestures have no
   accessibility equivalent, and the matrix names them.
-- **Tk modal dialogs under stacking WMs (linux-x11 shared and isolated).** The
-  Tk `simpledialog` is only toolkit-modal (`WM_TRANSIENT_FOR` + `grab_set`, no
-  `_NET_WM_STATE_MODAL`), so a click on the parent takes X input focus under
-  KWin, openbox and metacity alike; the grab blocks the click's effect but the
-  typed answer then never reaches the dialog. `native.modal_dialog` fails on
-  every stacking WM tested (verified under openbox and metacity on the isolated
-  route, 2026-09-16); the 2026-09-07 isolated receipt's 5/5 predates a window
-  manager on `:99` or ran under different WM conditions — that receipt is stale.
-  Re-run 2026-10-11: 0/5 on the direct and the desktop-helper route. Codewhale
-  does not move focus to a transient window on its own (that would misdirect
-  input for non-modal tool windows): click into the dialog before typing.
+- **Related dialogs on X11.** Tk `simpledialog` is toolkit-modal
+  (`WM_TRANSIENT_FOR` + `grab_set`, no `_NET_WM_STATE_MODAL`); on stacking
+  window managers a parent click can steal focus even though the dialog's
+  grab blocks the click. The current source refuses pointer and keyboard
+  input to a window while a visible dialog explicitly names it as its parent.
+  Interact with the dialog or close it before returning to the parent. Some
+  non-modal dialogs have the same metadata and are refused too. Dialogs that
+  lack that relationship or type are not covered, and X11 state can change
+  between the check and input. Older 2026-10-11 receipts recorded the Tk task
+  failing 0/5; the later isolated openbox candidate passed the direct route.
+  Wayland retains the toolkit-modal limitation.
 - **Tk posted menus do not receive synthetic key events.** `native.menu_command`
   was reworked to click the menu item with the pointer; keyboard traversal of
   a posted Tk menu is not achievable with XTEST input on this platform.

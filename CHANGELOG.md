@@ -2,6 +2,8 @@
 
 ## 0.13.0 — release candidate
 
+- On Linux X11, input to a window is refused while a visible related dialog names it as its parent, preventing a parent click from stealing focus in the exercised Tk dialog. Some non-modal dialogs are also refused; other dialog types and window-state races remain limitations.
+
 - The macOS control panel loads the bundled Computer Use whale-and-pointer icon directly.
 
 - The Linux helper has a GTK control window and per-app, per-session polkit approval. It keeps the helper's private control channel, requires a root-owned matching policy and a fresh authentication challenge, and stops on controller disconnect. The source candidate has only been exercised in a disposable Linux environment; real desktop qualification remains open. Direct development mode has no helper controls or held gestures.

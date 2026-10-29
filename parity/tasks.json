@@ -242,7 +242,7 @@
         { "call": "type", "args": { "text": "blocked" } },
         { "call": "left_click", "args": { "target": { "client": [100, 330] } } },
         { "expect": { "path": "dialog", "equals": "open" } },
-        { "call": "left_click", "args": { "target": { "client": [450, 40] } } },
+        { "call": "left_click", "args": { "target": { "client": [450, 40] } }, "expect_error_by_session": { "x11": "window_blocked_by_dialog", "xvfb": "window_blocked_by_dialog" } },
         { "sleep": 400 },
         { "expect": { "path": "applied", "equals": "" } },
         { "call": "type", "args": { "text": "answer" } },
@@ -251,8 +251,6 @@
         { "expect": { "path": "dialog_result", "equals": "answer" } }
       ],
       "known_limitations": {
-        "linux-x11": "KWin does not give the transient Tk dialog X input focus, so typed text does not reach it; passes on the isolated Xvfb route",
-        "linux-xvfb": "Tk's simpledialog is toolkit-modal only: it sets WM_TRANSIENT_FOR + grab_set but no _NET_WM_STATE_MODAL, so a stacking WM lets the parent Apply click take X input focus (verified under openbox and metacity). The grab still blocks the click (applied stays empty) but the typed answer then goes to the parent and the dialog stays open. Passes where the WM keeps focus on the transient.",
         "linux-wayland": "the same toolkit-modal gap under sway: the Apply click focuses the parent window (sway focuses on click), Tk's grab still blocks the click (applied stays empty), and the typed answer then goes to the parent, so the dialog stays open."
       }
     },
