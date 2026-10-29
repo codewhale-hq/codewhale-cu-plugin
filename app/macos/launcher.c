@@ -126,13 +126,13 @@ static void cuDrawCursor(CGFloat x, CGFloat y, NSColor *fill, NSString *label) {
 - (BOOL)isFlipped { return YES; }
 - (void)drawRect:(NSRect)dirty {
   [[NSColor colorWithCalibratedWhite:0.08 alpha:1] setFill]; NSRectFill(self.bounds);
-  if(self.caption.length)
-    [self.caption drawAtPoint:NSMakePoint(8,6) withAttributes:@{NSFontAttributeName:[NSFont boldSystemFontOfSize:11],NSForegroundColorAttributeName:[NSColor whiteColor],NSBackgroundColorAttributeName:[NSColor colorWithCalibratedWhite:0.08 alpha:0.75]}];
   if (!self.image) return;
   NSSize size=self.image.size;
   CGFloat scale=MIN(self.bounds.size.width/size.width,self.bounds.size.height/size.height);
   NSRect frame=NSMakeRect((self.bounds.size.width-size.width*scale)/2,(self.bounds.size.height-size.height*scale)/2,size.width*scale,size.height*scale);
   [self.image drawInRect:frame fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+  if(self.caption.length)
+    [self.caption drawAtPoint:NSMakePoint(8,6) withAttributes:@{NSFontAttributeName:[NSFont boldSystemFontOfSize:11],NSForegroundColorAttributeName:[NSColor whiteColor],NSBackgroundColorAttributeName:[NSColor colorWithCalibratedWhite:0.08 alpha:0.75]}];
   if(self.pointerX>=0 && self.pointerX<=1 && self.pointerY>=0 && self.pointerY<=1)
     cuDrawCursor(frame.origin.x+self.pointerX*frame.size.width, frame.origin.y+self.pointerY*frame.size.height,
       [NSColor colorWithCalibratedRed:0.2 green:0.88 blue:0.94 alpha:1], @"Codewhale");
@@ -148,11 +148,29 @@ static void cuDrawCursor(CGFloat x, CGFloat y, NSColor *fill, NSString *label) {
 - (BOOL)canBecomeMainWindow { return NO; }
 @end
 
+@interface CUPreviewCloseButton : NSButton
+@end
+@implementation CUPreviewCloseButton
+- (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
+@end
+
+static NSString *cuPreviewDirectory(void) {
+  NSString *dir=NSProcessInfo.processInfo.environment[@"CODEWHALE_CU_STATE_DIR"];
+  if(!dir.length) dir=[NSHomeDirectory() stringByAppendingPathComponent:@".codewhale-cu"];
+  return [dir stringByAppendingPathComponent:@"preview"];
+}
+
 @interface CUAppDelegate : NSObject <NSApplicationDelegate>
 - (void)pollChild:(NSTimer *)timer;
 - (void)updatePreview:(NSNotification *)notification;
+- (void)dismissPreview:(id)sender;
+- (void)expirePreview:(NSTimer *)timer;
 @property(retain) CUPreviewPanel *previewPanel;
 @property(retain) CUPreviewView *previewView;
+@property(retain) NSTimer *previewTimer;
+@property(copy) NSString *previewOwner;
+@property(retain) NSMutableSet *retiredPreviews;
+@property BOOL legacyPreviewDismissed;
 @property(retain) CUControlPanel *controls;
 @end
 @implementation CUAppDelegate
@@ -162,14 +180,39 @@ static void cuDrawCursor(CGFloat x, CGFloat y, NSColor *fill, NSString *label) {
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)visible {
   [self.controls show:nil]; return YES;
 }
+- (void)dismissPreview:(id)sender {
+  NSString *owner=self.previewOwner;
+  if(owner && ![owner isEqualToString:@"legacy"]) {
+    [self.retiredPreviews addObject:owner];
+    NSString *marker=[cuPreviewDirectory() stringByAppendingPathComponent:[owner stringByAppendingString:@".dismissed"]];
+    [@"dismissed" writeToFile:marker atomically:YES encoding:NSUTF8StringEncoding error:nil];
+  } else self.legacyPreviewDismissed=YES;
+  [self.previewTimer invalidate]; self.previewTimer=nil;
+  [self.previewPanel orderOut:nil]; self.previewOwner=nil;
+}
+- (void)expirePreview:(NSTimer *)timer {
+  [self.previewPanel orderOut:nil]; self.previewOwner=nil; self.previewTimer=nil;
+}
 - (void)updatePreview:(NSNotification *)notification {
   NSDictionary *data=notification.userInfo;
-  if (![data[@"enabled"] boolValue]) { [self.previewPanel orderOut:nil]; return; }
+  NSString *owner=[data[@"owner"] isKindOfClass:NSString.class]?data[@"owner"]:nil;
+  if(owner && ![[[NSUUID alloc] initWithUUIDString:owner] autorelease]) return;
+  NSString *key=owner?:@"legacy";
+  if(!self.retiredPreviews) self.retiredPreviews=[NSMutableSet set];
+  if (![data[@"enabled"] boolValue]) {
+    if(owner) [self.retiredPreviews addObject:owner]; else self.legacyPreviewDismissed=NO;
+    if([self.previewOwner isEqualToString:key]) {
+      [self.previewTimer invalidate]; self.previewTimer=nil;
+      [self.previewPanel orderOut:nil]; self.previewOwner=nil;
+    }
+    return;
+  }
+  if(owner && ([self.retiredPreviews containsObject:owner] || [[NSFileManager defaultManager] fileExistsAtPath:[cuPreviewDirectory() stringByAppendingPathComponent:[owner stringByAppendingString:@".dismissed"]]])) return;
+  if(!owner && self.legacyPreviewDismissed) return;
+  if(![data[@"show"] boolValue] && ![self.previewOwner isEqualToString:key]) return;
+  if([data[@"show"] boolValue]) self.previewOwner=key;
   if (!self.previewPanel) {
     NSRect screen=NSScreen.mainScreen.visibleFrame;
-    // Borderless: no titlebar or edge chrome — the preview floats as the
-    // captured window alone. It still moves by background drag and closes
-    // via preview(enabled:false) or the control panel.
     self.previewPanel=[[CUPreviewPanel alloc] initWithContentRect:NSMakeRect(NSMaxX(screen)-580,NSMinY(screen)+40,560,360) styleMask:NSWindowStyleMaskBorderless|NSWindowStyleMaskNonactivatingPanel backing:NSBackingStoreBuffered defer:NO];
     self.previewPanel.releasedWhenClosed=NO; self.previewPanel.hidesOnDeactivate=NO;
     self.previewPanel.movableByWindowBackground=YES; self.previewPanel.hasShadow=YES;
@@ -178,14 +221,24 @@ static void cuDrawCursor(CGFloat x, CGFloat y, NSColor *fill, NSString *label) {
     self.previewView.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
     self.previewView.wantsLayer=YES; self.previewView.layer.cornerRadius=10; self.previewView.layer.masksToBounds=YES;
     self.previewPanel.contentView=self.previewView;
+    CUPreviewCloseButton *close=[[[CUPreviewCloseButton alloc] initWithFrame:NSMakeRect(522,8,30,30)] autorelease];
+    close.bordered=NO; close.image=[NSImage imageWithSystemSymbolName:@"xmark.circle.fill" accessibilityDescription:@"Close preview"];
+    close.contentTintColor=NSColor.whiteColor; close.toolTip=@"Close preview";
+    [close setAccessibilityLabel:@"Close preview"];
+    close.wantsLayer=YES; close.layer.backgroundColor=[NSColor colorWithCalibratedWhite:0.08 alpha:0.8].CGColor; close.layer.cornerRadius=15;
+    close.autoresizingMask=NSViewMinXMargin|NSViewMaxYMargin;
+    close.target=self; close.action=@selector(dismissPreview:);
+    [self.previewView addSubview:close];
   }
-  NSString *file=[NSHomeDirectory() stringByAppendingPathComponent:@".codewhale-cu/preview/latest.png"];
+  NSString *file=[cuPreviewDirectory() stringByAppendingPathComponent:owner?[owner stringByAppendingString:@".png"]:@"latest.png"];
   self.previewView.image=[[[NSImage alloc] initWithContentsOfFile:file] autorelease];
   self.previewView.pointerX=data[@"x"]?[data[@"x"] doubleValue]:-1; self.previewView.pointerY=data[@"y"]?[data[@"y"] doubleValue]:-1;
   self.previewView.userX=data[@"user_x"]?[data[@"user_x"] doubleValue]:-1; self.previewView.userY=data[@"user_y"]?[data[@"user_y"] doubleValue]:-1;
   self.previewView.caption=[data[@"title"] isKindOfClass:NSString.class]?data[@"title"]:@"Codewhale activity";
   [self.previewView setNeedsDisplay:YES];
   if([data[@"show"] boolValue]) [self.previewPanel orderFrontRegardless];
+  [self.previewTimer invalidate];
+  self.previewTimer=[NSTimer scheduledTimerWithTimeInterval:65 target:self selector:@selector(expirePreview:) userInfo:nil repeats:NO];
 }
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
   forward(SIGTERM);

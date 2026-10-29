@@ -43,7 +43,7 @@ const targetSchema = {
 };
 
 export const TOOLS = [
-  { name: "preview", description: "macOS: show or hide the nonactivating app preview with the drawn agent cursor. Off by default; enable only when the user asks to watch. While enabled, actions update the captured window and cursor without moving the real pointer. Set enabled:false to hide it.", inputSchema: { type: "object", properties: { enabled: { type: "boolean" }, computer: computerParam }, additionalProperties: false } },
+  { name: "preview", description: "macOS: show or hide the nonactivating app preview with the drawn agent cursor. Off by default; enable only when the user asks to watch. The person can close it directly; it also hides when the session is idle or ends. Set enabled:false to stop watching.", inputSchema: { type: "object", properties: { enabled: { type: "boolean" }, computer: computerParam }, additionalProperties: false } },
   // ---- computers (switching is a default) ----
   {
     name: "computer", description: "The computer registry. action list | switch | register | spawn | remove. switch/register/spawn/remove take `id`; register also takes transport (local|ssh|hdc) plus host/port/user/knownHosts/target/installAgent; spawn takes transport (docker) plus optional image/label and creates a task-owned disposable desktop that remove or session end destroys. Prefer a spawned computer for work that does not need the user's own session. Every other tool also accepts `computer` to switch stickily on use.",

@@ -635,7 +635,8 @@ recording-file listing remain available on every platform.
 - **macOS zoom** has single-Retina live receipts; nested zoom and mixed-display
   child rasters remain untested.
 - **macOS has an optional agent preview** with a drawn cursor. It stays hidden
-  until requested with `preview(enabled:true)`. Other platforms
+  until requested with `preview(enabled:true)` and can be closed directly.
+  It hides while the session is idle and expires if the session disappears. Other platforms
   have no equivalent preview.
 - **Each MCP session has its own input binding.** Session protocol 2 separates
   backend state in the long-running daemon. New clients also require background

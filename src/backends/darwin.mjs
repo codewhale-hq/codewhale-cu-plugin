@@ -203,15 +203,6 @@ export function leaseAccounting(r) {
 
 export function create({ exec }) {
   const runL = (cmd, args, opts) => exec.run(cmd, args, opts);
-  // The preview panel stays hidden until requested. Once enabled, actions
-  // update its floating capture and drawn cursor without moving the real pointer.
-  // The preview panel is live while a session is bound and working: after the
-  // first successful capture a timer keeps refreshing it, so the person
-  // watches the app instead of a frozen still. A session with no bind, preview
-  // or action for CODEWHALE_CU_PREVIEW_IDLE_MS (default 60 s) stops capturing
-  // until its next action — hosts keep idle sessions open for hours.
-  // CODEWHALE_CU_PREVIEW_REFRESH_MS=0 disables the loop (tests, headless); the
-  // floors keep a hostile value tolerable.
   const state = { activeDisplay: 1, lastRaster: null, inputApp: null, foregroundInput: false, previewEnabled: false, pointer: null, heldDrag: null };
   // Shared-surface politeness: front leases, real-pointer gestures,
   // foreground keys and activations wait for a gap in the user's hardware
@@ -226,22 +217,40 @@ export function create({ exec }) {
   let previewLoop = null;
   let previewBusy = false;
   let previewActiveAt = 0;
+  let previewOwner = null;
+  let previewVisible = false;
+  let previewWork = Promise.resolve();
   function stopPreviewLoop() { if (previewLoop) { clearInterval(previewLoop); previewLoop = null; } }
-  // A hide must not race an in-flight capture: its late preview_notify would
-  // re-show a panel that was just dismissed.
-  async function quiescePreview() { for (let i = 0; i < 20 && previewBusy; i++) await wait(25); }
+  const previewPath = (owner, extension) => path.join(stateDir(), "preview", `${owner}.${extension}`);
+  const previewDismissed = (owner) => owner && fs.existsSync(previewPath(owner, "dismissed"));
+  async function retirePreview(disable = false) {
+    const owner = previewOwner;
+    previewOwner = null;
+    previewVisible = false;
+    if (disable) state.previewEnabled = false;
+    stopPreviewLoop();
+    if (!owner) return;
+    try { await native("preview_notify", { enabled: false, owner }); }
+    finally {
+      for (const ext of ["png", "next.png", "dismissed"]) fs.rmSync(previewPath(owner, ext), { force: true });
+    }
+  }
   const browser = createBrowser();
   function startPreviewLoop() {
     if (previewLoop) return;
     const ms = Number(process.env.CODEWHALE_CU_PREVIEW_REFRESH_MS ?? 1000);
-    if (!Number.isFinite(ms) || ms <= 0) return;
+    const refreshMs = Number.isFinite(ms) && ms > 0 ? Math.max(50, ms) : 0;
     const idleMs = Math.max(5_000, Number(process.env.CODEWHALE_CU_PREVIEW_IDLE_MS) || 60_000);
+    let refreshedAt = Date.now();
     previewLoop = setInterval(() => {
       if (previewBusy || !state.previewEnabled || !state.inputApp) return;
-      if (Date.now() - previewActiveAt > idleMs) { stopPreviewLoop(); return; }
+      if (previewDismissed(previewOwner)) { retirePreview(true).catch(() => {}); return; }
+      if (Date.now() - previewActiveAt > idleMs) { retirePreview().catch(() => {}); return; }
+      if (!refreshMs || Date.now() - refreshedAt < refreshMs) return;
+      refreshedAt = Date.now();
       previewBusy = true;
       updatePreview(false).catch(() => {}).finally(() => { previewBusy = false; });
-    }, Math.max(50, ms));
+    }, refreshMs ? Math.min(refreshMs, 1000) : 1000);
     previewLoop.unref?.();
   }
 
@@ -327,7 +336,7 @@ export function create({ exec }) {
     }
     if (state.previewEnabled && state.inputApp && ["type", "key_event", "bg_pointer", "bg_key", "set_value", "select_text", "perform_action", "hit_test", "click_element", "scroll_element", "focus_element"].includes(tool)) {
       previewActiveAt = Date.now();
-      try { await updatePreview(); } catch (error) { result.preview_error = error.message; }
+      try { await updatePreview(!previewVisible); } catch (error) { result.preview_error = error.message; }
     }
     return result;
   }
@@ -355,26 +364,42 @@ export function create({ exec }) {
     }
   }
 
-  async function updatePreview(show = false) {
-    const win = await native("window_info", { app_ref: state.inputApp });
-    const dir = path.join(stateDir(), "preview");
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const temp = path.join(dir, "next.png"), file = path.join(dir, "latest.png");
-    const r = await runL("screencapture", ["-x", "-o", "-l", String(win.window_id), "-t", "png", temp], { timeoutMs: 8000 });
-    if (r.code !== 0) throw new ExecError(`background preview capture failed: ${r.stderr}`);
-    fs.renameSync(temp, file);
-    const p = state.pointer;
-    // The user's own hardware cursor goes on the preview too, so the panel
-    // shows both pointers in the same window-relative space.
-    let userCursor = null;
-    try { userCursor = await native("cursor_position"); } catch {}
-    await native("preview_notify", { enabled: true, show, title: `Codewhale · ${win.name} · ${state.foregroundInput ? "Shared desktop control" : "Background app control"}`, x: p ? (p.x-win.points.x)/win.points.w : -1, y: p ? (p.y-win.points.y)/win.points.h : -1,
-      user_x: userCursor && Number.isFinite(userCursor.x) ? (userCursor.x-win.points.x)/win.points.w : -1,
-      user_y: userCursor && Number.isFinite(userCursor.y) ? (userCursor.y-win.points.y)/win.points.h : -1 });
-    // Any successful capture (bind, explicit preview, action refresh) starts
-    // the live refresh; the tick itself re-enters this function as a no-op.
-    if (state.previewEnabled && state.inputApp) startPreviewLoop();
-    return { enabled: true, file, app: state.inputApp, pointer: p };
+  function updatePreview(show = false) {
+    if (!state.previewEnabled || !state.inputApp) return Promise.resolve({ enabled: false });
+    if (previewDismissed(previewOwner)) return retirePreview(true).then(() => ({ enabled: false }));
+    previewOwner ??= crypto.randomUUID();
+    const owner = previewOwner;
+    const work = previewWork.catch(() => {}).then(async () => {
+      const current = () => state.previewEnabled && previewOwner === owner && !previewDismissed(owner);
+      if (!current()) return { enabled: false };
+      const dir = path.join(stateDir(), "preview");
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const temp = previewPath(owner, "next.png"), file = previewPath(owner, "png");
+      try {
+        const win = await native("window_info", { app_ref: state.inputApp });
+        if (!current()) return { enabled: false };
+        const r = await runL("screencapture", ["-x", "-o", "-l", String(win.window_id), "-t", "png", temp], { timeoutMs: 8000 });
+        if (r.code !== 0) throw new ExecError(`background preview capture failed: ${r.stderr}`);
+        if (!current()) return { enabled: false };
+        fs.renameSync(temp, file);
+        const p = state.pointer;
+        let userCursor = null;
+        try { userCursor = await native("cursor_position"); } catch {}
+        if (!current()) return { enabled: false };
+        await native("preview_notify", { enabled: true, show, owner, title: `Codewhale · ${win.name} · ${state.foregroundInput ? "Shared desktop control" : "Background app control"}`, x: p ? (p.x-win.points.x)/win.points.w : -1, y: p ? (p.y-win.points.y)/win.points.h : -1,
+          user_x: userCursor && Number.isFinite(userCursor.x) ? (userCursor.x-win.points.x)/win.points.w : -1,
+          user_y: userCursor && Number.isFinite(userCursor.y) ? (userCursor.y-win.points.y)/win.points.h : -1 });
+        if (!current()) return { enabled: false };
+        if (show) previewVisible = true;
+        startPreviewLoop();
+        return { enabled: true, file, app: state.inputApp, pointer: p };
+      } finally {
+        fs.rmSync(temp, { force: true });
+        if (!current()) fs.rmSync(file, { force: true });
+      }
+    });
+    previewWork = work.catch(() => {});
+    return work;
   }
 
   // ---------- pointer input ----------
@@ -691,14 +716,7 @@ export function create({ exec }) {
   }
 
   async function closeSession() {
-    // The preview this session showed must not outlive the session; a panel
-    // from a dead session has no owner to refresh or hide it.
-    stopPreviewLoop();
-    await quiescePreview();
-    if (state.previewEnabled && state.inputApp) {
-      try { await native("preview_notify", { enabled: false }); } catch { /* hiding is best-effort */ }
-    }
-    state.previewEnabled = false;
+    await retirePreview(true).catch(() => {});
     await browser.close().catch(() => {});
     const owned = [...rec.entries()];
     for (const [, recording] of owned) requestRecordingStop(recording);
@@ -803,14 +821,9 @@ export function create({ exec }) {
     // identity unmatchable.
     state.inputApp = { pid: p.pid, ...(p.bundle_id ? { bundle_id: p.bundle_id } : {}), ...(p.name ? { name: p.name } : {}) };
     state.foregroundInput = !!activate;
-    // Refresh an enabled watch panel on bind; a capture failure (e.g. missing Screen
-    // Recording) must never block the bind itself. The first successful
-    // capture also starts the refresh loop so the panel stays live while the
-    // session works.
     if (state.previewEnabled) {
       previewActiveAt = Date.now();
-      previewBusy = true;
-      updatePreview(true).catch(() => {}).finally(() => { previewBusy = false; });
+      updatePreview(true).catch(() => {});
     }
     return { launched, activate, keyboard_delivery: activate ? "foreground-guarded" : "process", input_scope: activate ? "shared-desktop" : "application", shared_pointer: false, pointer_route: "window-record", isolated_desktop: false, url: urlArg ?? null, resolved: p?.found ? { name: p.name, pid: p.pid, bundle_id: p.bundle_id, frontmost: p.frontmost } : null,
       ...(Number.isFinite(p?.yield_ms) && p.yield_ms > 0 ? { yield_ms: p.yield_ms } : {}) };
@@ -1000,9 +1013,10 @@ export function create({ exec }) {
       return { found: !!r?.found, element: r?.element ?? null, reason: r?.reason ?? null };
     },
     preview: async ({ enabled = true } = {}) => {
-      state.previewEnabled = enabled;
-      if (!enabled) { stopPreviewLoop(); await quiescePreview(); await native("preview_notify", { enabled: false }); return { enabled: false }; }
+      if (!enabled) { await retirePreview(true); return { enabled: false }; }
       if (!state.inputApp) throw new ExecError("open_application first to choose the preview app");
+      await retirePreview();
+      state.previewEnabled = true;
       previewActiveAt = Date.now();
       return updatePreview(true);
     },

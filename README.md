@@ -354,9 +354,10 @@ Only when the user asks to watch, enable `preview` with `enabled: true` to show 
 containing the controlled app and a cyan cursor labeled Codewhale. The preview
 refreshes on a timer while a session is bound (`CODEWHALE_CU_PREVIEW_REFRESH_MS`,
 default 1000; 0 disables), so it behaves like a live view of the app instead of
-a frozen still; its cursor is separate from the hardware pointer. Close the
-panel or use `enabled: false` to hide it — and the session that showed the
-panel hides it when it closes, so no panel outlives its session.
+a frozen still; its cursor is separate from the hardware pointer. Use the
+Close button or `enabled: false` to stop watching. The panel also hides after
+60 seconds without session activity or when that session closes; a session
+that disappears stops renewing the panel, which then expires.
 
 ### Consent and shared-machine manners on the local computer
 
