@@ -201,6 +201,9 @@ async function requireUserDecision(params, name, args) {
   if (targetComputer && targetComputer.transport === "local" && targetComputer.owned !== true
       && ((name === "consent_allow" && typeof args.confirm !== "string") || name === "app_script")) {
     app = process.env.CODEWHALE_CU_APP === "off" ? null : await hello({ timeoutMs: 1_500 });
+    if (app && process.platform === "linux" && !(Number(app.consentProtocol) >= 1)) {
+      throw new ServerError("consent_needs_user", "The running Linux Computer Use helper cannot receive an approval. Update and restart the Codewhale Computer Use app, or use CODEWHALE_CU_APP=off for direct input without held gestures.");
+    }
     if (app && Number(app.consentProtocol) >= 1) {
       if (name === "consent_allow" && args.scope === "foreground") {
         const rep = await appExec(app).remote({ tool: "consent_request", kind: "allow_foreground" }, { timeoutMs: 130_000 });
