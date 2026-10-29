@@ -219,7 +219,7 @@ export async function installApp({ dist = path.join(ROOT, "dist"), login = false
     const deadline = Date.now() + 20_000;
     let nextLaunch = 0;
     while (!running && Date.now() < deadline) {
-      if (Date.now() >= nextLaunch) { launchApp({ launch: r.launch }); nextLaunch = Date.now() + 5_000; }
+      if (Date.now() >= nextLaunch) { launchApp({ path: r.path }); nextLaunch = Date.now() + 5_000; }
       await new Promise((s) => setTimeout(s, 400));
       running = await hello({ timeoutMs: 1_000 });
     }
