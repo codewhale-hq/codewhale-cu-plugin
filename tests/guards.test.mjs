@@ -14,6 +14,7 @@ import path from "node:path";
 import url from "node:url";
 import { checkAppScript, appScriptMode } from "../src/app-script-policy.mjs";
 import { helperStaleness, newerVersion } from "../src/app-socket.mjs";
+process.env.CODEWHALE_CU_APPROVAL = "strict";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");

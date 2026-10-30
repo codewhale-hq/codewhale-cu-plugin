@@ -20,20 +20,17 @@ keyboard focus.
    Computer Use plugin from a stable published plugin release, then start a
    task. The portable plugin release asset is planned for 0.13.0 and is not
    yet published; see [distribution](DISTRIBUTION.md). With the 0.13.0 candidate
-   plugin and helper, the first request to read or operate this Mac opens the
-   native trust panel. Choose
-   **Trust until revoked…** and confirm with Touch ID or your Mac password.
-   Choose **Deny** to refuse.
+   plugin and helper there is nothing further to approve: standard approval
+   (the default on a Mac) opens every app you have not denied.
 
-Codewhale proves the same installation key across connections, so changing apps,
-tasks or models does not ask again. Hosts without a persistent pairing key get
-approval for that connection. This is key pairing, not verification of the
-host's vendor code signature; see the [trust boundary](LIMITATIONS.md).
-App exclusions, exact-script approval and consequential-action confirmations
-still apply. `consent {action:"status"}` reports current helper trust without
-opening a prompt.
+`request_access` and `consent {action:"status"}` report `approval:"standard"`.
+App exclusions, Pause/Stop, exact-script approval and consequential-action
+confirmations still apply. Writing `{"mode":"strict"}` to `~/.codewhale-cu/approval.json` restores the
+native trust panel (**Trust until revoked…**, confirmed with Touch ID or your
+Mac password); that is key pairing, not verification of the host's vendor code
+signature, see the [trust boundary](LIMITATIONS.md).
 
-The native trust flow and compact Codewhale controller are 0.13.0 candidate
+The compact Codewhale controller and strict-mode trust flow are 0.13.0 candidate
 features. A signed candidate passed human approval, reconnect after helper
 restart, background input/capture and human revocation on one maintainer Mac.
 The simplified native UI and release packaging still need qualification;
@@ -85,9 +82,9 @@ or foreground movement makes the isolation result inconclusive.
 | Input refused with `window_blocked_by_dialog` (Linux X11) | Interact with the related dialog, or close it before returning to its parent window. Some non-modal dialogs use the same window metadata and are refused too. |
 | `window_not_capturable` after opening or changing a Mac window | Wait for the window to finish appearing, then observe its windows again and retry. A window that remains unavailable cannot be captured through that route. |
 | Input refused with `input_owner_unknown` (Linux, Windows) | No window manager is publishing its stacking order, or the Wayland compositor is not sway or Hyprland, or windows of two apps overlap at the point. Run a window manager (openbox works on Xvfb), use X11, or move the overlapping window. |
-| No trust panel appears | Check `request_access` for the helper version and owner, then `consent {action:"status"}`. An already trusted installation needs no new prompt. Discovery/status alone does not ask; the first content/action request does. Both plugin and helper need the new host-trust protocol. Source changes alone do not update an installed client. |
+| No trust panel appears | Expected in the default standard approval mode, which asks nothing. `request_access` shows `approval`; only `strict` opens the panel on the first content/action request. In strict mode check the helper version and owner, then `consent {action:"status"}`; an already trusted installation needs no new prompt. Both plugin and helper need the new host-trust protocol. Source changes alone do not update an installed client. |
 | Asked again after each connection | A host without a persistent private pairing key receives connection-scoped approval. For Codewhale, verify the installed plugin is current and its existing secret store is available. Do not copy secrets or edit saved trust to suppress prompts. |
-| Two approval prompts | Older clients can show their own consent card before the helper panel. A first script also needs its exact-script approval after installation trust. Ordinary app changes do not require per-app prompts on the updated route. |
+| A consent or "Let Codewhale use your Mac" prompt still appears | You are on strict approval, an older helper, or an older Codewhale that still loads the built-in 0.12.1 plugin; check `request_access` for `approval` and the plugin version, then see "Which plugin copy is running" below. Older clients can show their own consent card before the helper panel. A first script also needs its exact-script approval after installation trust. Ordinary app changes do not require per-app prompts on the updated route. |
 | `app_denied` or `consent_declined` | The person refused access. Continue without that app; do not rename the target or retry through another tool. |
 | `host_revoked` | The person revoked installation access. Only they can reconsider through the native controls; a new task or model must not work around it. |
 | `host_auth_failed` or `host_auth_required` | The connection did not prove its pairing key. Restart the updated MCP connection. Do not reuse another session's lease or proof. |
@@ -128,3 +125,25 @@ aside, and restore the saved bundle as **Codewhale Computer Use.app**. Open
 it, check permissions and start a fresh task. Old sessions and stopped input
 are not replayed. Only the two newest backups are kept (`CODEWHALE_CU_BACKUPS_KEEP`
 raises that); copy one elsewhere if you need an older build.
+
+## Which plugin copy is running
+
+Some Codewhale 0.10.2 builds embed a Computer Use bundle (0.12.1) and write it
+to `~/.codewhale/builtin-plugins/snapshots/` under the plugin id
+`builtin/<hash>/computer-use`. Discovery keeps one plugin per name and ranks
+built-in above user, so that embedded copy hides a user-installed 0.13.0 copy
+before enabled state is consulted. Verified in an isolated home with the
+`ff466b2ed0bf` build: with both present only the built-in is listed, and after
+the built-in is disabled the list still shows only the disabled built-in and no
+Computer Use server runs. Disabling the built-in does not hand the name to the
+user copy.
+
+The fix is an engine build that does not embed the bundle. Verified in an
+isolated home: `~/.local/bin/codewhale` (`3400ebb5c93b`) lists no built-in, and
+a user install of 0.13.0 is then the only Computer Use plugin; `~/.local/bin/codew`
+(`ff466b2ed0bf`) is the embedding build. Run an engine that does not embed it,
+install the plugin with `codewhale install path:<checkout>`, then review and
+enable it in the TUI (`/plugin trust computer-use`, `/plugin enable computer-use`)
+and reconnect the `computer` MCP server. The review and enablement are yours;
+the plugin cannot do them or disable its predecessor. `request_access` reports
+`approval`; if that field is missing, the running server predates standard mode.

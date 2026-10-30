@@ -8,6 +8,7 @@ import zlib from 'node:zlib';
 import crypto from 'node:crypto';
 import { create, leaseVerdict, leaseAccounting } from '../src/backends/darwin.mjs';
 import { withSignal, currentSignal, runInputLease } from '../src/exec.mjs';
+process.env.CODEWHALE_CU_APPROVAL = "strict";
 
 // Simulate the native lease process: it owns cleanup itself, keeping the
 // original app identity even if the JS backend is rebound before release.

@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import url from "node:url";
+process.env.CODEWHALE_CU_APPROVAL = "strict";
 
 const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
 const XTERM = { name: "xterm", comm: "xterm", pid: 4242, wm_class: "xterm.XTerm", title: "root", window: "0x00e0000c" };

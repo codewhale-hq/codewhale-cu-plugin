@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import url from "node:url";
 import { spawn } from "node:child_process";
+process.env.CODEWHALE_CU_APPROVAL = "strict";
 
 const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
 const FAKE = { name: "FakeApp", pid: 4242, bundle_id: "com.fake.app", frontmost: true };

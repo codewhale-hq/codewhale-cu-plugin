@@ -1,26 +1,29 @@
 // Per-app consent ledger: which applications this host may drive on each
 // computer, and whether it may take the shared pointer/foreground at all.
 //
-// The model is the one the on-computer agent products converged on: the app,
-// not the tool, is the unit of trust. The first call that targets an app —
-// binding input to it, observing it by name, or acting through a bound or
-// element target — refuses with consent_required until a decision exists.
-// Decisions are "allow" or "deny"; a bare grant lives for this server session
-// (the host asks again next task), remember:true persists it to consent.json.
+// In strict approval mode (src/approval-mode.mjs) the app, not the tool, is the
+// unit of trust: the first call that targets an app — binding input to it,
+// observing it by name, or acting through a bound or element target — refuses
+// with consent_required until a decision exists. In standard mode an app with
+// no recorded decision is admitted by the callers in mcp/server.mjs and
+// src/app-handler.mjs; the OS grants, Pause/Stop and explicit denies are the
+// controls. A deny wins in both modes.
+// Decisions are "allow" or "deny"; a bare grant lives for this server session,
+// remember:true persists it to consent.json.
 //
 // Two scopes:
 //   apps        — keyed by resolved identity (bundle id, name, pid)
 //   foreground  — optional computer-wide override; app approval otherwise covers activation
 //
 // This is a model-level ledger, not an OS sandbox: a determined agent with
-// another channel could still reach an app. What it buys is the honest part —
-// no accidental touches, every first contact visible, and a deny the host can
+// another channel could still reach an app. What it buys is a deny the host can
 // actually enforce on this surface.
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { stateDir } from "./registry.mjs";
+import { approvalMode } from "./approval-mode.mjs";
 
 // Persisted allows are signed. consent.json is a file any process of this
 // user can write, so an allow counts only when it carries a MAC under the
@@ -233,6 +236,31 @@ export function revoke(computerId, keys) {
   return { removed };
 }
 
+const launched = new Map();
+export function noteLaunched(computerId, app) {
+  if (!Number.isInteger(app?.pid) || app.pid <= 0) return;
+  const key = sessionKey(computerId);
+  if (!launched.has(key)) launched.set(key, new Map());
+  launched.get(key).set(app.pid, { bundle_id: app.bundle_id ?? null, name: app.name ?? null });
+}
+export function ownsKill(computerId, apps, want) {
+  const stripped = (name) => String(name ?? "").trim().replace(/\.app$/i, "").toLowerCase();
+  const hits = (Array.isArray(apps) ? apps : []).filter((a) => (want.pid == null || a.pid === want.pid)
+    && (!want.bundle_id || String(a.bundle_id ?? "").toLowerCase() === String(want.bundle_id).trim().toLowerCase())
+    && (!want.name || stripped(a.name) === stripped(want.name)));
+  if (hits.length !== 1) return false;
+  const entry = launched.get(sessionKey(computerId))?.get(hits[0].pid);
+  return !!entry && entry.bundle_id === (hits[0].bundle_id ?? null) && entry.name === (hits[0].name ?? null);
+}
+export const KILL_NOT_OWNED = "Computer Use quits only apps it launched in this session. Ask the user to quit this app themselves; in strict approval mode they can allow it for this app.";
+
+export function anyDenied(computerId) {
+  const host = hostGrant(computerId);
+  if (host && [...host.exclusions].some((key) => key !== "scope:foreground")) return true;
+  for (const [key, entry] of session.get(sessionKey(computerId)) ?? []) if (key !== "scope:foreground" && entry.decision === "deny") return true;
+  return !host && Object.values(persistedEntries(computerId)).some((entry) => entry.decision === "deny");
+}
+
 export function anyAllowed(computerId) {
   if (hostGrant(computerId)) return true;
   for (const [key, entry] of session.get(sessionKey(computerId)) ?? []) if (key !== "scope:foreground" && entry.decision === "allow") return true;
@@ -282,11 +310,12 @@ export function status(computerId) {
   }
   const fg = foregroundDecision(computerId);
   const host = hostGrant(computerId);
-  return { computer: computerId, apps, foreground: fg.state === "undecided" ? null : fg, ...(host ? { host: { trusted: true, persisted: host.persisted, exclusions: [...host.exclusions] } } : {}) };
+  return { computer: computerId, approval: approvalMode(), apps, foreground: fg.state === "undecided" ? null : fg, ...(host ? { host: { trusted: true, persisted: host.persisted, exclusions: [...host.exclusions] } } : {}) };
 }
 
 /** Drop this session's grants for a computer whose route went away. */
 export function dropSession(computerId) {
   session.delete(sessionKey(computerId));
+  launched.delete(sessionKey(computerId));
   if (computerId === "local") hostAccess.delete(currentSession());
 }

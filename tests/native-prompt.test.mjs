@@ -11,6 +11,7 @@ import path from "node:path";
 import url from "node:url";
 import { spawn } from "node:child_process";
 import { createNativePrompt, describeDecision, visible, liveMarker, judgeMarker, isPromptProcess, DIALOG_SCRIPT, DIALOG_TITLE, OSASCRIPT, DECLINED_MESSAGE, MARKER_FILE } from "../src/native-prompt.mjs";
+process.env.CODEWHALE_CU_APPROVAL = "strict";
 
 const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
 const FAKE_OSASCRIPT = url.pathToFileURL(path.join(ROOT, "tests", "fixtures", "fake-osascript.mjs")).href;

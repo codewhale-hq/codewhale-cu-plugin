@@ -11,6 +11,7 @@ import path from "node:path";
 import url from "node:url";
 import { spawn } from "node:child_process";
 import { handle, issueAppScriptToken } from "../src/app-handler.mjs";
+process.env.CODEWHALE_CU_APPROVAL = "strict";
 
 const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
 

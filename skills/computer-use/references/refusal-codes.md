@@ -32,7 +32,10 @@ stop; never change targets or routes to bypass it.
 
 | code | meaning | move |
 | --- | --- | --- |
-| `background_focus_required` | background mode refuses raw pointer gestures (the window route borrows key focus) | use element targets; explicitly select the approved app with activate:true when the authorized task needs focus |
+| `background_focus_required` | strict approval mode, or a held chord / web value replacement, would need keyboard focus | use element targets; select the app with activate:true when the task needs focus |
+| `app_upgrade_required` | the running helper predates the brief focus lease | update and restart the Codewhale Computer Use app, or use an accessibility action |
+| `kill_not_owned` | standard approval quits only apps this session launched | ask the person to quit that app themselves |
+| `app_not_identified` | no app is named, bound or identifiably frontmost | pass `app_ref`, or `open_application` first |
 | `bg_dispatch_unavailable` | the window-routed pointer cannot be resolved on this helper | update Computer Use or use element targets — the user's cursor is never used instead |
 | `real_pointer_refused` | a request tried to drive the user's cursor | there is no such route; use the window-routed pointer tools |
 | `background_scroll_unavailable` | no scrollbar at that point | target an observed scroll area |
@@ -99,11 +102,10 @@ stop; never change targets or routes to bypass it.
 | `cancelled` | the host cancelled the request | the input may or may not have landed — observe before retrying |
 | `timeout` | the request exceeded its deadline | observe; only retry after confirming the first attempt did not land |
 
-`background_focus_required` means this path would borrow keyboard focus and
-was refused before delivery. Use accessibility, browser control or a separate
-computer, or explicitly select the same approved app with `activate:true` if
-the authorized task needs focus. A typing pause does not authorize a different
-app or override a denial.
+`background_focus_required` means this path would take keyboard focus in a mode
+that does not allow it, and was refused before delivery. Use accessibility,
+browser control or a separate computer, or select the app with `activate:true`
+if the task needs focus. A typing pause does not override a denial.
 
 ## Reading a receipt
 

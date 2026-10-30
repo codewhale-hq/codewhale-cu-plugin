@@ -1,12 +1,40 @@
 # Limitations
 
-## Native macOS installation trust (0.13.0 source candidate)
+## Approval modes (0.13.0 source candidate)
 
-The updated helper asks once when a host first requests local app contents or
-an action. The person can trust the Codewhale installation until revoked,
-using Touch ID or the Mac login password. Its agent can then choose apps for
-the task without per-app, per-task or per-model approval. Hosts without a
-persistent pairing key receive approval for the current connection only.
+On macOS the default is **standard** approval, in the spirit of cua-driver's
+promptless default. Every app the person has not denied is available from the
+first call, with no trust panel and no per-app question. The controls that
+remain are macOS Accessibility, Screen Recording and Automation, Pause and
+Stop, explicit app and foreground denies, exact-script `app_script` approval,
+the irreversible-action confirmation, launch policy, and the refusal to quit an
+app this session did not launch.
+
+**The trade, stated plainly.** In standard mode the helper's socket (mode
+0600, same user) accepts any local process of this user without a panel, so such
+a process can use the helper's Accessibility and Screen Recording grants.
+cua-driver's standard mode has the same property. Strict mode is the only mode
+that stops it, because its Touch ID or password panel can be answered only by a
+person at the Mac. Standard buys an agent that works out of the box; it is not
+a sandbox, and the per-app ledger never was one. A person who wants the earlier
+prompts writes `{"mode":"strict"}` to `approval.json` in the state directory
+(`~/.codewhale-cu`), which both the helper and the MCP server read; an
+unreadable `approval.json` also selects strict. `CODEWHALE_CU_APPROVAL=strict`
+tightens the one process it reaches, and a helper started by `open` or from the
+Dock does not inherit a shell's environment. **That file is not tamper-resistant:**
+any program running as the same user can edit or delete it, so strict mode
+restores the questions asked of honest clients and does not protect the Mac from
+a hostile local program. A switch only the person can flip (a helper Settings
+control stored in Keychain behind Touch ID) is not built. Strict is the only
+behavior on Windows, Linux, HarmonyOS and non-local computers.
+
+## Native macOS installation trust, strict approval (0.13.0 source candidate)
+
+In strict mode the updated helper asks once when a host first requests local
+app contents or an action. The person can trust the Codewhale installation until
+revoked, using Touch ID or the Mac login password. Its agent can then choose
+apps for the task without per-app, per-task or per-model approval. Hosts without
+a persistent pairing key receive approval for the current connection only.
 Deny, closing the panel or no answer refuses access.
 
 **This is candidate behavior.** The 0.13.0 native app has been built and signed.

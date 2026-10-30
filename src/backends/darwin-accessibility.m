@@ -85,10 +85,15 @@ static void cuWaitForLease(void) {
 }
 
 /**
- * Window-routed events require exclusive foreground control. Addressing a
- * window avoids cursor movement but its key-window lease redirects the
- * person's keyboard. It must never be used as a background fallback.
+ * Window-routed events make the target window key with a brief front-process
+ * lease that waits for a gap in the person's own input and is restored
+ * afterwards. The host sends foreground_input or, in standard approval mode,
+ * focus_lease; strict mode sends neither.
  */
+static void cuRequireLease(NSDictionary *args) {
+  if(![args[@"foreground_input"] boolValue] && ![args[@"focus_lease"] boolValue])
+    @throw [NSException exceptionWithName:@"background_focus_required" reason:@"background_focus_required: this action needs a brief focus lease, which strict approval mode does not allow; no input was sent. Use accessibility, browser control, or a separate computer." userInfo:nil];
+}
 static void cuRequireFocusControl(NSDictionary *args) {
   if(![args[@"foreground_input"] boolValue])
     @throw [NSException exceptionWithName:@"background_focus_required" reason:@"background_focus_required: this action requires keyboard focus; no input was sent. Use accessibility, browser control, or a separate computer." userInfo:nil];
@@ -217,7 +222,7 @@ static double cuYieldToUser(NSDictionary *args) {
   }
 }
 static BOOL cuBgLeaseBegin(NSRunningApplication *inputApp, uint32_t winNum, BOOL swap, NSDictionary *args, cuBgLease *lease, NSString **why) {
-  cuRequireFocusControl(args);
+  cuRequireLease(args);
   lease->targetPid = inputApp.processIdentifier;
   lease->swapped = NO;
   lease->t0 = lease->idleBefore = lease->idleAfter = lease->leaseMs = lease->yieldMs = 0;
@@ -1285,7 +1290,7 @@ static id execute(NSDictionary *p) {
   // mouse events to the HID tap, warps the cursor or holds its buttons.
   if([@[@"pointer_sequence",@"release_input"] containsObject:tool])
     @throw [NSException exceptionWithName:@"real_pointer_refused" reason:@"real_pointer_refused: Computer Use never drives the user's cursor; pointer input goes to the bound app's window (bg_pointer)" userInfo:nil];
-  if([@[@"bg_key",@"bg_pointer"] containsObject:tool]) cuRequireFocusControl(args);
+  if([@[@"bg_key",@"bg_pointer"] containsObject:tool]) cuRequireLease(args);
   cuOwnerPipe=[args[@"owner_pipe"] boolValue];
   BOOL mutates=[@[@"type",@"key_event",@"bg_key",@"mouse_event",@"scroll",@"bg_pointer",@"set_value",@"focus_element",@"select_text",@"perform_action",@"click_element",@"scroll_element"] containsObject:tool]
     || ([tool isEqual:@"hit_test"] && [args[@"perform"] boolValue])
@@ -1297,7 +1302,7 @@ static id execute(NSDictionary *p) {
     return cuPostKey(args,[args[@"input_app_ref"][@"pid"] intValue]);
   }
   cuCheckCancelled();
-  if([tool isEqual:@"input_capabilities"]) return @{@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"focused_control":@1,@"window_record":@(cuResolveBgPointer()?1:0),@"observed_window_input":@1,@"targeted_keys":@1,@"literal_text_replace":@1};
+  if([tool isEqual:@"input_capabilities"]) return @{@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"focus_lease":@1,@"focused_control":@1,@"window_record":@(cuResolveBgPointer()?1:0),@"observed_window_input":@1,@"targeted_keys":@1,@"literal_text_replace":@1};
   if([tool isEqual:@"front_lease_watchdog"]) {
     long long remaining = [args[@"deadline"] longLongValue] - (long long)([NSDate new].timeIntervalSince1970 * 1000);
     if(remaining > 0 && remaining < 30000) usleep((useconds_t)remaining * 1000);
@@ -1309,7 +1314,7 @@ static id execute(NSDictionary *p) {
   if([tool isEqual:@"record"]) return cuRecord(args);
   if([tool isEqual:@"recognize_text"]) return cuRecognizeText(args[@"file"]);
 #ifdef CU_TEST
-  if([tool isEqual:@"inspect_focus_control"]) { cuRequireFocusControl(args); return @{@"allowed":@YES}; }
+  if([tool isEqual:@"inspect_focus_control"]) { cuRequireLease(args); return @{@"allowed":@YES}; }
   if([tool isEqual:@"inspect_user_yield"]) {
     cuTestIdleSeconds=args[@"idle_seconds"];
     if([args[@"cancelled"] boolValue]) cuCancelled=1;

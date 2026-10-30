@@ -19,6 +19,7 @@ import { APP_VERSION, helperStaleness, helperBuildDrift, hello, setAppHostIdenti
 import { launchRefusal } from "../src/launch-policy.mjs";
 import { checkAppScript } from "../src/app-script-policy.mjs";
 import { createNativePrompt, DECLINED_MESSAGE } from "../src/native-prompt.mjs";
+import { isStrict, strictFor, approvalMode, unnamedAppCode } from "../src/approval-mode.mjs";
 import { createRecorder, readTrajectory, listTrajectories, resolveTrajectory, isTrajectoryTool, containsRasterPin } from "../src/trajectory.mjs";
 
 const SERVER_NAME = "codewhale-cu";
@@ -195,6 +196,14 @@ async function requireUserDecision(params, name, args) {
     } else {
       const k = consent.appKeys(refFromConsentArgs(args));
       if (k.length && consent.decisionFor(targetComputer.id, k).state === "allowed") return { via: "narrow" };
+    }
+  }
+  if (!isStrict() && name === "consent_allow" && typeof args.confirm !== "string" && targetComputer?.transport === "local") {
+    if (args.scope === "foreground") {
+      if (consent.foregroundDecision(targetComputer.id).state !== "denied") return { via: "standard" };
+    } else {
+      const keys = consent.appKeys(refFromConsentArgs(args));
+      if (keys.length && consent.decisionFor(targetComputer.id, keys).state !== "denied") return { via: "standard" };
     }
   }
   let app = null;
@@ -959,6 +968,7 @@ async function frontmostApp(computer) {
  * identity known (for the refusal's app field and alias merging).
  */
 async function consentForRef(computer, ref) {
+  if (!isStrict() && !consent.anyDenied(computer.id)) return { verdict: { state: "undecided" }, ref };
   const identityKeys = (identity) => consent.appKeys({ bundle_id: identity.bundle_id, name: identity.name });
   let known = ref;
   if (!identityKeys(ref).length) {
@@ -1025,7 +1035,7 @@ async function consentCheck(computer, name, args) {
       } else {
         const front = await frontmostApp(computer);
         if (!front) {
-          throw new ServerError("consent_required",
+          throw new ServerError(unnamedAppCode(),
             "No application is named, bound or identifiably frontmost, and Computer Use does not act on an unnamed app. Pass app_ref (name, bundle_id or pid), or open_application first.");
         }
         implicit = pinnedIdentity(front);
@@ -1037,7 +1047,7 @@ async function consentCheck(computer, name, args) {
     (name === "screenshot" && (!refs.length || args.display != null || args.region != null))
     || (name === "zoom" && !refs.length)
     || (name === "recording_start" && (args.window_id == null || (computer.platform ?? process.platform) !== "darwin")));
-  if (wholeScreen && !consent.anyAllowed(computer.id)) {
+  if (wholeScreen && isStrict() && !consent.anyAllowed(computer.id)) {
     throw new ServerError("consent_required",
       `No application on this computer has the user's approval yet, and a whole-screen capture shows every app on it. Ask the user which application to work in, then record their answer with consent {action:"allow", app:"<name>"}; or capture one app with app_ref.`);
   }
@@ -1051,6 +1061,11 @@ async function consentCheck(computer, name, args) {
           { app: known });
       }
     }
+  }
+  if (name === "kill_app" && !isStrict()) {
+    const res = await callTool({ name: "list_apps", arguments: { computer: computer.id, all: true } });
+    const body = JSON.parse(res.content[0].text);
+    if (!consent.ownsKill(computer.id, body.apps, Object.assign({}, ...launchIdentityRefs(args)))) throw new ServerError("kill_not_owned", consent.KILL_NOT_OWNED);
   }
   let grant = null;
   for (const ref of refs) {
@@ -1066,12 +1081,12 @@ async function consentCheck(computer, name, args) {
         `the user denied access to ${desc} on this computer — do not work around it; only they can change it (consent {action:"revoke"}).`,
         { app: known });
     }
-    if (verdict.state === "undecided") {
+    if (verdict.state === "undecided" && isStrict()) {
       throw new ServerError("consent_required",
         `Codewhale needs the user's permission to use ${desc} on this computer — ask them, then record their answer with consent {action:"allow"|"deny", app:"${arg}"}.`,
         { app: known });
     }
-    grant = { ref: known, persisted: verdict.persisted === true };
+    grant = { ref: known, persisted: verdict.persisted === true, implicit: verdict.state === "undecided" };
   }
   if (name === "open_application" && args.activate === true) {
     const fg = consent.foregroundDecision(computer.id);
@@ -1081,8 +1096,8 @@ async function consentCheck(computer, name, args) {
         { scope: "foreground" });
     }
     if (!grant) {
-      throw new ServerError("consent_required",
-        "Foreground selection needs a named application approved by the user. Select that application by name, bundle_id or pid.",
+      throw new ServerError(unnamedAppCode(),
+        "Foreground selection needs a named application. Select that application by name, bundle_id or pid.",
         { scope: "app" });
     }
   }
@@ -1152,7 +1167,7 @@ async function inputOwnerCheck(computer, name, prepared, ownerOf) {
         `the user denied access to ${desc} on this computer — do not work around it; only they can change it (consent {action:"revoke"}).`,
         { app: owner });
     }
-    if (verdict.state === "undecided") {
+    if (verdict.state === "undecided" && strictFor(computer)) {
       throw new ServerError("consent_required",
         `Codewhale needs the user's permission to use ${desc} on this computer — ask them, then record their answer with consent {action:"allow"|"deny", app:"${arg}"}. This ${check.kind} input would reach ${desc}, the app that owns the window receiving it.`,
         { app: owner });
@@ -1579,8 +1594,11 @@ async function callTool(params, bindWhen = null) {
   if (name === "consent_allow" || name === "consent_deny" || name === "consent_revoke") {
     try {
       const scope = args.scope === "foreground" ? "foreground" : "app";
+      if (decided?.via === "standard") {
+        return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, scope, decision: "allow", recorded: false, approval: "standard", note: "Standard approval mode admits every app the person has not denied, so nothing was recorded. A deny is lifted only by the person." })) }] };
+      }
       const verb = { consent_allow: "allow", consent_deny: "deny" }[name] ?? null;
-      const remember = decided?.via === "daemon" ? false : args.remember === true;
+      const remember = decided?.via === "daemon" || decided?.via === "standard" ? false : args.remember === true;
       if (name !== "consent_allow" && computer.transport === "local" && computer.owned !== true && process.env.CODEWHALE_CU_APP !== "off") {
         const app = decided?.helper ?? (await executorFor(computer, await bindComputer(computer))).app;
         if (Number(app?.hostTrustProtocol) >= 1) {
@@ -1840,6 +1858,10 @@ async function callTool(params, bindWhen = null) {
       }
     }
 
+    if (backendMethod === "probe") {
+      data.approval = data.app ? (data.app.approval ?? "strict") : approvalMode();
+      if (data.app && data.app.approval === undefined) data.note = [data.note, "The running helper predates standard approval mode and enforces its own per-app or trust prompts; update and restart the Codewhale Computer Use app."].filter(Boolean).join(" ");
+    }
     if (name === "screenshot" || name === "zoom") {
       data.raster_id = lastRasters.get(computer.id)?.raster_id;
       if (name === "zoom") data.parent_raster_id = zoomParent.raster_id;
@@ -1854,12 +1876,13 @@ async function callTool(params, bindWhen = null) {
     // index must never silently address the previous app's observation —
     // under a concurrent user that mistake clicks the wrong window.
     if (name === "open_application" && data?.resolved) {
+      if (data.launched === true && computer.transport === "local") consent.noteLaunched(computer.id, data.resolved);
       boundApps.set(computer.id, data.resolved);
       unsettledBinds.delete(computer.id);
       // The decision that let this open through covers the resolved identity
       // under its other spellings too — a later bundle-id or name request for
       // the same app must not prompt again.
-      if (gateResult?.grant) {
+      if (gateResult?.grant && !gateResult.grant.implicit) {
         consent.alias(computer.id, consent.appKeys(data.resolved), { persisted: gateResult.grant.persisted, name: data.resolved.name ?? null });
       }
       const latestId = latestStateByComputer.get(computer.id);

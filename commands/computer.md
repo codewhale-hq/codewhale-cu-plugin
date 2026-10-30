@@ -20,6 +20,6 @@ $ARGUMENTS
 - With `computers`: list registered computers (`computer {action:"list"}`) and say which
   one is active; every tool also takes `computer` to switch.
 - Anything else (clicking, typing, operating apps, recording) goes through
-  the computer-use skill's observe-act-verify loop with per-action approval.
+  the computer-use skill's observe-act-verify loop.
   A denied permission or a missing tool fails closed and is reported, never
   retried blindly.

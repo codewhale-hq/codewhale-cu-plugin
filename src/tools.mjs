@@ -101,7 +101,7 @@ export const TOOLS = [
   },
   {
     name: "consent",
-    description: "Per-app consent on the local computer. Any call that targets an app — open_application, an app_ref, an element, or an action on the bound app — refuses consent_required until the user decides; record their answer here. action status | allow | deny | revoke. On macOS the person answers allow requests in the Codewhale Computer Use approval panel with Touch ID or their login password. app is a name or bundle id (or pid:/number for a pid); App approval also covers explicit foreground selection (open_application activate:true); scope 'foreground' is an optional computer-wide override and a recorded denial still blocks it. Decisions apply to this session; remember:true persists them when the host signs the ledger.",
+    description: "Per-app consent on the local computer. On macOS the default standard approval mode admits every app the user has not denied, so you normally never need this: status reports the mode and any denials, deny/revoke narrow access, and allow records nothing (it returns recorded:false) unless the user has denied that app, which only they can lift. In strict approval mode (CODEWHALE_CU_APPROVAL=strict, and on other platforms) any call that targets an app refuses consent_required until the user decides; record their answer here. action status | allow | deny | revoke. A deny always wins and only the user lifts it. app is a name or bundle id (or pid:/number for a pid); scope 'foreground' is an optional computer-wide override. Decisions apply to this session; remember:true persists them when the host signs the ledger.",
     inputSchema: {
       type: "object",
       required: ["action"],
@@ -354,7 +354,7 @@ export const TOOLS = [
       properties: {
         name: { type: "string" }, bundle_id: { type: "string" }, url: { type: "string", description: "Absolute URL to open in the app; use file:/// for a document (file:///C:/... on Windows). macOS also accepts an absolute path; a remote computer opens only http, https, mailto and file URLs; schemes that run code are refused." },
         pid: { type: "integer", description: "Bind to this exact process. Use when two processes share a bundle id (list_apps shows both); it takes precedence over name and bundle_id and never launches anything." },
-        activate: { type: "boolean", description: "Bring to foreground; defaults to false — background is the default on every platform. On macOS false keeps process-bound keyboard/accessibility control and refuses raw pointer gestures (they would borrow key focus); on Windows it launches the app minimized; on Linux it restores the previously focused window after launch. True explicitly brings this approved app forward using its existing app permission; no second foreground approval is needed. A recorded foreground denial still blocks it. Pointer input still goes to the app's window, never the user's cursor; yield to the user's activity. Neither mode is an isolated computer." },
+        activate: { type: "boolean", description: "Bring to foreground; defaults to false — background is the default on every platform. On macOS false keeps the user's app in front: accessibility actions and process-bound keys never touch it, and pointer gestures take a brief restored front lease (strict approval mode refuses them); on Windows it launches the app minimized; on Linux it restores the previously focused window after launch. True explicitly brings this app forward; no extra approval is needed. A recorded foreground denial still blocks it. Pointer input still goes to the app's window, never the user's cursor; yield to the user's activity. Neither mode is an isolated computer." },
         computer: computerParam,
       },
       additionalProperties: false,
@@ -366,11 +366,11 @@ export const TOOLS = [
     inputSchema: { type: "object", required: ["target"], properties: { target: targetSchema, button: { enum: ["left", "right", "middle"], default: "left" }, clicks: { type: "integer", minimum: 1, maximum: 3, default: 1 }, strategy: strategyParam, computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "pointer", description: "Raw pointer primitives: action \"move\" (hover without clicking), \"down\" (press and hold), \"up\" (release; target optional — releases at the last point). On macOS these drive the Codewhale pointer, never the user\'s cursor: move is a window-routed hover, and down/move/up buffer a drag that reaches the window on up. They need activate:true.",
+    name: "pointer", description: "Raw pointer primitives: action \"move\" (hover without clicking), \"down\" (press and hold), \"up\" (release; target optional — releases at the last point). On macOS these drive the Codewhale pointer, never the user\'s cursor: move is a window-routed hover, and down/move/up buffer a drag that reaches the window on up. Standard mode takes a brief restored front lease per gesture; strict mode needs activate:true.",
     inputSchema: { type: "object", required: ["action"], properties: { action: { enum: ["move", "down", "up"] }, target: targetSchema, computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "left_click", description: "Left-click a coordinate (pixels in the latest raster) or perform an element's press action. macOS background mode uses accessibility and refuses fallbacks that require keyboard focus.",
+    name: "left_click", description: "Left-click a coordinate (pixels in the latest raster) or perform an element's press action. On macOS a click is an accessibility press when the point names a pressable control; otherwise it is a window-routed pointer click that takes a brief front lease, waits for a gap in the user's own input and restores their app afterwards (strict approval mode refuses that lease). The user's cursor is never moved.",
     inputSchema: { type: "object", required: ["target"], properties: { target: targetSchema, strategy: strategyParam, computer: computerParam }, additionalProperties: false },
   },
   {
@@ -394,7 +394,7 @@ export const TOOLS = [
     inputSchema: { type: "object", required: ["target"], properties: { target: targetSchema, computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "left_click_drag", description: "Press at from_target, move in steps, release at to. macOS requires explicit foreground control; background mode refuses because window-routed events still take keyboard focus.",
+    name: "left_click_drag", description: "Press at from_target, move in steps, release at to. On macOS the drag is delivered to the app's window under a brief front lease that waits for a gap in the user's input and restores their app afterwards; strict approval mode requires activate:true instead. The user's cursor is never moved.",
     inputSchema: { type: "object", required: ["from_target", "to"], properties: { from_target: targetSchema, to: targetSchema, computer: computerParam }, additionalProperties: false },
   },
   {
@@ -415,7 +415,7 @@ export const TOOLS = [
     inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, press_enter: { type: "boolean", description: "After typing, press Return/Enter once. Prefer this to putting a newline in `text` when you want to send." }, target: { ...elementTargetSchema, description: "Element target from get_app_state; it is accessibility-focused first, then the text is typed. Element targets only." }, computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "key", description: "Press a named key or chord. Examples: return, enter, backspace, tab, escape, cmd+c (macOS), ctrl+c (Linux/Windows). This is the key-press tool; type() cannot send modifiers or Return by itself except via newlines/press_enter. macOS background mode refuses modified or window-targeted keys that need keyboard focus; prefer invoke_menu. Repeat with `repeat`. Pass an element `target` to accessibility-focus it first. `duration` holds the key instead of tapping (hold_key semantics) and cannot be combined with repeat or target.",
+    name: "key", description: "Press a named key or chord. Examples: return, enter, backspace, tab, escape, cmd+c (macOS), ctrl+c (Linux/Windows). This is the key-press tool; type() cannot send modifiers or Return by itself except via newlines/press_enter. macOS sends modified or window-targeted keys to the background app's window under a brief front lease (strict approval mode refuses them); prefer invoke_menu for menu commands. Repeat with `repeat`. Pass an element `target` to accessibility-focus it first. `duration` holds the key instead of tapping (hold_key semantics) and cannot be combined with repeat or target.",
     inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, repeat: { type: "integer", minimum: 1, maximum: 100 }, duration: { type: "number", minimum: 0.05, maximum: 30, description: "Hold the key for this many seconds instead of tapping." }, target: { ...elementTargetSchema, description: "Element target from get_app_state; it is accessibility-focused first, then the key is sent. Element targets only." }, computer: computerParam }, additionalProperties: false },
   },
   {

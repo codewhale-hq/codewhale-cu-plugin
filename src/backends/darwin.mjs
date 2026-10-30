@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { run, runOk, ExecError, tryJson, have, withSignal, wait, throwIfAborted, currentSignal } from "../exec.mjs";
 import { stateDir } from "../registry.mjs";
+import { isStrict } from "../approval-mode.mjs";
 import { createBrowser } from "../browser-cdp.mjs";
 import { liveMarker, isPromptProcess } from "../native-prompt.mjs";
 import { recordingsDir, recordingsOutputPath } from "../recordings.mjs";
@@ -284,8 +285,13 @@ export function create({ exec }) {
     return helper;
   }
 
-  function requireFocusControl() {
+  function requireForegroundInput() {
     if (!state.foregroundInput) throw Object.assign(new ExecError("This action would take keyboard focus and was not sent in background mode. Use an accessibility action, browser control, or a separate computer."), { code: "background_focus_required" });
+  }
+
+  function requireFocusControl() {
+    if (!isStrict()) return;
+    requireForegroundInput();
   }
 
   function assertNotPrompt(...refs) {
@@ -297,8 +303,8 @@ export function create({ exec }) {
 
   async function native(tool, args = {}) {
     assertNotPrompt(args?.app_ref, args?.target?.app_ref, args?.from_target?.app_ref, args?.to?.app_ref, tool === "kill_app" ? args : null, state.inputApp);
-    // Window-addressed events still borrow keyboard focus. Block before even
-    // starting an older installed helper, including the app-scoped fallback.
+    // Window-addressed events take a brief front lease. Strict approval mode
+    // refuses that before even starting an older installed helper.
     if (["bg_pointer", "bg_key"].includes(tool)) requireFocusControl();
     // Every resolved target (element center or screen point) is where the
     // action lands; tracking it here means the preview cursor follows element
@@ -314,7 +320,7 @@ export function create({ exec }) {
     }
     if (args.observed_window && (await native("input_capabilities"))?.observed_window_input !== 1) throw Object.assign(new ExecError("Update Computer Use before acting on a captured window; this helper cannot preserve its identity"), { code: "app_upgrade_required" });
     const helper = await nativeHelper();
-    const r = await runL(helper, [JSON.stringify({ tool, args: { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, owner_pipe: true } })], { timeoutMs: 20_000, ownerPipe: true });
+    const r = await runL(helper, [JSON.stringify({ tool, args: { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, focus_lease: !isStrict(), owner_pipe: true } })], { timeoutMs: 20_000, ownerPipe: true });
     if (r.aborted || r.timedOut || r.code !== 0) {
       const error = new ExecError(r.aborted ? "computer request cancelled" : r.timedOut ? "native accessibility helper timed out" : r.stderr.trim() || "native accessibility helper failed", r);
       if (r.aborted) error.code = "cancelled";
@@ -357,7 +363,7 @@ export function create({ exec }) {
     if ((await native("input_capabilities"))?.input_lease !== 1) throw new ExecError("The native helper needs an update for disconnect-safe held input");
     const helper = await nativeHelper();
     try {
-      return await exec.runInputLease(helper, [JSON.stringify({ tool, args: { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, owner_pipe: true, input_lease: true } })]);
+      return await exec.runInputLease(helper, [JSON.stringify({ tool, args: { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, focus_lease: !isStrict(), owner_pipe: true, input_lease: true } })]);
     } catch (error) {
       error.code = nativeErrorCode(error.message) ?? error.code;
       throw error;
@@ -429,8 +435,12 @@ export function create({ exec }) {
    */
   async function windowPointer(steps, extra = {}, binding = {}) {
     requireFocusControl();
-    if ((await native("input_capabilities"))?.window_record !== 1) {
+    const caps = await native("input_capabilities");
+    if (caps?.window_record !== 1) {
       throw Object.assign(new ExecError("Pointer input needs the window-routed pointer, which this helper cannot resolve; update Computer Use or use an accessibility action. The user's cursor is never used instead."), { code: "bg_dispatch_unavailable" });
+    }
+    if (!state.foregroundInput && caps?.focus_lease !== 1) {
+      throw Object.assign(new ExecError("Background pointer input needs a helper that can take a brief focus lease; update the Codewhale Computer Use app, or use an accessibility action."), { code: "app_upgrade_required" });
     }
     const r = await native("bg_pointer", { steps, ...extra, ...binding });
     return { action_sent: true, strategy: "window-record", input_scope: "application-window", pointer_moved: false,
@@ -933,7 +943,7 @@ export function create({ exec }) {
     } catch { perms.screen_capture = "failed"; }
     caps.screenshot = perms.screen_capture === "ok";
     caps.recording = caps.screenshot;
-    return { platform: "darwin", capabilities: caps, permissions: perms, note: "macOS does not expose Screen-Recording TCC state to CLI; a black/empty screenshot means Screen Recording permission is missing. Background mode (open_application activate:false) uses process-bound keyboard events and accessibility actions; shared pointer gestures are refused. Foreground control (activate:true) uses the shared desktop and requires exclusive use. Neither mode is an isolated desktop. App-specific behavior still requires verification." };
+    return { platform: "darwin", capabilities: caps, permissions: perms, note: "macOS does not expose Screen-Recording TCC state to CLI; a black/empty screenshot means Screen Recording permission is missing. Background mode (open_application activate:false) uses accessibility actions and process-bound keyboard events; pointer gestures and modified keys take a brief front lease that waits for a gap in the person's input and is restored afterwards (strict approval mode refuses them). Foreground control (activate:true) uses the shared desktop and requires exclusive use. Neither mode is an isolated desktop. App-specific behavior still requires verification." };
   }
 
   return {
@@ -1141,9 +1151,13 @@ export function create({ exec }) {
     key: async ({ text, repeat = 1, target } = {}) => {
       const { flags, code, key } = parseChord(text);
       const n = Math.max(1, Math.min(100, repeat));
-      // Modified and window-targeted keys need a key window. Background
-      // mode must never make one by borrowing the user's keyboard focus.
-      if (flags !== 0 || target != null) requireFocusControl();
+      // Modified and window-targeted keys need a key window: a brief front
+      // lease supplies it (strict approval mode refuses).
+      const routed = target != null || (flags !== 0 && !state.foregroundInput);
+      if (routed) requireFocusControl();
+      if (routed && !state.foregroundInput && (await native("input_capabilities"))?.focus_lease !== 1) {
+        throw Object.assign(new ExecError("Update the Codewhale Computer Use app before sending a modified key to a background app."), { code: "app_upgrade_required" });
+      }
       if (target != null) {
         assertBoundElement(target);
         if ((await native("input_capabilities"))?.targeted_keys !== 1) throw Object.assign(new ExecError("Update Computer Use before sending a key to an explicit element"), { code: "app_upgrade_required" });
@@ -1151,18 +1165,17 @@ export function create({ exec }) {
       let yieldMs = 0;
       let receipt = {};
       for (let i = 0; i < n; i++) {
-        const press = target != null ? await native("bg_key", { code, flags, target }) : await withPressedKey(code, flags, () => {});
+        const press = routed ? await native("bg_key", { code, flags, ...(target != null ? { target } : {}) }) : await withPressedKey(code, flags, () => {});
         receipt = press ?? {};
         if (Number.isFinite(press?.yield_ms)) yieldMs = Math.max(yieldMs, press.yield_ms);
         if (i < n - 1) await wait(30);
       }
-      return { ...receipt, action_sent: true, key, code, keyboard_delivery: target != null ? "window-record" : state.foregroundInput ? "foreground-guarded" : "process", repeat: n,
-        ...(yieldMs > 0 ? { yield_ms: yieldMs } : {}),
-        ...(flags !== 0 && !state.foregroundInput ? { note: "process delivery (no focus lease was taken); menu key equivalents can be dropped without a key window. Verify the effect before retrying, or use invoke_menu for app menu commands." } : {}) };
+      return { ...receipt, action_sent: true, key, code, keyboard_delivery: routed ? "window-record" : state.foregroundInput ? "foreground-guarded" : "process", repeat: n,
+        ...(yieldMs > 0 ? { yield_ms: yieldMs } : {}) };
     },
     hold_key: async ({ text, duration } = {}) => {
       const { flags, code, key } = parseChord(text);
-      if (flags !== 0) requireFocusControl();
+      if (flags !== 0) requireForegroundInput();
       const d = Math.max(0.05, Math.min(30, Number(duration) || 1));
       const press = await withPressedKey(code, flags, () => wait(d * 1000));
       return { action_sent: true, key, keyboard_delivery: state.foregroundInput ? "foreground-guarded" : "process", heldSec: d,
@@ -1175,7 +1188,7 @@ export function create({ exec }) {
         return await native("set_value", args);
       } catch (error) {
         if (!/web area/i.test(error.message)) throw error;
-        requireFocusControl();
+        requireForegroundInput();
         throw Object.assign(new ExecError("Update Computer Use for literal web text replacement; the installed helper cannot preserve and verify the requested text"), { code: "app_upgrade_required" });
       }
     },

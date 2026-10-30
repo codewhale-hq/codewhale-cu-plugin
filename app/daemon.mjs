@@ -23,6 +23,7 @@ import { checkForUpdate, prepareUpdate, restartWithUpdate, readUpdateResult } fr
 import { APP_ID, APP_NAME, APP_VERSION, PLUGIN_ROOT, socketPath, runInfoPath, writeRegistration, defaultLaunch, hello, runtimeFingerprint } from "../src/app-socket.mjs";
 import { stateDir } from "../src/registry.mjs";
 import * as consent from "../src/consent.mjs";
+import { isStrict, approvalMode } from "../src/approval-mode.mjs";
 
 const startedAt = new Date().toISOString();
 const bundle = process.env.CODEWHALE_CU_APP_BUNDLE || null;
@@ -38,7 +39,7 @@ let build = null;
 try { build = runtimeFingerprint(); } catch (error) { log(`could not fingerprint the runtime: ${error.message}`); }
 
 function appInfo() {
-  return { id: APP_ID, name: APP_NAME, version: APP_VERSION, build, pluginRoot: PLUGIN_ROOT, sessionProtocol: 2, backgroundProtocol: 1, controlProtocol: 2, consentProtocol: consentController.helperConsent ? 1 : 0, hostTrustProtocol: hostTrustEnabled ? 1 : 0, controlOwner, pid: process.pid, platform: process.platform, node: process.version, bundle, startedAt, socket: socketPath() };
+  return { id: APP_ID, name: APP_NAME, version: APP_VERSION, build, pluginRoot: PLUGIN_ROOT, sessionProtocol: 2, backgroundProtocol: 1, controlProtocol: 2, consentProtocol: consentController.helperConsent ? 1 : 0, hostTrustProtocol: hostTrustEnabled ? 1 : 0, approval: approvalMode(), controlOwner, pid: process.pid, platform: process.platform, node: process.version, bundle, startedAt, socket: socketPath() };
 }
 
 if (await hello({ timeoutMs: 1_500 })) {
@@ -122,17 +123,20 @@ async function ensureHostTrust(sessionId, signal) {
   if (hostTrustError && lease.host?.persistent) return { code: "host_trust_unavailable", message: hostTrustError };
   let saved = lease.host?.persistent ? trustedHosts.get(lease.host.publicKey) : null;
   if (saved?.decision === "revoked") return { code: "host_revoked", message: "Computer access was revoked. Only the user can allow it again in Computer Use." };
-  if (saved?.decision !== "allow" && !lease.approved) {
+  if (saved?.decision !== "allow" && (!lease.approved || (lease.implicit && isStrict()))) {
     if (controlStatus().mode !== "ready") return { code: `control_${controlStatus().mode}`, message: "Computer Use is paused or stopped by the user." };
     lease.exclusions = consent.legacyExclusions("local");
-    const approval = await consent.withSession(sessionId, () => consentController.request({ kind: "trust_host", host: { ...(lease.host ?? { label: "This connection", persistent: false }), exclusions: lease.exclusions } }, { signal }));
-    if (!approval.ok) {
-      if (approval.error?.code === "consent_declined") lease.denied = true;
-      return approval.error;
-    }
-    if (signal.aborted || lease.revoked || leases.get(sessionId) !== lease) return { code: "cancelled", message: "The connection ended before computer access was granted." };
-    saved = lease.host?.persistent ? trustedHosts.get(lease.host.publicKey) : null;
-    if (lease.host?.persistent && saved?.decision !== "allow") return { code: "host_trust_unavailable", message: "The native helper could not save the pairing. Nothing was approved." };
+    if (isStrict()) {
+      const approval = await consent.withSession(sessionId, () => consentController.request({ kind: "trust_host", host: { ...(lease.host ?? { label: "This connection", persistent: false }), exclusions: lease.exclusions } }, { signal }));
+      if (!approval.ok) {
+        if (approval.error?.code === "consent_declined") lease.denied = true;
+        return approval.error;
+      }
+      if (signal.aborted || lease.revoked || leases.get(sessionId) !== lease) return { code: "cancelled", message: "The connection ended before computer access was granted." };
+      saved = lease.host?.persistent ? trustedHosts.get(lease.host.publicKey) : null;
+      if (lease.host?.persistent && saved?.decision !== "allow") return { code: "host_trust_unavailable", message: "The native helper could not save the pairing. Nothing was approved." };
+      lease.implicit = false;
+    } else if (!lease.approved) lease.implicit = true;
   }
   lease.approved = true;
   consent.setHostAccess(sessionId, { persisted: saved?.decision === "allow", exclusions: saved?.exclusions ?? lease.exclusions ?? [] });
@@ -173,7 +177,7 @@ if (process.env.CODEWHALE_CU_CONTROL_FD === "3") {
   delete process.env.CODEWHALE_CU_CONTROL_FD;
   let input = "";
   control.setEncoding("utf8");
-  const status = () => ({ ...controlStatus(), version: APP_VERSION, checking, backgroundCheck, error: controlError,
+  const status = () => ({ ...controlStatus(), approval: approvalMode(), version: APP_VERSION, checking, backgroundCheck, error: controlError,
     consent: consentController.activePromptPayload(),
     update: update ? { available: update.available, version: update.version, message: update.message, busy: updating } : null });
   const send = (id, error) => {
@@ -326,7 +330,7 @@ async function serve(conn) {
         } else if (req.tool === "consent_status") {
           const lease = leases.get(req.sessionId);
           const saved = lease.host?.persistent && lease.authenticated ? trustedHosts.get(lease.host.publicKey) : null;
-          const trusted = !lease.revoked && !lease.stopped && !hostTrustError && (saved?.decision === "allow" || (lease.approved === true && !lease.host?.persistent));
+          const trusted = !lease.revoked && !lease.stopped && !hostTrustError && saved?.decision !== "revoked" && (saved?.decision === "allow" || (lease.approved === true && !lease.implicit && !lease.host?.persistent) || (!isStrict() && lease.implicit !== false));
           reply = consent.withSession(req.sessionId, () => ({ ok: true, ...consent.status("local"), host: { trusted, persisted: saved?.decision === "allow", label: saved?.label ?? lease.host?.label ?? null, revoked: lease.revoked === true || saved?.decision === "revoked", exclusions: saved?.exclusions ?? lease.exclusions ?? [] } }));
         } else if (req.tool === "list_sessions") {
           // Content-free registry view over the live sessions. Available even

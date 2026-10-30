@@ -11,6 +11,7 @@ import { checkAppScript } from "./app-script-policy.mjs";
 import { launchRefusal } from "./launch-policy.mjs";
 import * as consent from "./consent.mjs";
 import { stateDir } from "./registry.mjs";
+import { isStrict, unnamedAppCode } from "./approval-mode.mjs";
 import { liveMarker, visible, DECLINED_MESSAGE } from "./native-prompt.mjs";
 
 export const ALLOWED = new Set([
@@ -655,13 +656,14 @@ async function listBackendApps(instance, installed = false) {
 }
 
 async function decisionForLocalRef(instance, computerId, ref, cachedApps) {
+  if (!isStrict() && !consent.anyDenied(computerId)) return { state: "allowed", ref };
   const keys = consent.appKeys(ref);
-  if (!keys.length) return { state: "undecided", ref };
+  if (!keys.length) return { state: "undecided", unverified: true, ref };
   const direct = consent.decisionFor(computerId, keys);
   const restricted = consent.hostExclusions(computerId).some(key => key !== "scope:foreground");
   if (direct.state === "denied" || (direct.state === "allowed" && direct.via !== "scope:host" && !restricted)) return { state: direct.state, ref };
   const apps = cachedApps.value === undefined ? (cachedApps.value = await listBackendApps(instance)) : cachedApps.value;
-  if (!Array.isArray(apps)) return { state: restricted ? "undecided" : direct.state, ref };
+  if (!Array.isArray(apps)) return { state: restricted ? "undecided" : direct.state, ...(restricted ? { unverified: true } : {}), ref };
   const wantName = ref.name?.trim().replace(/\.app$/i, "").toLowerCase();
   const wantBundle = ref.bundle_id?.trim().toLowerCase();
   const matches = (a) => (ref.pid == null || a.pid === ref.pid)
@@ -669,11 +671,22 @@ async function decisionForLocalRef(instance, computerId, ref, cachedApps) {
     && (!wantName || String(a.name ?? "").trim().replace(/\.app$/i, "").toLowerCase() === wantName);
   let hits = apps.filter(matches);
   if (!hits.length && restricted && ref.pid == null) hits = (await listBackendApps(instance, true) ?? []).filter(matches);
-  if (hits.length !== 1) return { state: restricted || hits.length > 1 ? "undecided" : direct.state, ref };
+  if (hits.length !== 1) return { state: restricted || hits.length > 1 ? "undecided" : direct.state, ...(restricted || hits.length > 1 ? { unverified: true } : {}), ref };
   const [hit] = hits;
   const resolved = { name: hit.name ?? null, pid: hit.pid ?? null, bundle_id: hit.bundle_id ?? null };
   const widened = consent.decisionFor(computerId, consent.appKeys(resolved));
   return { state: widened.state, ref: resolved };
+}
+
+const refBlocked = (verdict) => verdict.state === "denied" || verdict.unverified === true || (verdict.state !== "allowed" && isStrict());
+const stateBlocked = (state) => state === "denied" || (state !== "allowed" && isStrict());
+
+function blockedRefusal(verdict) {
+  if (verdict.state !== "denied" && verdict.unverified === true && !isStrict()) {
+    const desc = verdict.ref?.name ?? verdict.ref?.bundle_id ?? (verdict.ref?.pid ? `pid ${verdict.ref.pid}` : "the application");
+    return { code: "consent_identity_ambiguous", message: `${desc} could not be matched to exactly one running application, so it cannot be checked against the apps the user excluded; call list_apps and name it by pid.` };
+  }
+  return refRefusal(verdict.state, verdict.ref);
 }
 
 function refRefusal(verdict, ref) {
@@ -711,13 +724,17 @@ async function localConsentRefusal(tool, args, computerId, session, instance) {
     const refs = namedApps(tool, args);
     if (!refs.length) {
       if (tool === "open_application" && args.activate === true) {
-        return { code: "consent_required", message: "Foreground selection needs a named application approved by the user." };
+        return { code: unnamedAppCode(), message: "Foreground selection needs a named application." };
       }
       return null;
     }
+    if (tool === "kill_app" && !isStrict()) {
+      const apps = cachedApps.value === undefined ? (cachedApps.value = await listBackendApps(instance)) : cachedApps.value;
+      if (!consent.ownsKill(computerId, apps, Object.assign({}, ...refs))) return { code: "kill_not_owned", message: consent.KILL_NOT_OWNED };
+    }
     for (const ref of refs) {
-      const { state, ref: known } = await decisionForLocalRef(instance, computerId, ref, cachedApps);
-      if (state !== "allowed") return refRefusal(state, known);
+      const verdict = await decisionForLocalRef(instance, computerId, ref, cachedApps);
+      if (refBlocked(verdict)) return blockedRefusal(verdict);
     }
     if (tool === "open_application" && args.activate === true && consent.foregroundDecision(computerId).state === "denied") {
       return { code: "foreground_denied", message: "the user denied shared-desktop (foreground) control on this computer" };
@@ -736,15 +753,15 @@ async function localConsentRefusal(tool, args, computerId, session, instance) {
     if (t.app_ref && typeof t.app_ref === "object") {
       const fields = expandRefFields(t.app_ref);
       if (fields.length) explicitRefs.push(...fields);
-      else if (isElement && !(session.targetRef ?? session.target)) return { code: "consent_required", message: "Element target requires an approved application." };
+      else if (isElement && !(session.targetRef ?? session.target)) return { code: unnamedAppCode(), message: "Element target needs an application: open_application first, or pass app_ref." };
     } else if (isElement && !(session.targetRef ?? session.target)) {
-      return { code: "consent_required", message: "Element target requires an approved application." };
+      return { code: unnamedAppCode(), message: "Element target needs an application: open_application first, or pass app_ref." };
     }
   }
 
   for (const ref of explicitRefs) {
-    const { state, ref: known } = await decisionForLocalRef(instance, computerId, ref, cachedApps);
-    if (state !== "allowed") return refRefusal(state, known);
+    const verdict = await decisionForLocalRef(instance, computerId, ref, cachedApps);
+    if (refBlocked(verdict)) return blockedRefusal(verdict);
   }
 
   const wholeScreen = args.app_ref == null && (
@@ -754,14 +771,14 @@ async function localConsentRefusal(tool, args, computerId, session, instance) {
 
   if (wholeScreen) {
     if (appExclusions.length) return { code: "app_denied", message: "Whole-screen capture may show an excluded app. Capture one allowed app with app_ref." };
-    if (!consent.anyAllowed(computerId)) {
+    if (isStrict() && !consent.anyAllowed(computerId)) {
       return { code: "consent_required", message: "No application on this computer has the user's approval yet, and a whole-screen capture shows every app on it." };
     }
     const apps = cachedApps.value === undefined ? (cachedApps.value = await listBackendApps(instance)) : cachedApps.value;
     const front = Array.isArray(apps) ? apps.find((a) => a.frontmost === true && Number.isInteger(a.pid) && a.pid > 0) : null;
     if (front) {
-      const { state, ref: known } = await decisionForLocalRef(instance, computerId, front, cachedApps);
-      if (state === "denied") return refRefusal("denied", known);
+      const verdict = await decisionForLocalRef(instance, computerId, front, cachedApps);
+      if (verdict.state === "denied") return refRefusal("denied", verdict.ref);
     }
     return null;
   }
@@ -769,8 +786,8 @@ async function localConsentRefusal(tool, args, computerId, session, instance) {
   if (!explicitRefs.length && BOUND_TARGET_TOOLS.has(tool)) {
     const bound = session.targetRef ?? session.target;
     if (bound) {
-      const { state, ref: known } = await decisionForLocalRef(instance, computerId, bound, cachedApps);
-      if (state !== "allowed") return refRefusal(state, known);
+      const verdict = await decisionForLocalRef(instance, computerId, bound, cachedApps);
+      if (refBlocked(verdict)) return blockedRefusal(verdict);
       return null;
     }
     if (tool === "preview") return null;
@@ -787,24 +804,24 @@ async function localConsentRefusal(tool, args, computerId, session, instance) {
             ...(Array.isArray(owner.aliases) ? owner.aliases.flatMap((name) => consent.appKeys({ name })) : []),
           ];
           const verdict = consent.decisionFor(computerId, [...new Set(keys)], { pidName: owner.name ?? null });
-          if (verdict.state !== "allowed") return refRefusal(verdict.state, owner);
+          if (stateBlocked(verdict.state)) return refRefusal(verdict.state, owner);
           return null;
         }
       } catch {}
     }
-    if (!consent.anyAllowed(computerId)) {
+    if (isStrict() && !consent.anyAllowed(computerId)) {
       return { code: "consent_required", message: "No application is approved for this session." };
     }
     if (IMPLICIT_FRONTMOST_TOOLS.has(tool) && typeof instance?.list_apps === "function") {
       const apps = cachedApps.value === undefined ? (cachedApps.value = await listBackendApps(instance)) : cachedApps.value;
       const front = Array.isArray(apps) ? apps.find((a) => a.frontmost === true && Number.isInteger(a.pid) && a.pid > 0) : null;
-      if (!front) return { code: "consent_required", message: "No application is named, bound or identifiably frontmost." };
-      const { state, ref: known } = await decisionForLocalRef(instance, computerId, front, cachedApps);
-      if (state !== "allowed") return refRefusal(state, known);
+      if (!front) return { code: unnamedAppCode(), message: "No application is named, bound or identifiably frontmost." };
+      const verdict = await decisionForLocalRef(instance, computerId, front, cachedApps);
+      if (refBlocked(verdict)) return blockedRefusal(verdict);
       return null;
     }
     if (typeof instance?.open_application === "function") {
-      return { code: "consent_required", message: "No application is bound to this session; call open_application for an approved app first." };
+      return { code: unnamedAppCode(), message: "No application is bound to this session; call open_application for the app first." };
     }
   }
 
@@ -924,7 +941,8 @@ export async function handle(req, { computerId = "local", sessionId = "direct", 
         session.targetRef = data.resolved;
         session.mode = data.shared_pointer || data.activate ? "foreground" : "background";
         if (computerId === "local") {
-          consent.alias(computerId, consent.appKeys(data.resolved), { persisted: false, name: data.resolved.name ?? null });
+          if (data.launched === true) consent.noteLaunched(computerId, data.resolved);
+          if (isStrict() || consent.decisionFor(computerId, consent.appKeys(data.resolved)).state === "allowed") consent.alias(computerId, consent.appKeys(data.resolved), { persisted: false, name: data.resolved.name ?? null });
         }
       }
       if (tool === "get_app_state" && data?.found && Number.isInteger(data.pid) && data.pid > 0) session.displayTarget = { name: String(data.name ?? "Application").slice(0, 128), pid: data.pid };

@@ -82,10 +82,10 @@ a raster ID. Browser viewport points use the browser's separate contract.
 - `browser {action:"status"}` · `browser {action:"stop"}` — tabs/active tab; close this session's tab (last one out closes the browser).
 
 ## Session
-- With the current Mac plugin/helper, the first content/action request asks
-  for native approval. Codewhale's installation key is trusted until revoked,
-  across apps, tasks and models. Other hosts without a persistent key get
-  connection-scoped access. Do not request per-app approval by default.
+- On Mac, `approval:"standard"` (see `request_access`) admits every app the
+  person has not denied, with no per-app or trust prompt, so never request
+  one. `strict` approval, other platforms and non-local computers keep the
+  per-app or native-trust flow described in the operating details.
 - `consent {action:"status"}` reports current helper trust and exclusions
   without opening a prompt. Current-helper app `deny` or `revoke` narrows
   access; it cannot clear native exclusions. The person revokes host trust
@@ -116,8 +116,8 @@ Type into the document body:
 
 Close a window without borrowing focus:
 1. Press the window's close-button element (`click` on the window's
-   `AXButton`), or use an available `invoke_menu` close action. Modified keys
-   refuse in background mode because they need keyboard focus.
+   `AXButton`), or use an available `invoke_menu` close action. A modified
+   key such as cmd+w also works, through a brief restored front lease.
 2. `list_windows` → window gone
 
 Fill and submit a web form (CDP, no pixels):

@@ -21,12 +21,13 @@ menu-bar app.
 
 - **Set up once.** See Accessibility and Screen Recording status, open the
   right Settings pane, then run a check in a disposable practice window.
-- **Keep working.** macOS selects apps in background mode by default.
-  Accessibility actions and process-directed typing remain available. Actions
-  that need a keyboard-focus lease refuse before delivery; use browser
-  control, a separate computer, or explicit foreground selection of the
-  selected app for those tasks. Existing authorization covers foreground
-  selection unless the person excluded it; human-input yielding and Pause/Stop remain.
+- **Keep working.** macOS selects apps in background mode by default and
+  never moves your cursor. Accessibility actions and process-directed typing
+  touch nothing you are using. A pixel click, drag, wheel or modified key
+  takes a brief front lease that waits for a gap in your own typing and gives
+  your app back afterwards. There is no per-app prompt in the default standard
+  approval mode; apps you deny stay off limits, and human-input yielding and
+  Pause/Stop remain.
 - **Stay in control.** See selected apps and their input modes. The 0.13.0
   candidate adds a compact Codewhale controller while an app is in use. Pause cancels
   queued work and releases held input; Stop ends existing sessions. Only the
@@ -78,21 +79,29 @@ mode is an explicit developer override. A missing or disconnected helper is
 never permission to bypass its controls. Permission recovery is in
 [Setup and troubleshooting](docs/TROUBLESHOOTING.md).
 
-**Trust Codewhale once (0.13.0 source candidate).** The first request to read
-or operate this Mac opens the helper's native approval panel. Choose
-**Trust until revoked…** and confirm with Touch ID or your Mac password, or
-choose **Deny**. Codewhale proves its installation pairing on later connections,
-so changing apps, tasks or models does not ask again. Hosts without a persistent
-pairing key receive approval for that connection only. OS permissions and
-specific consequential actions remain separate decisions.
+**Standard approval (0.13.0 source candidate).** On a Mac, the default is
+`standard`, modelled on cua-driver's promptless default: once you have granted
+macOS Accessibility and Screen Recording to the helper, your agent can read and
+operate any app you have not denied. There is no trust panel, no Touch ID step
+and no per-app question. What stays yours: those two macOS grants, **Pause**
+and **Stop**, an app you deny, the exact-script approval for `app_script`, and
+the confirmation before an action that pays, buys, sends, transfers or deletes.
+`request_access` and `consent {action:"status"}` report `approval:"standard"`.
 
-This needs both an updated MCP plugin and a helper advertising host trust.
-Update the plugin through Connectors and the native app through its updater,
-then restart their connections. Older clients can retain their own consent
-cards or per-app gates. A signed candidate passed human approval, reconnect after
-helper restart, background input/capture and human revocation on one maintainer
-Mac. The revised controller and release packaging still need qualification.
-These candidate features are not claims about the published 0.12.0 app.
+Write `{"mode":"strict"}` to `~/.codewhale-cu/approval.json` to restore the
+earlier prompts: the first request opens the helper's native panel (**Trust
+until revoked…**, confirmed with Touch ID or your Mac password), and unapproved
+apps refuse `consent_required`. That file is the switch both the helper app and
+the MCP server read; `CODEWHALE_CU_APPROVAL=strict` also tightens whichever
+process it reaches, but a helper opened from the Dock or by `open` never sees
+your shell's environment. Strict is the only behavior on Windows, Linux and
+non-local computers, and a file that cannot be parsed selects strict. The file
+is an ordinary preference: any program running as you can rewrite it, so strict
+restores the questions, not protection from a hostile local program.
+
+Both an updated MCP plugin and an updated helper are needed for standard mode,
+and Codewhale must load the 0.13.0 plugin rather than an older built-in copy.
+Older clients can retain their own consent cards or per-app gates.
 
 **Choose your surface.** Apps on this Mac use Computer Use; your signed-in Chrome
 uses [Codewhale for Chrome](https://github.com/codewhale-hq/codewhale-plugin-marketplace/tree/main/plugins/chromewhale);

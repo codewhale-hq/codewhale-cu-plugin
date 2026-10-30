@@ -15,6 +15,7 @@ import * as consent from "../src/consent.mjs";
 import { createConsentController, resolveConsentApp, issueAppScriptToken, consumeAppScriptToken } from "../src/app-handler.mjs";
 import { appRequest, hello } from "../src/app-socket.mjs";
 import { dockerAvailable } from "../src/spawn.mjs";
+process.env.CODEWHALE_CU_APPROVAL = "strict";
 
 const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
 const FAKE_OSASCRIPT = url.pathToFileURL(path.join(ROOT, "tests", "fixtures", "fake-osascript.mjs")).href;

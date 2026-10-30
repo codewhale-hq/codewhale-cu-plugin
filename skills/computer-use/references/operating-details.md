@@ -49,14 +49,22 @@ Do not operate them or approve the host's pending authorization yourself.
 
 ## Consent on the user's computer
 
-With the current Mac helper (`hostTrustProtocol:1`), the first request for
-local contents or an action opens native trust approval. Codewhale proves its
-installation key on each connection; once the person trusts it, changing apps,
-tasks or models does not ask again. Hosts without a persistent key receive
-connection-scoped approval. Do not request per-app approval by default.
-Discovery and consent status do not themselves prompt. Trust starts no recording
-or preview, and does not replace macOS Accessibility, Screen Recording or
-Automation permission.
+On Mac the default is **standard** approval, reported as `approval:"standard"`
+by `request_access` and `consent status`. Every app the person has not denied
+is open to you from the first call: there is no per-app prompt and no trust
+panel, and `consent {action:"allow"}` records nothing. The controls that remain
+are the person's own: macOS Accessibility, Screen Recording and Automation
+grants, Pause and Stop, explicit denies, the exact-script approval for
+`app_script`, and the irreversible-action confirmation below. Discovery and
+consent status never prompt, and nothing starts recording or preview.
+
+**Strict** approval (an `approval.json` with a mode other than `standard` in
+the state directory, `CODEWHALE_CU_APPROVAL=strict` in a process's environment,
+any platform other than
+macOS, and any computer that is not this Mac) keeps the earlier behavior: the
+first request opens a native trust approval on a current Mac helper
+(`hostTrustProtocol:1`), Codewhale proves its installation key on each
+connection, and `consent_required` names an app the person has not yet allowed.
 
 - `consent {action:"status"}` reports the helper's current trust and exclusions.
   Read the actual receipt; an old installed plugin may still use its legacy
@@ -274,14 +282,17 @@ Once the GUI is the right interface: observe once, act once, then verify.
     Prefer them. Text entry uses writable accessibility selection when
     available; verify the resulting value. `get_app_state`, `list_windows`
     and `screenshot` default to the selected app.
-  - **Background mode does not borrow keyboard focus.** Accessibility
-    click, focus, selection and scroll actions remain available. Raw pointer
-    fallbacks, modified/window-targeted keys, web value replacement and typing
-    paths that require a key-window lease refuse `background_focus_required`
-    before delivery. Use an accessibility menu/control, browser control or an
-    authorized separate computer, or explicitly select the same approved app
-    with `activate:true` if the authorized task needs focus. An idle moment
-    does not authorize a different app or override a recorded denial.
+  - **Background pointer and chord input take a brief front lease.** The
+    user's cursor is never moved. A pixel click, drag, scroll wheel or modified
+    or window-targeted key makes the target window key with a front-process
+    lease, first waits for a gap in the person's own input (refusing
+    `user_busy` rather than interrupting them), then gives the front back; the
+    receipt reports `front_lease`, `lease_ms`, `yield_ms`, `front_restored` and
+    `user_input_during_lease`. Prefer an accessibility action when the control
+    has one, since it needs no lease. Web value replacement and held chords
+    still require `activate:true`. A strict-mode or older helper refuses these
+    with `background_focus_required` or `app_upgrade_required`. An idle moment
+    does not override a recorded denial.
   - Shared-desktop gestures and foreground keyboard delivery require explicit
     `open_application(activate:true)` on the approved app; the existing app
     permission covers this selection without another prompt. Foreground

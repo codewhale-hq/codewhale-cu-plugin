@@ -192,7 +192,7 @@ static NSView *cuSeparator(void) {
   self.hostsHeight=[hostsScroll.heightAnchor constraintEqualToConstant:40]; self.hostsHeight.active=YES;
   [hostsScroll.widthAnchor constraintEqualToConstant:432].active=YES;
   self.trustError=cuLabel(@"",12,NSFontWeightRegular); self.trustError.textColor=NSColor.systemRedColor;
-  NSTextField *trustDetail=cuLabel(@"Trust applies to this host across chats, models and apps. Turn it off to stop its access; turning it back on requires Touch ID or your Mac password.",12,NSFontWeightRegular); trustDetail.textColor=NSColor.secondaryLabelColor;
+  NSTextField *trustDetail=cuLabel(@"Standard mode: your agent does not ask per app. Pause or Stop ends access instantly, and an app you deny stays off limits. Strict mode (CODEWHALE_CU_APPROVAL=strict) asks you with Touch ID or your Mac password. A host you turn off here needs Touch ID or your Mac password to come back.",12,NSFontWeightRegular); trustDetail.textColor=NSColor.secondaryLabelColor;
   self.historyButton=[NSButton checkboxWithTitle:@"Show connections with access turned off" target:self action:@selector(showHistory:)];
   NSStackView *hosts=cuStack(@[cuLabel(@"Trusted hosts",15,NSFontWeightSemibold),trustDetail,hostsScroll,self.historyButton],NSUserInterfaceLayoutOrientationVertical,10);
   NSString *version=[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]?:@"";
@@ -261,7 +261,7 @@ static NSView *cuSeparator(void) {
   self.renderedHosts=viewState;
   for(NSView *row in [[self.hostRows.arrangedSubviews copy] autorelease]) { [self.hostRows removeArrangedSubview:row]; [row removeFromSuperview]; }
   if(!records.count) {
-    NSTextField *empty=cuLabel(@"No trusted hosts.\nYour agent will ask the first time it needs to use this Mac.",12,NSFontWeightRegular);
+    NSTextField *empty=cuLabel([self.state[@"approval"] isEqual:@"strict"]?@"No trusted hosts.\nYour agent will ask the first time it needs to use this Mac.":@"Your agent can use apps you have not excluded. Pause or Stop ends access at any time, and macOS Accessibility and Screen Recording stay yours to grant.",12,NSFontWeightRegular);
     [empty.widthAnchor constraintEqualToConstant:412].active=YES;
     [empty.heightAnchor constraintGreaterThanOrEqualToConstant:36].active=YES;
     [self.hostRows addArrangedSubview:empty];
