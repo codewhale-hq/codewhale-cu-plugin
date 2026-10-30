@@ -139,9 +139,9 @@ Computer Use server runs. Disabling the built-in does not hand the name to the
 user copy.
 
 The fix is an engine build that does not embed the bundle. Verified in an
-isolated home: `~/.local/bin/codewhale` (`3400ebb5c93b`) lists no built-in, and
-a user install of 0.13.0 is then the only Computer Use plugin; `~/.local/bin/codew`
-(`ff466b2ed0bf`) is the embedding build. Run an engine that does not embed it,
+isolated home: build `3400ebb5c93b` lists no built-in, and a user install of
+0.13.0 is then the only Computer Use plugin; build `ff466b2ed0bf` is the
+embedding one. Run an engine that does not embed it,
 install the plugin with `codewhale install path:<checkout>`, then review and
 enable it in the TUI (`/plugin trust computer-use`, `/plugin enable computer-use`)
 and reconnect the `computer` MCP server. The review and enablement are yours;
