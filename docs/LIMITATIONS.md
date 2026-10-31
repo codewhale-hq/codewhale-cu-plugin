@@ -425,6 +425,33 @@ local-file browser baseline was blocked by Codex file URL policy and was not
 worked around. See
 `docs/PARITY.md` for full-suite baseline requirements.
 
+## macOS Phase 3 source after 0.14.0
+
+Electron/Chromium hover and drag require an existing renderer debugging port
+on the exact bound process and a uniquely matching visible accessible web
+surface. Computer Use never enables debugging, sends SIGUSR1, opens a Node
+inspector or falls back to the hardware cursor. Without the endpoint, or when
+identity/geometry cannot be confirmed, `chromium_pointer_unavailable` refuses
+before input. Renderer events carry held buttons; intercepted HTML5 drops
+avoid native drag sessions. A native session instead refuses
+`drag_session_detected` after cancellation/release; observe the result and use
+an alternative rather than replaying the drag. Already active native sessions
+refuse `drag_session_active`.
+
+Raw Tk pointer gestures refuse `pointer_reading_toolkit` when its mapped
+library is detected, in either input mode. Semantic actions remain subject to
+the app's actual accessibility support. Web keyboard scrolling requires a
+confirmed page or scroll-area focus and key window; text controls refuse it.
+It reports unverified line input until the effect is observed. Menus accept
+exact parent-scoped paths beyond three levels and close on failure; a
+cleanup-unconfirmed error must be handled by observation.
+
+These are signed development-source qualifications on macOS 26.1 with
+Electron 45.2.1 and Chrome 156.0.8078.76. They are not features of the published
+0.14.0 assets. Older Chromium 136 lacked usable page accessibility in the
+fixture. See [the dated parity evidence](CUA_PARITY.md#october-31-macos-phase-3-source-candidate)
+for launch/setup and broader platform limits.
+
 ## What "background" actually means on macOS
 
 Measured on macOS 26.1 (arm64), and the reason the macOS pointer path looks the
@@ -434,14 +461,13 @@ way it does. Receipts: `parity/results/darwin-aqua-2026-09-07.json`,
 - **Keyboard is process-scoped and quiet.** `type` prefers writable accessibility selection; otherwise text and keys post
   to the process chosen by `open_application(activate:false)`. They do not move
   the pointer and do not change the foreground.
-- **The measured raw pointer path did not deliver to the tested AppKit app.**
+- **The September 7 raw-pointer probe did not deliver to the tested AppKit app.**
   `CGEventPostToPid` (with a NULL source and with an HID source) and
   `CGEventPostToPSN` all deliver keyboard events and silently drop mouse and
   scroll events — measured against an AppKit application both in the background
   *and* while it was frontmost. These fixtures do not establish that every
-  toolkit or process-directed pointer technique is unsupported. The production
-  background path uses verified accessibility actions; raw pointer delivery
-  requires separate qualification.
+  toolkit or process-directed pointer technique is unsupported. Those probes predate the window-record route introduced in 0.13.1;
+  current production routing and its measured limits are described below.
 - **So a coordinate click resolves through accessibility first.**
   `left_click` hit-tests the point against the bound application's AX tree
   (`AXUIElementCopyElementAtPosition`, then a bounded geometric search for the

@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import url from "node:url";
 import { TOOLS } from "../src/tools.mjs";
-import { pickMenuElement, selectApps, nativeErrorCode } from "../src/backends/darwin.mjs";
+import { selectApps, nativeErrorCode } from "../src/backends/darwin.mjs";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -39,7 +39,7 @@ test("invoke_menu and list_apps advertise their new surfaces", () => {
   const menu = TOOLS.find((t) => t.name === "invoke_menu");
   assert.ok(menu, "invoke_menu is part of the surface");
   assert.deepEqual(menu.inputSchema.required, ["path"]);
-  assert.equal(menu.inputSchema.properties.path.maxItems, 3);
+  assert.equal(menu.inputSchema.properties.path.maxItems, undefined);
   const apps = TOOLS.find((t) => t.name === "list_apps");
   assert.equal(apps.inputSchema.properties.all.type, "boolean");
 });
@@ -72,18 +72,6 @@ test("selectApps keeps regular apps by default, passes everything with all:true,
   // rather than hiding every app.
   const legacy = [{ name: "Finder" }, { name: "chmod" }];
   assert.equal(selectApps(legacy, false).length, 2);
-});
-
-test("pickMenuElement matches exact titles and roles only", () => {
-  const els = [
-    { role: "AXMenuBarItem", label: "File", path: [3] },
-    { role: "AXMenuItem", label: "New Window", path: [3, 0, 1] },
-    { role: "AXMenuItem", label: "New", path: [3, 0, 0] },
-  ];
-  assert.equal(pickMenuElement(els, "File", true)?.label, "File");
-  assert.equal(pickMenuElement(els, "New", false)?.path[2], 0, "exact match must not take \u201cNew Window\u201d");
-  assert.equal(pickMenuElement(els, "Open\u2026", true), null, "no fuzzy matches");
-  assert.equal(pickMenuElement(els, "File", false), null, "role must match the level");
 });
 
 test("nativeErrorCode maps refusal reasons to stable codes", () => {

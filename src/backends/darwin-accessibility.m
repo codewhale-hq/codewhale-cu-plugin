@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <libproc.h>
 #import "darwin-recording.h"
 #import "darwin-ocr.h"
 
@@ -488,34 +489,110 @@ static BOOL cuAppKeyWindowIs(pid_t pid, uint32_t wid) {
   uint32_t number = 0;
   return window && cuElementWindow(window, pid, &number, nil, nil) && number == wid;
 }
+static BOOL cuFrame(AXUIElementRef el, CGRect *out);
+static NSDictionary *cuPointerToolkit(NSRunningApplication *app) {
+  BOOL chromium=[app.bundleIdentifier.lowercaseString containsString:@"chrome"] || [app.bundleIdentifier.lowercaseString containsString:@"chromium"];
+  for(int flavor=22;flavor>=8;flavor-=14) {
+    uint64_t address=0;
+    BOOL readAny=NO;
+    for(int i=0;i<65536;i++) {
+      struct proc_regionwithpathinfo region={0};
+      int n=proc_pidinfo(app.processIdentifier,flavor,address,&region,sizeof(region));
+      if(n!=(int)sizeof(region)) break;
+      readAny=YES;
+      NSString *image=[NSString stringWithUTF8String:region.prp_vip.vip_path]?:@"";
+      NSString *file=image.lastPathComponent.lowercaseString;
+      if([image containsString:@"/Tk.framework/"] || ([file hasPrefix:@"_tkinter"] && [file hasSuffix:@".so"]) ||
+         (([file hasPrefix:@"libtk"] || [file hasPrefix:@"libtcl9tk"]) && [file hasSuffix:@".dylib"]))
+        @throw [NSException exceptionWithName:@"pointer_reading_toolkit" reason:@"pointer_reading_toolkit: Tk derives input coordinates from the hardware cursor. Window-routed pointer input was refused before dispatch; use accessible controls or a separate computer." userInfo:nil];
+      if([image containsString:@"/Electron Framework.framework/"] || [image containsString:@"/Chromium Framework.framework/"] || [image containsString:@"/Google Chrome Framework.framework/"]) chromium=YES;
+      uint64_t next=region.prp_prinfo.pri_address+region.prp_prinfo.pri_size;
+      if(next<=address) break;
+      address=next;
+    }
+    if(readAny) break;
+  }
+  return @{@"chromium":@(chromium)};
+}
+static NSSet *cuDragWindows(pid_t pid);
+static NSDictionary *cuPointerContext(NSRunningApplication *inputApp, NSDictionary *args) {
+  if(cuDragWindows(inputApp.processIdentifier).count)
+    @throw [NSException exceptionWithName:@"drag_session_active" reason:@"drag_session_active: the target already has a native drag session; finish it before sending another pointer gesture" userInfo:nil];
+  NSArray *steps=args[@"steps"];
+  if(![steps isKindOfClass:NSArray.class] || !steps.count || steps.count>400)
+    @throw [NSException exceptionWithName:@"args" reason:@"bg_pointer needs 1..400 steps" userInfo:nil];
+  CGPoint anchor=CGPointMake([steps[0][@"x"] doubleValue],[steps[0][@"y"] doubleValue]);
+  uint32_t winNum=0; CGRect frame=CGRectZero; BOOL found=NO;
+  if(args[@"observed_window"]) found=cuObservedWindow(args[@"observed_window"],inputApp.processIdentifier,anchor,&winNum,&frame);
+  else if([args[@"target"][@"type"] isEqual:@"element"]) {
+    id el=cuResolvePathTarget(inputApp.processIdentifier,args[@"target"]);
+    if(!el) @throw [NSException exceptionWithName:@"stale" reason:@"element is no longer available; observe again" userInfo:nil];
+    cuValidateElementIdentity((__bridge AXUIElementRef)el,args[@"target"]);
+    found=cuElementWindow(el,inputApp.processIdentifier,&winNum,nil,nil) && cuWindowInfoForNumber(winNum,&frame,nil) && CGRectContainsPoint(frame,anchor);
+  } else found=cuWindowAtPointForPid(inputApp.processIdentifier,anchor,&winNum,&frame);
+  if(!found) @throw [NSException exceptionWithName:@"window" reason:@"no window of the bound application covers the start point; no input was sent" userInfo:nil];
+  for(NSDictionary *step in steps) {
+    double x=[step[@"x"] doubleValue],y=[step[@"y"] doubleValue];
+    if(![step[@"x"] isKindOfClass:NSNumber.class] || ![step[@"y"] isKindOfClass:NSNumber.class] || !isfinite(x) || !isfinite(y) || !CGRectContainsPoint(frame,CGPointMake(x,y)))
+      @throw [NSException exceptionWithName:@"window" reason:@"every pointer step must remain inside the same bound window; no input was sent" userInfo:nil];
+  }
+  NSMutableDictionary *context=[cuPointerToolkit(inputApp) mutableCopy];
+  context[@"pid"]=@(inputApp.processIdentifier);
+  context[@"window"]=@{@"id":@(winNum),@"x":@(frame.origin.x),@"y":@(frame.origin.y),@"w":@(frame.size.width),@"h":@(frame.size.height)};
+  AXUIElementRef ax=AXUIElementCreateApplication(inputApp.processIdentifier);
+  axPrepare(ax);
+  @try {
+    for(id w in attr(ax,@"AXWindows")) {
+      CGRect f; if(!cuFrame((__bridge AXUIElementRef)w,&f) || !CGRectEqualToRect(f,frame)) continue;
+      context[@"title"]=attr((__bridge AXUIElementRef)w,@"AXTitle")?:@"";
+      NSArray *sheets=attr((__bridge AXUIElementRef)w,@"AXSheets");
+      if(sheets.count && [context[@"chromium"] boolValue])
+        @throw [NSException exceptionWithName:@"modal" reason:@"window blocked by modal sheet; observe and handle the dialog first" userInfo:nil];
+      NSMutableArray *queue=[NSMutableArray arrayWithObject:w];
+      for(NSUInteger i=0;i<queue.count && i<1600;i++) {
+        AXUIElementRef node=(__bridge AXUIElementRef)queue[i];
+        CGRect b;
+        if([attr(node,@"AXRole") isEqual:@"AXWebArea"] && cuFrame(node,&b) && CGRectContainsPoint(b,anchor)) {
+          if(context[@"web"]) @throw [NSException exceptionWithName:@"window" reason:@"multiple web surfaces cover this point; the target is ambiguous" userInfo:nil];
+          id url=attr(node,@"AXURL");
+          context[@"web"]=@{@"x":@(b.origin.x),@"y":@(b.origin.y),@"w":@(b.size.width),@"h":@(b.size.height),@"title":attr(node,@"AXTitle")?:@"",@"url":[url isKindOfClass:NSURL.class]?[url absoluteString]:([url isKindOfClass:NSString.class]?url:@"")};
+        } else if(queue.count<1600) [queue addObjectsFromArray:attr(node,@"AXChildren")?:@[]];
+      }
+      break;
+    }
+  } @finally { CFRelease(ax); }
+  return context;
+}
+static NSSet *cuDragWindows(pid_t pid) {
+  NSMutableSet *ids=[NSMutableSet set];
+  NSArray *windows=CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly,kCGNullWindowID));
+  for(NSDictionary *w in windows) if([w[(__bridge NSString *)kCGWindowOwnerPID] intValue]==pid && [w[(__bridge NSString *)kCGWindowLayer] intValue]==kCGDraggingWindowLevel)
+    [ids addObject:w[(__bridge NSString *)kCGWindowNumber]];
+  return ids;
+}
 static NSDictionary *cuBgPointer(NSRunningApplication *inputApp, NSDictionary *args) {
   if(!cuResolveBgPointer())
     @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:@"window-routed background pointer is unavailable: SLPSPostEventRecordTo/CGEventSetWindowLocation not resolvable via SkyLight; no input was sent" userInfo:nil];
-  NSArray *steps = args[@"steps"];
-  if(![steps isKindOfClass:NSArray.class] || !steps.count || steps.count > 400)
-    @throw [NSException exceptionWithName:@"args" reason:@"bg_pointer needs 1..400 steps" userInfo:nil];
-  CGPoint anchor = CGPointZero;
-  BOOL haveAnchor = NO;
-  for(NSDictionary *step in steps) {
-    // A scroll step carries its point alongside the deltas.
-    if([step[@"x"] isKindOfClass:NSNumber.class] && [step[@"y"] isKindOfClass:NSNumber.class]) {
-      anchor = CGPointMake([step[@"x"] doubleValue], [step[@"y"] doubleValue]);
-      haveAnchor = YES; break;
-    }
+  NSDictionary *context=cuPointerContext(inputApp,args);
+  NSArray *steps=args[@"steps"];
+  CGPoint anchor=CGPointMake([steps[0][@"x"] doubleValue],[steps[0][@"y"] doubleValue]);
+  uint32_t winNum=[context[@"window"][@"id"] unsignedIntValue];
+  CGRect frame=CGRectMake([context[@"window"][@"x"] doubleValue],[context[@"window"][@"y"] doubleValue],[context[@"window"][@"w"] doubleValue],[context[@"window"][@"h"] doubleValue]);
+  if([args[@"prepare_only"] boolValue]) {
+    if(![args[@"input_lease"] boolValue] || ![args[@"owner_pipe"] boolValue]) @throw [NSException exceptionWithName:@"args" reason:@"a prepared pointer route needs a live input owner" userInfo:nil];
+    NSMutableDictionary *ready=[context mutableCopy]; ready[@"action_sent"]=@NO; ready[@"input_prepared"]=@YES; return ready;
   }
-  if(!haveAnchor) @throw [NSException exceptionWithName:@"args" reason:@"bg_pointer steps carry no point" userInfo:nil];
-  uint32_t winNum = 0;
-  CGRect frame = CGRectZero;
-  BOOL found = NO;
-  if(args[@"observed_window"]) found = cuObservedWindow(args[@"observed_window"],inputApp.processIdentifier,anchor,&winNum,&frame);
-  else if([args[@"target"][@"type"] isEqual:@"element"]) {
-    id el = cuResolvePathTarget(inputApp.processIdentifier,args[@"target"]);
-    if(!el) @throw [NSException exceptionWithName:@"stale" reason:@"element is no longer available; observe again" userInfo:nil];
-    cuValidateElementIdentity((__bridge AXUIElementRef)el,args[@"target"]);
-    found = cuElementWindow(el,inputApp.processIdentifier,&winNum,nil,nil) && cuWindowInfoForNumber(winNum,&frame,nil) && CGRectContainsPoint(frame,anchor);
-  } else found = cuWindowAtPointForPid(inputApp.processIdentifier,anchor,&winNum,&frame);
-  if(!found)
-    @throw [NSException exceptionWithName:@"window" reason:@"no window of the bound application covers the start point; no input was sent" userInfo:nil];
+  BOOL dragging=NO,hover=YES;
+  for(NSDictionary *step in steps) {
+    int type=[step[@"type"] intValue];
+    if(type==kCGEventLeftMouseDragged || type==kCGEventRightMouseDragged || type==kCGEventOtherMouseDragged) dragging=YES;
+    if(type!=kCGEventMouseMoved || step[@"scroll"]) hover=NO;
+  }
+  if([context[@"chromium"] boolValue] && (dragging || hover))
+    @throw [NSException exceptionWithName:@"chromium_pointer_unavailable" reason:@"chromium_pointer_unavailable: this Chromium gesture needs the renderer input route; update the helper and plugin together. No routed mouse event was sent." userInfo:nil];
+  NSSet *dragBefore=cuDragWindows(inputApp.processIdentifier);
+  if(dragging && dragBefore.count) @throw [NSException exceptionWithName:@"drag_session_active" reason:@"drag_session_active: the target already has a native drag session; finish it before sending another gesture" userInfo:nil];
+  int heldType=0,heldButton=0; CGPoint heldPoint=anchor;
   // A secondary or middle press usually opens a menu, and a menu takes the
   // person's key focus, so it waits for a gap in their typing first.
   double yieldMs = 0;
@@ -533,6 +610,9 @@ static NSDictionary *cuBgPointer(NSRunningApplication *inputApp, NSDictionary *a
     BOOL primed = NO;
     for(NSDictionary *step in steps) {
       cuCheckCancelled();
+      CGRect current; pid_t owner=0;
+      if(!cuWindowInfoForNumber(winNum,&current,&owner) || owner!=inputApp.processIdentifier || !CGRectEqualToRect(current,frame))
+        @throw [NSException exceptionWithName:@"stale" reason:@"pointer window moved, closed or changed ownership during the gesture; observe before retrying" userInfo:nil];
       if([step[@"scroll"] isKindOfClass:NSArray.class]) {
         NSArray *d = step[@"scroll"];
         // Pixel units: Chromium ignores line-unit wheel events entirely
@@ -552,10 +632,17 @@ static NSDictionary *cuBgPointer(NSRunningApplication *inputApp, NSDictionary *a
                     || type == kCGEventLeftMouseDragged || type == kCGEventRightMouseDragged || type == kCGEventOtherMouseDragged;
         CGEventSetDoubleValueField(e, 2, pressed ? 1.0 : 0.0);
         CGEventSetIntegerValueField(e, kCGMouseEventButtonNumber, button);
+        if(press) { heldType=type; heldButton=button; }
+        heldPoint=p;
         cuPostEventRecord(&lease, e, type == kCGEventMouseMoved ? 2 : 3);
+        if(type==kCGEventLeftMouseUp || type==kCGEventRightMouseUp || type==kCGEventOtherMouseUp) heldType=0;
         CFRelease(e);
       }
-      usleep((useconds_t)([step[@"delayMs"] intValue] ?: 20) * 1000);
+      usleep((useconds_t)MAX(1,MIN(250,[step[@"delayMs"] intValue] ?: 20)) * 1000);
+      if(dragging && ![cuDragWindows(inputApp.processIdentifier) isSubsetOfSet:dragBefore]) {
+        cuWindowChord(&lease,53,0);
+        @throw [NSException exceptionWithName:@"drag_session_detected" reason:@"drag_session_detected: the gesture started a native drag session, which follows the hardware cursor. It was cancelled and released; the requested drop is not confirmed. Observe before using a menu or keyboard alternative; do not replay this drag." userInfo:nil];
+      }
     }
     // Menus animate in after the mouse-up, so a click-ending gesture polls
     // briefly. A web popup needs the poll to ride out Chromium's AX rebuild
@@ -576,6 +663,17 @@ static NSDictionary *cuBgPointer(NSRunningApplication *inputApp, NSDictionary *a
       }
     }
   } @finally {
+    if(dragging && ![cuDragWindows(inputApp.processIdentifier) isSubsetOfSet:dragBefore]) {
+      for(int down=1;down>=0;down--) {
+        CGEventRef escape=CGEventCreateKeyboardEvent(NULL,53,down); CGEventSetFlags(escape,0);
+        cuPidPost(lease.postPid,escape,NO); CFRelease(escape);
+      }
+    }
+    if(heldType) {
+      CGEventType up=heldType==kCGEventLeftMouseDown?kCGEventLeftMouseUp:heldType==kCGEventRightMouseDown?kCGEventRightMouseUp:kCGEventOtherMouseUp;
+      CGEventRef release=CGEventCreateMouseEvent(NULL,up,heldPoint,(CGMouseButton)heldButton);
+      cuPostEventRecord(&lease,release,3); CFRelease(release);
+    }
     if(menuLeaseHeld) cuFrontLeaseHold(&lease);
   }
   NSMutableDictionary *receipt = [@{@"action_sent":@YES, @"strategy":@"pid-routed", @"pointer_moved":@NO,
@@ -931,6 +1029,50 @@ static id cuScrollBar(AXUIElementRef el, BOOL horizontal) {
   if([enabled isKindOfClass:NSNumber.class] && ![enabled boolValue]) return nil;
   return attr(el,horizontal?@"AXHorizontalScrollBar":@"AXVerticalScrollBar");
 }
+static NSDictionary *cuKeyboardScroll(AXUIElementRef el, NSDictionary *args) {
+  id web=(__bridge id)el,focusTarget=nil;
+  BOOL editable=NO;
+  for(int i=0;web && i<64;i++) {
+    NSString *role=attr((__bridge AXUIElementRef)web,@"AXRole");
+    if([role isEqual:@"AXWebArea"]) break;
+    if([role isEqual:@"AXScrollArea"] && !focusTarget) focusTarget=web;
+    if([@[@"AXTextField",@"AXTextArea",@"AXComboBox",@"AXSearchField",@"AXSecureTextField"] containsObject:role]) editable=YES;
+    if([role isEqual:@"AXWindow"] || [role isEqual:@"AXApplication"]) { web=nil; break; }
+    web=attr((__bridge AXUIElementRef)web,@"AXParent");
+  }
+  if(!web || ![attr((__bridge AXUIElementRef)web,@"AXRole") isEqual:@"AXWebArea"])
+    @throw [NSException exceptionWithName:@"background_scroll_unavailable" reason:@"no accessibility scrollbar or focusable web page at this target" userInfo:nil];
+  if(editable) @throw [NSException exceptionWithName:@"background_scroll_unavailable" reason:@"keyboard scroll fallback refuses text controls; it could move a caret instead of scrolling" userInfo:nil];
+  focusTarget=focusTarget?:web;
+  cuRequireLease(args);
+  uint32_t wid=0; pid_t pid=0;
+  AXUIElementGetPid(el,&pid);
+  if(!cuResolveBgPointer() || !cuElementWindow(web,pid,&wid,nil,nil))
+    @throw [NSException exceptionWithName:@"background_scroll_unavailable" reason:@"the web page's key window could not be resolved; no scroll key was sent" userInfo:nil];
+  cuBgLease lease; NSString *why=nil;
+  if(!cuBgLeaseBegin([NSRunningApplication runningApplicationWithProcessIdentifier:pid],wid,YES,args,&lease,&why))
+    @throw [NSException exceptionWithName:@"background_scroll_unavailable" reason:why userInfo:nil];
+  if(!cuAppKeyWindowIs(pid,wid)) @throw [NSException exceptionWithName:@"key_window_unconfirmed" reason:@"key_window_unconfirmed: no scroll key was sent" userInfo:nil];
+  AXUIElementRef page=(__bridge AXUIElementRef)focusTarget;
+  if(!cuSettable(page,@"AXFocused") || AXUIElementSetAttributeValue(page,kAXFocusedAttribute,kCFBooleanTrue)!=kAXErrorSuccess)
+    @throw [NSException exceptionWithName:@"background_scroll_unavailable" reason:@"the web page cannot take accessibility focus; no scroll key was sent" userInfo:nil];
+  usleep(40000);
+  AXUIElementRef app=AXUIElementCreateApplication(pid);
+  id focused=attr(app,@"AXFocusedUIElement"); CFRelease(app);
+  if(!focused || !CFEqual((__bridge CFTypeRef)focused,(__bridge CFTypeRef)focusTarget))
+    @throw [NSException exceptionWithName:@"background_scroll_unavailable" reason:@"the web page's focus could not be confirmed; no scroll key was sent (it might edit or select text)" userInfo:nil];
+  NSString *direction=args[@"direction"];
+  CGKeyCode key=[direction isEqual:@"left"]?123:[direction isEqual:@"right"]?124:[direction isEqual:@"up"]?126:125;
+  NSInteger count=MAX(1,MIN(100,[args[@"amount"] integerValue]));
+  for(NSInteger i=0;i<count;i++) {
+    cuCheckCancelled();
+    app=AXUIElementCreateApplication(pid); focused=attr(app,@"AXFocusedUIElement"); CFRelease(app);
+    if(!cuAppKeyWindowIs(pid,wid) || !focused || !CFEqual((__bridge CFTypeRef)focused,(__bridge CFTypeRef)focusTarget))
+      @throw [NSException exceptionWithName:@"focus" reason:@"web scroll focus changed; no further key was sent; observe before retrying" userInfo:nil];
+    cuWindowChord(&lease,key,0);
+  }
+  return @{@"action_sent":@YES,@"strategy":@"keyboard-scroll",@"keyboard_delivery":@"process",@"pointer_moved":@NO,@"front_lease":@NO,@"verified":@NO,@"verification_required":@"observation",@"unit":@"line",@"amount":@(count),@"window":@{@"id":@(wid)}};
+}
 static NSDictionary *cuScroll(AXUIElementRef el, NSDictionary *args) {
   BOOL horizontal=[@[@"left",@"right"] containsObject:args[@"direction"]];
   id bar=nil;
@@ -940,7 +1082,7 @@ static NSDictionary *cuScroll(AXUIElementRef el, NSDictionary *args) {
     if([attr(node,@"AXRole") isEqual:@"AXWindow"]) break;
     cur=attr(node,@"AXParent");
   }
-  if(!bar) @throw [NSException exceptionWithName:@"background_scroll_unavailable" reason:@"no accessibility scrollbar at this target; choose an observed scroll area or a separate computer" userInfo:nil];
+  if(!bar) return cuKeyboardScroll(el,args);
   AXUIElementRef control=(__bridge AXUIElementRef)bar;
   BOOL forward=[@[@"down",@"right"] containsObject:args[@"direction"]];
   NSString *action=forward?@"AXIncrement":@"AXDecrement";
@@ -950,7 +1092,7 @@ static NSDictionary *cuScroll(AXUIElementRef el, NSDictionary *args) {
   // Native scrollbars commonly expose a normalized value instead of actions.
   // Report that unit explicitly: it is not a claim about a toolkit's line size.
   BOOL normalized=!advertised && [before isKindOfClass:NSNumber.class] && [before doubleValue]>=0 && [before doubleValue]<=1 && cuSettable(control,@"AXValue");
-  if(!advertised && !normalized) @throw [NSException exceptionWithName:@"background_scroll_unavailable" reason:@"the accessibility scrollbar has no supported action or writable normalized value" userInfo:nil];
+  if(!advertised && !normalized) return cuKeyboardScroll(el,args);
   for(NSInteger i=0;i<(advertised?count:1);i++) {
     cuCheckCancelled();
     NSNumber *value=@(MAX(0,MIN(1,[before doubleValue]+(forward?1:-1)*0.05*count)));
@@ -980,7 +1122,7 @@ static void cuSearch(AXUIElementRef el, CGPoint p, int depth, int *budget, id *b
     // not), so a frame that misses the point prunes the whole subtree.
     if(!CGRectContainsPoint(frame,p)) return;
     double area=frame.size.width*frame.size.height;
-    BOOL suitable=[operation hasPrefix:@"scroll"]?cuScrollBar(el,[operation isEqual:@"scroll-horizontal"])!=nil:cuClickAction(el,[operation isEqual:@"context"])!=nil;
+    BOOL suitable=[operation hasPrefix:@"scroll"]?(cuScrollBar(el,[operation isEqual:@"scroll-horizontal"])!=nil || [attr(el,@"AXRole") isEqual:@"AXWebArea"]):cuClickAction(el,[operation isEqual:@"context"])!=nil;
     if(suitable && (!*best || area<=*bestArea)) { *best=(__bridge id)el; *bestArea=area; }
   }
   for(id kid in attr(el,@"AXChildren")) cuSearch((__bridge AXUIElementRef)kid,p,depth+1,budget,best,bestArea,operation);
@@ -1096,6 +1238,70 @@ static id cuFocusedElement(pid_t pid) {
  * Returns nil when the window or any path step no longer exists — the same
  * staleness contract as the element-action tools.
  */
+static NSArray *cuMenuChildren(AXUIElementRef parent) {
+  NSMutableArray *items=[NSMutableArray array];
+  for(id child in attr(parent,@"AXChildren")) {
+    NSString *role=attr((__bridge AXUIElementRef)child,@"AXRole");
+    if([role isEqual:@"AXMenu"]) [items addObjectsFromArray:attr((__bridge AXUIElementRef)child,@"AXChildren")?:@[]];
+    else if([role isEqual:@"AXMenuItem"] || [role isEqual:@"AXMenuBarItem"]) [items addObject:child];
+  }
+  return items;
+}
+static BOOL cuCloseMenus(pid_t pid, id menu) {
+  if(menu) AXUIElementPerformAction((__bridge AXUIElementRef)menu,CFSTR("AXCancel"));
+  if(!cuResolveBgPointer()) return !cuMenuOpenForApp(pid);
+  for(int i=0;i<32 && cuMenuOpenForApp(pid);i++) {
+    for(int down=1;down>=0;down--) {
+      CGEventRef e=CGEventCreateKeyboardEvent(NULL,53,down); CGEventSetFlags(e,0);
+      cuPidPost(pid,e,NO); CFRelease(e);
+    }
+    usleep(20000);
+  }
+  return !cuMenuOpenForApp(pid);
+}
+static NSDictionary *cuInvokeMenu(AXUIElementRef app, pid_t pid, NSDictionary *args) {
+  NSArray *path=args[@"path"];
+  if(![path isKindOfClass:NSArray.class] || !path.count) @throw [NSException exceptionWithName:@"args" reason:@"invoke_menu needs a non-empty menu path" userInfo:nil];
+  for(id title in path) if(![title isKindOfClass:NSString.class] || ![title length]) @throw [NSException exceptionWithName:@"args" reason:@"menu titles must be non-empty strings" userInfo:nil];
+  id menu=attr(app,@"AXMenuBar"),parent=menu;
+  if(!menu) @throw [NSException exceptionWithName:@"menu_item_not_found" reason:@"menu_item_not_found: this app has no menu bar" userInfo:nil];
+  NSMutableArray *pressed=[NSMutableArray array];
+  BOOL finished=NO;
+  NSTimeInterval deadline=NSProcessInfo.processInfo.systemUptime+14;
+  double yielded=cuYieldToUser(args);
+  @try {
+    for(NSUInteger level=0;level<path.count;level++) {
+      cuCheckCancelled();
+      NSString *wanted=path[level],*role=level==0?@"AXMenuBarItem":@"AXMenuItem";
+      id found=nil;
+      NSTimeInterval until=MIN(deadline,NSProcessInfo.processInfo.systemUptime+1.5);
+      do {
+        NSMutableArray *matches=[NSMutableArray array];
+        for(id item in cuMenuChildren((__bridge AXUIElementRef)parent))
+          if([attr((__bridge AXUIElementRef)item,@"AXRole") isEqual:role] && [info((__bridge AXUIElementRef)item,0,0,@[])[@"label"] isEqual:wanted]) [matches addObject:item];
+        if(matches.count>1) @throw [NSException exceptionWithName:@"menu_item_ambiguous" reason:[NSString stringWithFormat:@"menu_item_ambiguous: more than one %@ under %@",wanted,[pressed componentsJoinedByString:@" ▸ "]] userInfo:nil];
+        found=matches.firstObject;
+        if(found || NSProcessInfo.processInfo.systemUptime>=until) break;
+        usleep(30000); cuCheckCancelled();
+      } while(YES);
+      if(!found) @throw [NSException exceptionWithName:@"menu_item_not_found" reason:[NSString stringWithFormat:@"menu_item_not_found: %@ under %@; use the exact observed title",wanted,[pressed componentsJoinedByString:@" ▸ "]] userInfo:nil];
+      id enabled=attr((__bridge AXUIElementRef)found,@"AXEnabled");
+      if(enabled && ![enabled boolValue]) @throw [NSException exceptionWithName:@"menu_item_disabled" reason:[NSString stringWithFormat:@"menu_item_disabled: %@ is disabled",wanted] userInfo:nil];
+      NSArray *actions=cuActions((__bridge AXUIElementRef)found);
+      NSString *action=level+1==path.count && [actions containsObject:@"AXPick"]?@"AXPick":@"AXPress";
+      if(![actions containsObject:action]) @throw [NSException exceptionWithName:@"action" reason:@"the menu item does not advertise the requested accessibility action" userInfo:nil];
+      cuCheckCancelled();
+      AXError e=AXUIElementPerformAction((__bridge AXUIElementRef)found,(__bridge CFStringRef)action);
+      if(e!=kAXErrorSuccess) @throw [NSException exceptionWithName:@"action" reason:[NSString stringWithFormat:@"menu accessibility action failed: %d",e] userInfo:nil];
+      [pressed addObject:wanted]; parent=found;
+    }
+    finished=YES;
+    return @{@"action_sent":@YES,@"strategy":@"a11y",@"route":@"accessibility",@"delivery":@"background",@"menu":pressed,@"front_lease":@NO,@"verified":@NO,@"verification_required":@"observation",@"yield_ms":@(round(yielded))};
+  } @catch(NSException *error) {
+    BOOL closed=cuCloseMenus(pid,menu);
+    @throw [NSException exceptionWithName:error.name reason:[error.reason stringByAppendingFormat:@"; menu cleanup %@; observe before another command",closed?@"confirmed":@"unconfirmed"] userInfo:nil];
+  } @finally { if(finished && path.count>1) cuCloseMenus(pid,menu); }
+}
 static id cuResolvePathTarget(pid_t pid, NSDictionary *t) {
   AXUIElementRef appEl = AXUIElementCreateApplication(pid);
   AXUIElementSetMessagingTimeout(appEl, 2.0);
@@ -1336,7 +1542,7 @@ static id execute(NSDictionary *p) {
     @throw [NSException exceptionWithName:@"real_pointer_refused" reason:@"real_pointer_refused: Computer Use never drives the user's cursor; pointer input goes to the bound app's window (bg_pointer)" userInfo:nil];
   if([@[@"bg_key",@"bg_pointer"] containsObject:tool]) cuRequireLease(args);
   cuOwnerPipe=[args[@"owner_pipe"] boolValue];
-  BOOL mutates=[@[@"type",@"key_event",@"bg_key",@"mouse_event",@"scroll",@"bg_pointer",@"set_value",@"focus_element",@"select_text",@"perform_action",@"click_element",@"scroll_element"] containsObject:tool]
+  BOOL mutates=[@[@"type",@"key_event",@"bg_key",@"mouse_event",@"scroll",@"bg_pointer",@"set_value",@"focus_element",@"select_text",@"perform_action",@"click_element",@"scroll_element",@"invoke_menu"] containsObject:tool]
     || ([tool isEqual:@"hit_test"] && [args[@"perform"] boolValue])
     || ([tool isEqual:@"app_info"] && [args[@"activate"] boolValue]);
   if([tool isEqual:@"key_event"] && ![args[@"down"] boolValue] && [args[@"owned_release"] boolValue]) {
@@ -1346,7 +1552,7 @@ static id execute(NSDictionary *p) {
     return cuPostKey(args,[args[@"input_app_ref"][@"pid"] intValue]);
   }
   cuCheckCancelled();
-  if([tool isEqual:@"input_capabilities"]) return @{@"pid_input":@1,@"agent":@1,@"screen_lock_check":@1,@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"focus_lease":@1,@"focused_control":@1,@"window_record":@(cuResolveBgPointer()?1:0),@"observed_window_input":@1,@"targeted_keys":@1,@"literal_text_replace":@1};
+  if([tool isEqual:@"input_capabilities"]) return @{@"pid_input":@1,@"agent":@1,@"screen_lock_check":@1,@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"focus_lease":@1,@"focused_control":@1,@"window_record":@(cuResolveBgPointer()?1:0),@"observed_window_input":@1,@"targeted_keys":@1,@"literal_text_replace":@1,@"pointer_context":@1,@"menu_path":@1};
   if([tool isEqual:@"front_lease_watchdog"]) {
     long long remaining = [args[@"deadline"] longLongValue] - (long long)([NSDate new].timeIntervalSince1970 * 1000);
     if(remaining > 0 && remaining < 30000) usleep((useconds_t)remaining * 1000);
@@ -1619,13 +1825,13 @@ static id execute(NSDictionary *p) {
     return done;
   }
   NSRunningApplication *inputApp=nil;
-  if([@[@"type",@"key_event",@"bg_key",@"mouse_event",@"scroll",@"hit_test",@"bg_pointer",@"focused_control"] containsObject:tool]) {
+  if([@[@"type",@"key_event",@"bg_key",@"mouse_event",@"scroll",@"hit_test",@"bg_pointer",@"pointer_context",@"focused_control"] containsObject:tool]) {
     if(![args[@"input_app_ref"] isKindOfClass:NSDictionary.class]) @throw [NSException exceptionWithName:@"focus" reason:@"open_application first to bind the input destination" userInfo:nil];
     inputApp=resolve(args[@"input_app_ref"]);
     if(!inputApp || inputApp.terminated) @throw [NSException exceptionWithName:@"focus" reason:@"input application is no longer running; open_application again" userInfo:nil];
     if([inputApp.bundleIdentifier isEqual:@"net.codewhale.computer-use"]) @throw [NSException exceptionWithName:@"protected" reason:@"Computer Use safety controls belong to the user." userInfo:nil];
   }
-  if((mutates || [@[@"get_app_state",@"window_info",@"list_windows"] containsObject:tool]) && cuScreenLocked())
+  if((mutates || [@[@"get_app_state",@"window_info",@"list_windows",@"pointer_context"] containsObject:tool]) && cuScreenLocked())
     @throw [NSException exceptionWithName:@"screen_locked" reason:@"screen_locked: the Mac is locked; apps cannot be read or controlled until the person unlocks it. No input was sent." userInfo:nil];
   // A held menu lease is given back before fresh raw input or an explicit
   // activation; AX element actions (the pick itself) leave it alone.
@@ -1852,6 +2058,7 @@ static id execute(NSDictionary *p) {
    * Pointer gestures are window-routed event records addressed to a window of
    * the bound app (cuBgPointer). The cursor the user holds is never moved.
    */
+  if([tool isEqual:@"pointer_context"]) return cuPointerContext(inputApp,args);
   if([tool isEqual:@"bg_pointer"]) return cuBgPointer(inputApp, args);
   if([tool isEqual:@"scroll"]) {
     cuCheckCancelled();
@@ -1867,6 +2074,7 @@ static id execute(NSDictionary *p) {
   AXUIElementSetMessagingTimeout(app,2.0);
   axPrepare(app);
   @try {
+    if([tool isEqual:@"invoke_menu"]) return cuInvokeMenu(app,a.processIdentifier,args);
     NSArray *ws=attr(app,@"AXWindows")?:@[];
     NSDictionary *identity=@{@"found":@YES,@"name":a.localizedName?:@"",@"pid":@(a.processIdentifier),@"bundle_id":a.bundleIdentifier?:@"",@"frontmost":@(a.active)};
     if([tool isEqual:@"get_app_state"] || [tool isEqual:@"list_windows"]) {
@@ -1886,6 +2094,10 @@ static id execute(NSDictionary *p) {
       int maxAttempts = leaseHeld ? 20 : 8;
       for(int attempt=0; !list && attempt<maxAttempts; attempt++) {
         BOOL empty = hasOrphanWebArea(out);
+        if(!ws.count) {
+          NSArray *visible=CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly,kCGNullWindowID));
+          for(NSDictionary *w in visible) if([w[(__bridge NSString *)kCGWindowOwnerPID] intValue]==a.processIdentifier && [w[(__bridge NSString *)kCGWindowLayer] intValue]==0) { empty=YES; break; }
+        }
         if(!empty && !args[@"query"] && !args[@"role"]) {
           if(leaseHeld) {
             empty = YES;

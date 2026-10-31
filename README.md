@@ -124,6 +124,12 @@ This does not establish that the UI stayed unchanged or that the current
 source shipped in the installed helper. [Cua comparison and remaining
 parity](docs/CUA_PARITY.md) records the upstream reference and proof gaps.
 
+**Source after 0.14.0.** Electron/Chromium hover and drag can use an existing,
+explicitly enabled renderer endpoint; otherwise they refuse before input.
+Native drag-session detection, runtime Tk refusal, web keyboard-scroll fallback
+and deeper menus are also implemented. These are development-source features;
+see [qualification and restrictions](docs/CUA_PARITY.md#october-31-macos-phase-3-source-candidate).
+
 **Status.** Release status is recorded in [CHANGELOG.md](CHANGELOG.md). The
 notarized Mac app is published on this repository's
 [GitHub releases](https://github.com/codewhale-hq/codewhale-cu-plugin/releases)

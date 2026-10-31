@@ -15,6 +15,7 @@ import { run, runOk, ExecError, tryJson, have, withSignal, wait, throwIfAborted,
 import { stateDir } from "../registry.mjs";
 import { isStrict } from "../approval-mode.mjs";
 import { createBrowser } from "../browser-cdp.mjs";
+import { chromiumPointer } from "./darwin-chromium.mjs";
 import { liveMarker, isPromptProcess } from "../native-prompt.mjs";
 import { recordingsDir, recordingsOutputPath } from "../recordings.mjs";
 
@@ -146,6 +147,7 @@ export function nativeErrorCode(message) {
   if (/^background_focus_required:/.test(m)) return "background_focus_required";
   if (/^user_busy:/.test(m)) return "user_busy";
   if (/^screen_locked:/.test(m)) return "screen_locked";
+  for (const code of ["pointer_reading_toolkit", "chromium_pointer_unavailable", "drag_session_active", "drag_session_detected", "menu_item_not_found", "menu_item_disabled", "menu_item_ambiguous"]) if (m.startsWith(`${code}:`)) return code;
   if (/ambiguous/i.test(m)) return "window_ambiguous";
   if (/not capturable/i.test(m)) return "window_not_capturable";
   if (/several running applications match/i.test(m)) return "ambiguous_application";
@@ -158,17 +160,6 @@ export function nativeErrorCode(message) {
 }
 
 /**
- * Choose the menu element for an exact title: a menu bar item at level 0, an
- * open menu's item below it. Exact match only — a fuzzy match would activate
- * the wrong command, and menu titles are stable enough to state precisely.
- * Exported for tests; the walk itself is native.
- */
-export function pickMenuElement(elements, label, menuBar) {
-  const role = menuBar ? "AXMenuBarItem" : "AXMenuItem";
-  return elements.find((el) => el?.label === label && el?.role === role) ?? null;
-}
-
-/**
  * Regular apps are what "open an app" means; accessories and daemons answer
  * menu-bar and background questions. Keep the signal, drop the XPC soup.
  * A helper that predates the activation_policy field returns the list whole.
@@ -178,7 +169,7 @@ export function selectApps(apps, all) {
   return apps.filter((a) => a.activation_policy === "regular" || a.frontmost === true);
 }
 
-const GUARDED_TOOLS = new Set(["type", "key_event", "bg_pointer", "bg_key", "set_value", "select_text", "perform_action", "click_element", "scroll_element", "focus_element"]);
+const GUARDED_TOOLS = new Set(["type", "key_event", "bg_pointer", "bg_key", "set_value", "select_text", "perform_action", "click_element", "scroll_element", "focus_element", "invoke_menu"]);
 const callChanges = new AsyncLocalStorage();
 let sharedAgent = null;
 let agentStarting = null;
@@ -400,8 +391,8 @@ export function create({ exec }) {
       else error.code = nativeErrorCode(error.message) ?? undefined;
       // A deterministic native refusal sent no input. A killed/timed-out
       // helper may have posted the press before losing its response.
-      const postsPress = (tool === "key_event" && args.down) || ["type", "perform_action", "click_element", "scroll_element", "set_value", "focus_element", "select_text", "bg_pointer", "bg_key"].includes(tool) || (tool === "hit_test" && args.perform);
-      error.inputMayHaveBeenSent = postsPress && r.spawned === true && (r.aborted || r.timedOut);
+      const postsPress = (tool === "key_event" && args.down) || ["type", "perform_action", "click_element", "scroll_element", "set_value", "focus_element", "select_text", "bg_pointer", "bg_key", "invoke_menu"].includes(tool) || (tool === "hit_test" && args.perform);
+      error.inputMayHaveBeenSent = postsPress && r.spawned === true && (r.aborted || r.timedOut || /^drag_session_detected:/.test(r.stderr));
       if (error.inputMayHaveBeenSent) error.message += "; input may already have been sent — observe the target before doing anything else";
       throw error;
     }
@@ -509,8 +500,37 @@ export function create({ exec }) {
     if (!state.foregroundInput && caps?.pid_input !== 1) {
       throw Object.assign(new ExecError("Background pointer input needs a helper that posts to the app's process; update the Codewhale Computer Use app, or use an accessibility action."), { code: "app_upgrade_required" });
     }
+    if (caps.pointer_context === 1 && (steps.every(s => s.type === MOUSE_MOVED) || steps.some(s => [6, 7, 27].includes(s.type)))) {
+      const context = await native("pointer_context", { steps, ...binding });
+      if (context.chromium) {
+        const link = await agent();
+        if (!link) throw Object.assign(new ExecError("Chromium pointer control needs the resident native guard; update the helper and plugin together."), { code: "app_upgrade_required" });
+        const armed = await link.request(state.foregroundInput ? "intent" : "arm", { target_pid: state.inputApp.pid, awake_s: awakeSeconds });
+        if (!armed?.ok) throw new ExecError("The resident guard could not prepare the Chromium gesture");
+        let lease;
+        try {
+          lease = await nativeLease("bg_pointer", { steps, ...binding, prepare_only: true });
+          const prepared = lease.receipt;
+          const expected = JSON.stringify({ window: prepared.window, web: prepared.web });
+          const observed_window = { pid: prepared.pid, id: prepared.window.id, frame: { x: prepared.window.x, y: prepared.window.y, w: prepared.window.w, h: prepared.window.h } };
+          return await chromiumPointer(prepared, steps, { run: runL, validate: async () => {
+            const current = await native("pointer_context", { steps, observed_window });
+            if (JSON.stringify({ window: current.window, web: current.web }) !== expected) throw new ExecError("The bound web window changed during the gesture; observe before retrying");
+          } });
+        } finally {
+          try { await lease?.release(); }
+          finally {
+            if (!state.foregroundInput) {
+              const settled = await link.request("settle", { action: armed.action, report_ms: settleMs }, settleMs + 2000);
+              callChanges.getStore()?.push(windowChanges(armed, settled));
+            }
+          }
+        }
+      }
+    }
     const r = await native("bg_pointer", { steps, ...extra, ...binding });
-    return { action_sent: true, strategy: "pid-routed", input_scope: "application-window", pointer_moved: false,
+    return { action_sent: true, strategy: r.strategy ?? "pid-routed", input_scope: "application-window", pointer_moved: false,
+             ...(r.drag_session_detected !== undefined ? { drag_session_detected: r.drag_session_detected } : {}),
              ...(typeof r.verified === "boolean" ? { verified: r.verified, verification_required: r.verification_required } : {}),
              front_lease: false, window: r.window ?? null,
              ...(Number.isFinite(r.yield_ms) ? { yield_ms: r.yield_ms } : {}),
@@ -942,48 +962,11 @@ export function create({ exec }) {
       ...(Number.isFinite(p?.yield_ms) && p.yield_ms > 0 ? { yield_ms: p.yield_ms } : {}) };
   }
 
-  /**
-   * Menu items by title path, through accessibility only: no key events, no
-   * focus lease. Menus expose items only while open, so each level is pressed
-   * and the next is polled for. Exact titles; an ellipsis is part of the title.
-   */
   async function invokeMenu(menuPath) {
     if (!state.inputApp) throw new ExecError("open_application first — invoke_menu acts on the bound application");
-    if (!Array.isArray(menuPath) || menuPath.length < 1 || menuPath.length > 3 || menuPath.some((s) => typeof s !== "string" || !s.trim())) {
-      throw new ExecError('invoke_menu needs path: 1..3 non-empty menu titles, e.g. ["File","New"]');
-    }
-    const titles = menuPath.map((s) => s.trim());
-    const app_ref = state.inputApp;
-    const pressed = [];
-    for (let level = 0; level < titles.length; level++) {
-      const found = await findMenuItem(app_ref, titles[level], level === 0);
-      if (!found) {
-        throw Object.assign(new ExecError(`menu item "${titles[level]}" not found ${pressed.length ? `under ${pressed.join(" ▸ ")}` : "on the menu bar"} — menus expose items only while open; check the exact title with get_app_state (an ellipsis is part of the title)`), { code: "menu_item_not_found" });
-      }
-      if (found.enabled === false) {
-        throw Object.assign(new ExecError(`menu item "${titles[level]}" is present but disabled right now — the app validates it against its current state (in background mode that is often a missing key window for window-targeted commands like Close). Use an element action on the window's own control instead of pressing a disabled item.`), { code: "menu_item_disabled" });
-      }
-      const target = { app_ref, windowIndex: found.windowIndex ?? 0, path: found.path, role: found.role, label: found.label };
-      assertBoundElement(target);
-      const action = found.role === "AXMenuItem" && (found.actions ?? []).includes("AXPick") ? "AXPick" : "AXPress";
-      await native("perform_action", { target, action });
-      pressed.push(titles[level]);
-      if (level < titles.length - 1) await wait(140);
-    }
-    return { action_sent: true, strategy: "a11y", route: "accessibility", delivery: "background", menu: pressed, front_lease: false,
-             note: "Menu activation used accessibility only — no key events or focus lease. Verify the app effect (list_windows / get_app_state) before reporting success." };
-  }
-
-  /** Poll for the exact menu element; opens and submenu population are async. */
-  async function findMenuItem(app_ref, label, menuBar) {
-    const deadline = Date.now() + 4_000;
-    for (;;) {
-      const obs = await native("get_app_state", { app_ref, detail: "full" });
-      const hit = pickMenuElement(obs?.elements ?? [], label, menuBar);
-      if (hit) return hit;
-      if (Date.now() >= deadline) return null;
-      await wait(120);
-    }
+    if (!Array.isArray(menuPath) || menuPath.length < 1 || menuPath.some(s => typeof s !== "string" || !s.trim())) throw new ExecError('invoke_menu needs a non-empty path of exact menu titles, e.g. ["File","New"]');
+    if ((await native("input_capabilities"))?.menu_path !== 1) throw Object.assign(new ExecError("Update the helper and plugin together for nested menu commands."), { code: "app_upgrade_required" });
+    return native("invoke_menu", { app_ref: state.inputApp, path: menuPath.map(s => s.trim()) });
   }
 
   // ---------- clipboard / cursor / waits ----------

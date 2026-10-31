@@ -193,7 +193,7 @@ export function connectPipeSocket(socketPath, { timeoutMs = 8_000, createConnect
  * Open the CDP WebSocket. Injectable: tests supply a fake ws-like object so
  * the command sequence is verifiable without a browser.
  */
-function defaultConnect(url, { timeoutMs = 8_000 } = {}) {
+export function defaultConnect(url, { timeoutMs = 8_000 } = {}) {
   return new Promise((resolve, reject) => {
     if (typeof WebSocket === "undefined") {
       reject(Object.assign(new ExecError("browser actions need a Node runtime with a global WebSocket (22+); this runtime does not have one"), { code: "unsupported_runtime" }));
@@ -223,7 +223,7 @@ const commandTimeoutMs = () => Number(process.env.CODEWHALE_CU_BROWSER_COMMAND_T
 const teardown = () => ({ timeoutMs: Math.min(3_000, commandTimeoutMs()), signal: null });
 
 /** id-matched JSON-RPC over the WebSocket, plus CDP event fan-out. */
-function makeChannel(ws) {
+export function makeChannel(ws) {
   let nextId = 0;
   const pending = new Map();
   const listeners = new Map();
@@ -249,6 +249,10 @@ function makeChannel(ws) {
   ws.addEventListener("error", () => {});
   return {
     get alive() { return !closed; },
+    on(method, handler) {
+      listeners.set(method, [...(listeners.get(method) ?? []), handler]);
+      return () => listeners.set(method, (listeners.get(method) ?? []).filter(fn => fn !== handler));
+    },
     /**
      * One CDP command. Bounded: a peer that keeps the socket open but never
      * answers must not hang the request (or a stop/teardown awaiting it)

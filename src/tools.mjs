@@ -490,11 +490,11 @@ export const TOOLS = [
     inputSchema: { type: "object", required: ["target", "action"], properties: { target: elementTargetSchema, action: { type: "string" }, computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "invoke_menu", description: "macOS: invoke an application menu item by title path (e.g. [\"File\",\"New\"]). Runs through accessibility with no focus lease and no key events — prefer this over cmd-key chords for app commands (New, Save, Quit and menu-only actions). App-level commands work without a key window; window-targeted items (Close) can validate against the app's key window and may no-op in the background — prefer the window's close-button element for those. Acts on the app bound with open_application. Verify the effect (list_windows / get_app_state) before reporting success.",
+    name: "invoke_menu", description: "macOS: invoke an application menu item by title path (e.g. [\"File\",\"New\"]). Runs through parent-scoped accessibility at any menu depth; failure closes the menu (Escape goes only to the target process if needed). Prefer this over cmd-key chords for app commands (New, Save, Quit and menu-only actions). App-level commands work without a key window; window-targeted items (Close) can validate against the app's key window and may no-op in the background — prefer the window's close-button element for those. Acts on the app bound with open_application. Verify the effect (list_windows / get_app_state) before reporting success.",
     inputSchema: {
       type: "object", required: ["path"],
       properties: {
-        path: { type: "array", minItems: 1, maxItems: 3, items: { type: "string", minLength: 1 }, description: "Menu titles from the menu bar inward, e.g. [\"File\",\"Close Window\"]. Exact titles as shown, including an ellipsis when the app shows one. Application menus (the second menu bar group named after the app) work too." },
+        path: { type: "array", minItems: 1, items: { type: "string", minLength: 1 }, description: "Menu titles at any depth, scoped to each parent; failed paths close the open menu. From the menu bar inward, e.g. [\"File\",\"Close Window\"]. Exact titles as shown, including an ellipsis when the app shows one. Application menus (the second menu bar group named after the app) work too." },
         computer: computerParam,
       },
       additionalProperties: false,

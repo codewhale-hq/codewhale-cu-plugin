@@ -178,7 +178,7 @@ export async function runInputLease(cmd, args = [], opts = {}) {
   let timer;
   try {
     const receipt = await Promise.race([ready, new Promise((_, reject) => { timer = setTimeout(() => reject(new ExecError("Native input owner did not acknowledge input")), opts.timeoutMs ?? 20_000); })]);
-    if (receipt?.action_sent !== true || receipt?.input_lease !== true) throw new ExecError("Native input owner did not confirm a live input lease");
+    if ((receipt?.action_sent !== true && receipt?.input_prepared !== true) || receipt?.input_lease !== true) throw new ExecError("Native input owner did not confirm a live input lease");
     return { receipt, release, async send(message) {
       const signal = currentSignal();
       let commandTimer, abort;

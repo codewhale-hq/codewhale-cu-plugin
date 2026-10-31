@@ -1,8 +1,48 @@
 # Cua reference and Codewhale parity
 
-Reviewed October 8, 2026. This is a source comparison and implementation plan.
+Original comparison reviewed October 8, 2026; the dated Phase 3 section below records later macOS work. This is a source comparison and implementation plan.
 Upstream documentation, local protocol fixtures, native application receipts,
 installed builds and real cloud tasks are separate evidence.
+
+## October 31 macOS Phase 3 source candidate
+
+The source after published 0.14.0 implements Electron/Chromium renderer hover,
+pointer-capture drags and intercepted HTML5 drops without opening a Node
+inspector or moving the hardware cursor. It connects only to an existing
+loopback renderer endpoint explicitly enabled on the bound process. It does
+not enable one, restart the person's app or change a browser profile. Stock
+apps without this endpoint refuse these gestures; accessible controls and
+Chromewhale remain the alternatives. Native and renderer window identity,
+viewport, visible page, title, URL and document loader are checked, with
+geometry read in an isolated JavaScript context. Existing consent, input
+ownership, resident guards and cancellation remain the authority.
+
+Native drag sessions are detected and cancelled with an unconfirmed-drop
+refusal. Tk raw pointer input refuses at runtime. Web keyboard-scroll fallback
+requires confirmed page/scroll-area focus and refuses text controls. Menus use
+exact, unique parent-scoped titles at arbitrary depth with cleanup on failure.
+No competing tool, browser registry, input owner or model loop was added.
+
+On macOS 26.1, the installed signed development helper and the global
+Codewhale plugin were exercised against disposable Electron 45.2.1 and Chrome
+156.0.8078.76 fixtures. Electron passed hover, both drag types, six-level menu
+invocation, missing/disabled/duplicate menu refusals with cleanup, keyboard
+scroll and cursor/foreground isolation. Chrome passed the same gesture and
+scroll effects; it was initialized in foreground before control was measured
+in background behind a separate disposable front fixture. That does not
+qualify a cold background Chrome launch. Chromium 136.0.7075.0 exposed browser
+chrome but no usable page AX tree and remains unqualified. Native AppKit drag
+cancellation and Tk 9's refusal were confirmed with independent fixture state.
+A renderer that overwrote its main-world geometry, visibility and JSON
+functions could not spoof the isolated geometry read. Separate no-endpoint
+proof confirmed refusal before pointer input.
+
+Real Codewhale/DeepSeek evidence and exact source fingerprints are retained in
+`CW/artifacts/cu-phase3-20261031/REPORT.md`. Hardware input interrupted some
+instrumented attempts; those are retained separately from uncontested task
+receipts. Other macOS versions, off-Space input/capture, a live locked screen,
+broad Electron application coverage and a notarized release of this candidate
+remain unqualified. Published 0.14.0 is unchanged.
 
 ## Reference versions
 
