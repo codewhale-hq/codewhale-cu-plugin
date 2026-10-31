@@ -942,7 +942,8 @@ export async function handle(req, { computerId = "local", sessionId = "direct", 
         session.mode = data.shared_pointer || data.activate ? "foreground" : "background";
         if (computerId === "local") {
           if (data.launched === true) consent.noteLaunched(computerId, data.resolved);
-          if (isStrict() || consent.decisionFor(computerId, consent.appKeys(data.resolved)).state === "allowed") consent.alias(computerId, consent.appKeys(data.resolved), { persisted: false, name: data.resolved.name ?? null });
+          const granted = consent.decisionFor(computerId, consent.appKeys(data.resolved));
+          if (granted.state === "allowed" && granted.via !== "scope:host") consent.alias(computerId, consent.appKeys(data.resolved), { persisted: false, name: data.resolved.name ?? null });
         }
       }
       if (tool === "get_app_state" && data?.found && Number.isInteger(data.pid) && data.pid > 0) session.displayTarget = { name: String(data.name ?? "Application").slice(0, 128), pid: data.pid };
