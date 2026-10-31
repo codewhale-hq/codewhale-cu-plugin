@@ -12,33 +12,39 @@ Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). Records below
 come from one maintainer Mac (arm64, Retina) and are evidence, not a
 publication verdict.
 
-### 0.14.0 — unreleased candidate, 2026-10-31
+### 0.14.0 — draft prepared, 2026-10-31 (unpublished)
 
-Phase 2 source commits `fa873d4` and `3a9336a` add the resident agent,
-background menu focus release, self-activation recovery, window-change
-receipts, locked-screen refusal, launch waits and new window capture routes.
-The founder selected 0.14.0 draft preparation on 2026-10-31. Package
-versions are 0.14.0; signing, packaging, notarization and a GitHub draft are
-authorized. Publication remains a separate founder decision.
+Frozen release source: `8c9ed973fbb215a821b6f19c2410dbd26bb713b6`, runtime
+fingerprint `94e2d6a55cff70e0`. Phase 2 commits `fa873d4` / `3a9336a` add
+the resident agent, background menu focus release, self-activation recovery,
+window-change receipts, locked-screen refusal, launch waits and new capture
+routes. `60105e2` fixes read-only backup cleanup and setup guidance.
 
-The installed dev helper reports runtime fingerprint `6643c21e03aff0f5`
-and passes deep/strict Developer ID signature verification. It is not a
-notarized 0.14.0 release. Earlier agent proof (16/16) and capture proof (6/7,
-the miss an OCR reply-size limit) used dev fingerprints `04903a154bee8a35`
-and `285cead40194acac`, respectively; these are not fresh exact-build
-proofs of the installed fingerprint. The inherited source-suite receipt records
-580 tests, 551 pass, 0 fail and 29 platform skips. The subsequent installer
-cleanup slice passed 18 existing updater/MCP checks and disposable filesystem
-observations for read-only removal, retained rollbacks, symlinks and warning
-delivery. That installer change has not replaced the installed helper.
+Final local validation: 580 tests, 551 pass, 0 fail, 29 platform skips;
+dependency audit found no vulnerabilities and receipt hygiene was clean.
+[Exact-commit CI run 41245842096](https://github.com/codewhale-hq/codewhale-cu-plugin/actions/runs/41245842096)
+passed on Ubuntu, macOS and Windows. All 65 packaged runtime files match
+the frozen source. Universal launcher, native helper, practice app and Node
+24.21.0 include arm64 and x86_64. The bundled Node served 38 MCP tools and
+the 4,069-byte guide without UI input.
 
-Live UI proofs are paused. Off-Space capture remains unqualified; no desktop
-was rearranged for a proof. Other macOS versions, Electron targets, a live
-locked screen and notarized packaging also remain unqualified. Final
-exact-commit validation, packaging, notarization and publication have not
-run for 0.14.0 at this source freeze; the authorized preparation follows the
-0.13.1 procedure below. The installed helper and host configurations are
-unchanged, and live UI proofs remain paused.
+Apple accepted app submission `9a043925-25eb-4b42-97ab-115f766180f6` and
+DMG submission `eefeea72-ed5c-420e-8443-11646588b93e`; both are Developer
+ID signed, stapled and accepted by Gatekeeper. The finished DMG passed its
+read-only mounted-content check. GitHub draft release ID `430211759`
+contains all 11 assets, each size and SHA-256 matching its local file.
+The CI-produced portable archive matches the frozen git archive byte-for-byte.
+Publication is not authorized or performed; latest remains v0.13.1.
+
+The installed helper remains dev build `6643c21e03aff0f5`, signed but
+unnotarized and without bundled Node; no install, restart or host-config edit
+occurred. Earlier agent proof (16/16) and capture proof (6/7, an OCR reply-size
+miss) used builds `04903a154bee8a35` / `285cead40194acac`; they are not fresh
+exact-build live acceptance of this candidate. Live UI proofs remain paused.
+Off-Space capture, a live locked screen, Electron, other macOS versions and
+inherited permission-revocation, non-admin upgrade, VoiceOver/keyboard and
+real updater-apply gates remain unqualified. Windows is an unsigned
+experimental preview; Linux remains experimental.
 
 ### 0.13.1 — published 2026-10-31
 
