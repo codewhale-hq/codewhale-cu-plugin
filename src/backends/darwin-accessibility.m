@@ -44,6 +44,10 @@ static void cuLockInput(void) {
   }
 }
 static BOOL cuFrontmostIsPid(pid_t pid);
+static BOOL cuScreenLocked(void);
+static BOOL cuIsOwnHelper(NSRunningApplication *a) {
+  return a.processIdentifier == getpid() || ([a.bundleIdentifier isEqual:@"net.codewhale.computer-use"] && [a.executableURL.lastPathComponent isEqual:@"accessibility"]);
+}
 static void cuRequireForeground(NSRunningApplication *expected) {
   NSRunningApplication *actual=NSWorkspace.sharedWorkspace.frontmostApplication;
   if(!cuFrontmostIsPid(expected.processIdentifier))
@@ -1028,6 +1032,7 @@ static NSRunningApplication *resolve(NSDictionary *ref) {
   NSMutableArray<NSRunningApplication *> *hits=[NSMutableArray array];
   for(NSRunningApplication *a in NSWorkspace.sharedWorkspace.runningApplications) {
     if(ref[@"pid"] && a.processIdentifier!=[ref[@"pid"] intValue]) continue;
+    if(!ref[@"pid"] && cuIsOwnHelper(a)) continue;
     if(bundle && !matchesName(a.bundleIdentifier,bundle)) continue;
     if(name && !matchesName(a.localizedName,name)) continue;
     [hits addObject:a];
@@ -1340,7 +1345,7 @@ static id execute(NSDictionary *p) {
     return cuPostKey(args,[args[@"input_app_ref"][@"pid"] intValue]);
   }
   cuCheckCancelled();
-  if([tool isEqual:@"input_capabilities"]) return @{@"pid_input":@1,@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"focus_lease":@1,@"focused_control":@1,@"window_record":@(cuResolveBgPointer()?1:0),@"observed_window_input":@1,@"targeted_keys":@1,@"literal_text_replace":@1};
+  if([tool isEqual:@"input_capabilities"]) return @{@"pid_input":@1,@"agent":@1,@"screen_lock_check":@1,@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"focus_lease":@1,@"focused_control":@1,@"window_record":@(cuResolveBgPointer()?1:0),@"observed_window_input":@1,@"targeted_keys":@1,@"literal_text_replace":@1};
   if([tool isEqual:@"front_lease_watchdog"]) {
     long long remaining = [args[@"deadline"] longLongValue] - (long long)([NSDate new].timeIntervalSince1970 * 1000);
     if(remaining > 0 && remaining < 30000) usleep((useconds_t)remaining * 1000);
@@ -1416,6 +1421,7 @@ static id execute(NSDictionary *p) {
   if([tool isEqual:@"list_apps"]) {
     NSMutableArray *apps=[NSMutableArray array];
     for(NSRunningApplication *a in NSWorkspace.sharedWorkspace.runningApplications) {
+      if(cuIsOwnHelper(a)) continue;
       NSInteger policy = a.activationPolicy;
       NSString *policyName = (policy >= 0 && policy <= 2) ? @[@"regular",@"accessory",@"prohibited"][policy] : @"unknown";
       [apps addObject:@{@"name":a.localizedName?:@"",@"pid":@(a.processIdentifier),@"bundle_id":a.bundleIdentifier?:@"",@"frontmost":@(a.active),@"hidden":@(a.hidden),@"activation_policy":policyName}];
@@ -1608,6 +1614,8 @@ static id execute(NSDictionary *p) {
     if(!inputApp || inputApp.terminated) @throw [NSException exceptionWithName:@"focus" reason:@"input application is no longer running; open_application again" userInfo:nil];
     if([inputApp.bundleIdentifier isEqual:@"net.codewhale.computer-use"]) @throw [NSException exceptionWithName:@"protected" reason:@"Computer Use safety controls belong to the user." userInfo:nil];
   }
+  if((mutates || [@[@"get_app_state",@"window_info",@"list_windows"] containsObject:tool]) && cuScreenLocked())
+    @throw [NSException exceptionWithName:@"screen_locked" reason:@"screen_locked: the Mac is locked; apps cannot be read or controlled until the person unlocks it. No input was sent." userInfo:nil];
   // A held menu lease is given back before fresh raw input or an explicit
   // activation; AX element actions (the pick itself) leave it alone.
   if([@[@"bg_pointer",@"type",@"key_event",@"bg_key"] containsObject:tool]
@@ -1960,11 +1968,482 @@ static id execute(NSDictionary *p) {
     return done;
   } @finally { CFRelease(app); }
 }
+typedef OSStatus (*cuKeyFocusFn)(ProcessSerialNumber *, uint32_t *);
+typedef OSStatus (*cuPsnPidFn)(const ProcessSerialNumber *, pid_t *);
+typedef CGError (*cuStealFocusFn)(uint32_t, uint32_t, int32_t *);
+typedef CGError (*cuReleaseFocusFn)(int32_t);
+typedef uint32_t (*cuMainConnFn)(void);
+typedef int (*cuPMCreateFn)(CFStringRef, uint32_t, CFStringRef, uint32_t *);
+typedef int (*cuPMReleaseFn)(uint32_t);
+static cuKeyFocusFn cuKeyFocus;
+static cuPsnPidFn cuPsnPid;
+static cuStealFocusFn cuStealFocus;
+static cuReleaseFocusFn cuReleaseFocus;
+static cuMainConnFn cuMainConn;
+static cuPMCreateFn cuPMCreate;
+static cuPMReleaseFn cuPMRelease;
+static NSObject *cuAgentLock;
+static dispatch_queue_t cuAgentQ, cuAgentWriteQ;
+static NSMutableDictionary<NSNumber *, NSMutableDictionary *> *cuGuards;
+static NSMutableDictionary<NSString *, NSMutableDictionary *> *cuAgentActions;
+static NSMutableDictionary<NSNumber *, NSValue *> *cuTargetTaps;
+static NSMutableDictionary<NSNumber *, NSMutableDictionary *> *cuWatches;
+static CFMachPortRef cuFrontTap;
+static pid_t cuFrontTapPid;
+static double cuLookupUntil;
+static uint64_t cuEpoch, cuTailGen;
+static uint64_t cuReleased, cuMissed, cuReverted, cuRestored;
+static NSDictionary *cuLate;
+static uint32_t cuAwakeId;
+static double cuAwakeUntil;
+static double cuNow(void) { return NSProcessInfo.processInfo.systemUptime; }
+static BOOL cuAgentResolve(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    cuResolveBgPointer();
+    void *sl = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY);
+    void *hs = dlopen("/System/Library/Frameworks/ApplicationServices.framework/Frameworks/HIServices.framework/HIServices", RTLD_LAZY);
+    void *io = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
+    if(sl) {
+      cuKeyFocus = (cuKeyFocusFn)dlsym(sl, "SLPSGetKeyFocusProcess");
+      cuStealFocus = (cuStealFocusFn)dlsym(sl, "SLPSStealKeyFocusReturningID");
+      cuReleaseFocus = (cuReleaseFocusFn)dlsym(sl, "SLPSReleaseKeyFocusWithID");
+      cuMainConn = (cuMainConnFn)dlsym(sl, "SLSMainConnectionID");
+    }
+    if(hs) cuPsnPid = (cuPsnPidFn)dlsym(hs, "GetProcessPID");
+    if(io) { cuPMCreate = (cuPMCreateFn)dlsym(io, "IOPMAssertionCreateWithName"); cuPMRelease = (cuPMReleaseFn)dlsym(io, "IOPMAssertionRelease"); }
+  });
+  return cuResolveBgPointer() && cuPsnPid;
+}
+static BOOL cuScreenLocked(void) {
+  NSDictionary *session = CFBridgingRelease(CGSessionCopyCurrentDictionary());
+  return [session[@"CGSSessionScreenIsLocked"] boolValue];
+}
+static pid_t cuPidOfPSN(ProcessSerialNumber *psn) {
+  pid_t pid = 0;
+  if(!cuPsnPid || (psn->highLongOfPSN == 0 && psn->lowLongOfPSN == 0) || cuPsnPid(psn, &pid) != 0) return 0;
+  return pid;
+}
+static pid_t cuAgentFrontPid(void) {
+  ProcessSerialNumber psn = {0, 0};
+  if(!cuAgentResolve() || cuGetFront(&psn) != 0) return 0;
+  return cuPidOfPSN(&psn);
+}
+static pid_t cuAgentKeyFocusPid(void) {
+  ProcessSerialNumber psn = {0, 0};
+  uint32_t second[4] = {0};
+  if(!cuAgentResolve() || !cuKeyFocus || cuKeyFocus(&psn, second) != 0) return 0;
+  return cuPidOfPSN(&psn);
+}
+static NSArray<NSDictionary *> *cuAgentWindows(void) {
+  NSArray *list = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+  NSMutableArray *out = [NSMutableArray array];
+  pid_t own = getpid();
+  for(NSDictionary *w in list) {
+    int layer = [w[(__bridge NSString *)kCGWindowLayer] intValue];
+    pid_t pid = [w[(__bridge NSString *)kCGWindowOwnerPID] intValue];
+    if(pid == own || !((layer >= 0 && layer <= 20) || layer == kCGPopUpMenuWindowLevel)) continue;
+    CGRect b = CGRectZero;
+    CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(__bridge NSString *)kCGWindowBounds], &b);
+    if(b.size.width < 2 || b.size.height < 2) continue;
+    [out addObject:@{ @"window_id": w[(__bridge NSString *)kCGWindowNumber] ?: @0, @"pid": @(pid), @"layer": @(layer),
+                      @"app": w[(__bridge NSString *)kCGWindowOwnerName] ?: @"", @"title": w[(__bridge NSString *)kCGWindowName] ?: @"",
+                      @"bounds": @{ @"x": @(b.origin.x), @"y": @(b.origin.y), @"w": @(b.size.width), @"h": @(b.size.height) } }];
+  }
+  return out;
+}
+static uint32_t cuFrontWindowOfPid(pid_t pid, NSArray *windows) {
+  for(NSDictionary *w in windows ?: cuAgentWindows()) if([w[@"pid"] intValue] == pid && [w[@"layer"] intValue] == 0) return [w[@"window_id"] unsignedIntValue];
+  return 0;
+}
+static BOOL cuTargetAboveFront(pid_t target, pid_t front) {
+  if(target <= 0 || front <= 0 || target == front) return NO;
+  BOOL targetFirst = NO;
+  for(NSDictionary *w in cuAgentWindows()) {
+    if([w[@"layer"] intValue] != 0) continue;
+    pid_t pid = [w[@"pid"] intValue];
+    if(pid == front) return targetFirst;
+    if(pid == target) targetFirst = YES;
+  }
+  return NO;
+}
+static BOOL cuUserSwitchedRecently(void) {
+  CGEventType kinds[] = { kCGEventLeftMouseDown, kCGEventRightMouseDown, kCGEventOtherMouseDown };
+  for(int i = 0; i < 3; i++) {
+    double since = CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateHIDSystemState, kinds[i]);
+    if(isfinite(since) && since >= 0 && since < 1.0) return YES;
+  }
+  return (CGEventSourceFlagsState(kCGEventSourceStateHIDSystemState) & (kCGEventFlagMaskCommand | kCGEventFlagMaskControl)) != 0;
+}
+static BOOL cuRestoreFrontIfRaised(pid_t target, pid_t front) {
+  if(cuAgentFrontPid() != front || !cuTargetAboveFront(target, front)) return NO;
+  AXUIElementRef app = AXUIElementCreateApplication(front);
+  AXUIElementSetMessagingTimeout(app, 0.5);
+  id window = attr(app, @"AXFocusedWindow");
+  AXError e = window ? AXUIElementPerformAction((__bridge AXUIElementRef)window, kAXRaiseAction) : kAXErrorFailure;
+  CFRelease(app);
+  if(e != kAXErrorSuccess)
+    [[NSRunningApplication runningApplicationWithProcessIdentifier:front] activateWithOptions:NSApplicationActivateAllWindows];
+  @synchronized(cuAgentLock) { cuRestored++; }
+  return YES;
+}
+static BOOL cuRevertActivation(pid_t target, pid_t front) {
+  if(target <= 0) return NO;
+  pid_t now = cuAgentFrontPid();
+  if(!now || !front || now == front || now != target || now == getpid() || now == getppid()) return NO;
+  if(cuUserSwitchedRecently()) return NO;
+  BOOL restored = NO;
+  uint32_t wid = cuFrontWindowOfPid(front, nil);
+  ProcessSerialNumber psn;
+  if(wid && cuGetPSN(front, &psn) == 0 && cuSetFront(&psn, wid, 0x200) == 0) {
+    cuPostWindowRecord(&psn, wid, 0x01);
+    cuPostWindowRecord(&psn, wid, 0x02);
+    restored = cuAgentFrontPid() == front;
+  }
+  if(!restored) [[NSRunningApplication runningApplicationWithProcessIdentifier:front] activateWithOptions:0];
+  @synchronized(cuAgentLock) { cuReverted++; }
+  return YES;
+}
+static BOOL cuGuardLive(NSDictionary *g, double now) {
+  return ([g[@"leases"] intValue] > 0 && now - [g[@"armed_at"] doubleValue] < 30.0) || now < [g[@"until"] doubleValue];
+}
+static BOOL cuIsGuarded(pid_t pid) {
+  @synchronized(cuAgentLock) {
+    NSMutableDictionary *g = cuGuards[@(pid)];
+    if(!g || [g[@"epoch"] unsignedLongLongValue] != cuEpoch) return NO;
+    return cuGuardLive(g, cuNow());
+  }
+}
+static BOOL cuReleaseTargetTheft(void) {
+  if(!cuStealFocus || !cuReleaseFocus || !cuMainConn) return NO;
+  @synchronized(cuAgentLock) { cuLookupUntil = cuNow() + 0.5; }
+  int32_t own = 0;
+  if(cuStealFocus(cuMainConn(), 0xC80, &own) != 0 || own == 0) return NO;
+  cuReleaseFocus(own);
+  for(int back = 1; back <= 4; back++) {
+    int32_t theft = own - back;
+    if(theft != 0 && cuReleaseFocus(theft) == 0) return YES;
+  }
+  return NO;
+}
+static void cuWaitMenuWindow(pid_t pid, double budget) {
+  double deadline = cuNow() + budget;
+  while(cuNow() < deadline) {
+    NSArray *list = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID));
+    for(NSDictionary *w in list)
+      if([w[(__bridge NSString *)kCGWindowOwnerPID] intValue] == pid && [w[(__bridge NSString *)kCGWindowLayer] intValue] >= kCGPopUpMenuWindowLevel) return;
+    usleep(1000);
+  }
+}
+static CGEventRef cuFrontTapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *info) { @autoreleasepool {
+  if(type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) { if(cuFrontTap) CGEventTapEnable(cuFrontTap, true); return event; }
+  if(type != 21 || !event || CGEventGetIntegerValueField(event, 64) != 0x4000) return event;
+  int64_t thief = CGEventGetIntegerValueField(event, 73);
+  if(thief == getpid()) return NULL;
+  if(thief <= 0 || thief > INT32_MAX || !cuIsGuarded((pid_t)thief) || cuAgentFrontPid() == (pid_t)thief) return event;
+  pid_t target = (pid_t)thief, front = cuFrontTapPid;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+    cuWaitMenuWindow(target, 0.15);
+    cuRestoreFrontIfRaised(target, front);
+    BOOL released = cuReleaseTargetTheft();
+    @synchronized(cuAgentLock) { if(released) cuReleased++; else cuMissed++; }
+  });
+  return NULL;
+} }
+static CGEventRef cuTargetTapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *info) { @autoreleasepool {
+  if(type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
+    @synchronized(cuAgentLock) { for(NSValue *v in cuTargetTaps.allValues) CGEventTapEnable((CFMachPortRef)v.pointerValue, true); }
+    return event;
+  }
+  if(type != 21 || !event || CGEventGetIntegerValueField(event, 64) != 0x4000) return event;
+  BOOL inLookup;
+  @synchronized(cuAgentLock) { inLookup = cuNow() < cuLookupUntil; }
+  return inLookup && CGEventGetIntegerValueField(event, 73) == getpid() ? NULL : event;
+} }
+static CFMachPortRef cuInstallTap(pid_t pid, CGEventTapCallBack callback) {
+  CFMachPortRef port = CGEventTapCreateForPid(pid, kCGHeadInsertEventTap, kCGEventTapOptionDefault, 1ULL << 21, callback, NULL);
+  if(!port) return NULL;
+  CFRunLoopSourceRef source = CFMachPortCreateRunLoopSource(NULL, port, 0);
+  if(!source) { CFMachPortInvalidate(port); CFRelease(port); return NULL; }
+  CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes);
+  CFRelease(source);
+  CGEventTapEnable(port, true);
+  return port;
+}
+static void cuRemoveTap(CFMachPortRef port) {
+  if(!port) return;
+  CGEventTapEnable(port, false);
+  CFMachPortInvalidate(port);
+  CFRelease(port);
+}
+static BOOL cuEnsureTaps(pid_t front, pid_t target) {
+  if(cuFrontTapPid != front || !cuFrontTap) {
+    cuRemoveTap(cuFrontTap);
+    cuFrontTap = cuInstallTap(front, cuFrontTapCallback);
+    cuFrontTapPid = cuFrontTap ? front : 0;
+  }
+  if(!cuFrontTap) return NO;
+  BOOL have;
+  @synchronized(cuAgentLock) { have = cuTargetTaps[@(target)] != nil; }
+  if(!have) {
+    CFMachPortRef port = cuInstallTap(target, cuTargetTapCallback);
+    if(port) @synchronized(cuAgentLock) { cuTargetTaps[@(target)] = [NSValue valueWithPointer:port]; }
+  }
+  return YES;
+}
+static void cuScheduleTapTeardown(double delay) {
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    NSMutableArray *idle = [NSMutableArray array];
+    BOOL none;
+    @synchronized(cuAgentLock) {
+      double now = cuNow();
+      for(NSNumber *pid in cuGuards.allKeys)
+        if(!cuGuardLive(cuGuards[pid], now)) [cuGuards removeObjectForKey:pid];
+      for(NSString *aid in cuAgentActions.allKeys)
+        if(now - [cuAgentActions[aid][@"at"] doubleValue] > 60.0) [cuAgentActions removeObjectForKey:aid];
+      for(NSNumber *pid in cuTargetTaps.allKeys) if(!cuGuards[pid]) { [idle addObject:cuTargetTaps[pid]]; [cuTargetTaps removeObjectForKey:pid]; }
+      none = cuGuards.count == 0;
+    }
+    for(NSValue *v in idle) cuRemoveTap((CFMachPortRef)v.pointerValue);
+    if(none) { cuRemoveTap(cuFrontTap); cuFrontTap = NULL; cuFrontTapPid = 0; }
+  });
+}
+static void cuNoteActivity(double awake) {
+  if(awake <= 0 || !cuPMCreate) return;
+  @synchronized(cuAgentLock) {
+    cuAwakeUntil = cuNow() + awake;
+    if(!cuAwakeId) cuPMCreate(CFSTR("PreventUserIdleDisplaySleep"), 255, CFSTR("Codewhale Computer Use is working"), &cuAwakeId);
+  }
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((awake + 1) * NSEC_PER_SEC)), cuAgentQ, ^{
+    @synchronized(cuAgentLock) {
+      if(cuAwakeId && cuNow() >= cuAwakeUntil) { cuPMRelease(cuAwakeId); cuAwakeId = 0; }
+    }
+  });
+}
+static NSArray *cuNewWindows(NSSet *before, NSArray *now) {
+  NSMutableArray *out = [NSMutableArray array];
+  for(NSDictionary *w in now) if(![before containsObject:w[@"window_id"]]) [out addObject:w];
+  return out;
+}
+static NSDictionary *cuAgentArm(NSDictionary *req) {
+  if(!cuAgentResolve()) return @{ @"ok": @NO, @"error": @"agent_unavailable" };
+  pid_t target = [req[@"target_pid"] intValue];
+  pid_t front = cuAgentFrontPid(), holder = cuAgentKeyFocusPid() ?: front;
+  NSArray *windows = cuAgentWindows();
+  NSMutableSet *ids = [NSMutableSet set];
+  for(NSDictionary *w in windows) [ids addObject:w[@"window_id"]];
+  NSString *aid = NSUUID.UUID.UUIDString;
+  BOOL guarded = NO;
+  uint64_t epoch;
+  NSArray *earlier;
+  @synchronized(cuAgentLock) {
+    epoch = cuEpoch;
+    earlier = cuLate && cuNow() - [cuLate[@"at"] doubleValue] < 10 ? cuLate[@"new_windows"] : @[];
+    cuLate = nil;
+    cuTailGen++;
+    if(target > 0) {
+      NSMutableDictionary *g = cuGuards[@(target)] ?: [@{ @"leases": @0 } mutableCopy];
+      g[@"leases"] = @([g[@"leases"] intValue] + 1);
+      g[@"until"] = @(cuNow() + 3.0);
+      g[@"armed_at"] = @(cuNow());
+      g[@"epoch"] = @(epoch);
+      cuGuards[@(target)] = g;
+    }
+  }
+  if(target > 0 && front > 0 && holder == front && front != target && front != getpid() && cuStealFocus && cuReleaseFocus && cuMainConn)
+    guarded = cuEnsureTaps(front, target);
+  BOOL above = cuTargetAboveFront(target, front);
+  @synchronized(cuAgentLock) {
+    cuAgentActions[aid] = [@{ @"at": @(cuNow()), @"target": @(target), @"front": @(front), @"ids": ids, @"epoch": @(epoch), @"above": @(above), @"earlier": earlier ?: @[],
+                         @"released": @(cuReleased), @"missed": @(cuMissed), @"reverted": @(cuReverted), @"restored": @(cuRestored) } mutableCopy];
+  }
+  cuNoteActivity([req[@"awake_s"] doubleValue]);
+  cuScheduleTapTeardown(31.0);
+  return @{ @"ok": @YES, @"action": aid, @"front_pid": @(front), @"key_focus_pid": @(holder), @"key_focus_guard": @(guarded), @"screen_locked": @(cuScreenLocked()) };
+}
+static void cuWatchTick(NSNumber *key) {
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_MSEC), cuAgentQ, ^{ @autoreleasepool {
+    NSMutableDictionary *w;
+    uint64_t epoch, tailNow;
+    @synchronized(cuAgentLock) { w = cuWatches[key]; epoch = cuEpoch; tailNow = cuTailGen; }
+    if(!w) return;
+    pid_t target = key.intValue, front = [w[@"front"] intValue];
+    BOOL live = [w[@"epoch"] unsignedLongLongValue] == epoch;
+    if(live && [w[@"reverts"] intValue] < 3 && cuRevertActivation(target, front)) w[@"reverts"] = @([w[@"reverts"] intValue] + 1);
+    if(live && [w[@"order"] boolValue] && [w[@"restores"] intValue] < 3 && cuRestoreFrontIfRaised(target, front)) w[@"restores"] = @([w[@"restores"] intValue] + 1);
+    if([w[@"tail"] unsignedLongLongValue] == tailNow && cuNow() < [w[@"late_until"] doubleValue]) {
+      NSArray *fresh = cuNewWindows(w[@"ids"], cuAgentWindows());
+      if(fresh.count > [w[@"seen"] count]) {
+        w[@"seen"] = fresh;
+        @synchronized(cuAgentLock) { if(cuTailGen == [w[@"tail"] unsignedLongLongValue]) cuLate = @{ @"at": @(cuNow()), @"new_windows": fresh }; }
+      }
+    }
+    BOOL more = live && cuNow() < [w[@"until"] doubleValue];
+    @synchronized(cuAgentLock) { if(!more && cuWatches[key] == w) [cuWatches removeObjectForKey:key]; }
+    if(more) cuWatchTick(key);
+  } });
+}
+static void cuWatchStart(pid_t target, pid_t front, NSSet *ids, uint64_t epoch, uint64_t tail, BOOL order, NSArray *seen) {
+  NSNumber *key = @(target);
+  BOOL running;
+  @synchronized(cuAgentLock) {
+    NSMutableDictionary *w = cuWatches[key];
+    running = w != nil && [w[@"epoch"] unsignedLongLongValue] == epoch;
+    if(!running) { w = [@{ @"reverts": @0, @"restores": @0 } mutableCopy]; cuWatches[key] = w; }
+    [w addEntriesFromDictionary:@{ @"front": @(front), @"ids": ids, @"epoch": @(epoch), @"tail": @(tail), @"order": @(order), @"seen": seen,
+                                   @"until": @(cuNow() + 2.5), @"late_until": @(cuNow() + 1.0) }];
+  }
+  if(!running) cuWatchTick(key);
+}
+static void cuAgentSettle(NSDictionary *req, void (^reply)(NSDictionary *)) {
+  NSString *aid = req[@"action"];
+  NSMutableDictionary *a;
+  @synchronized(cuAgentLock) { a = cuAgentActions[aid]; if(a) [cuAgentActions removeObjectForKey:aid]; }
+  if(!a) { reply(@{ @"ok": @NO, @"error": @"unknown_action" }); return; }
+  double report = req[@"report_ms"] ? [req[@"report_ms"] doubleValue] / 1000.0 : 0.3;
+  dispatch_async(cuAgentQ, ^{ @autoreleasepool {
+    pid_t target = req[@"target_pid"] ? [req[@"target_pid"] intValue] : [a[@"target"] intValue], front = [a[@"front"] intValue];
+    NSSet *ids = a[@"ids"];
+    uint64_t epoch = [a[@"epoch"] unsignedLongLongValue];
+    BOOL order = ![a[@"above"] boolValue];
+    double deadline = cuNow() + report;
+    NSArray *fresh = @[];
+    pid_t nowFront = front;
+    BOOL reverted = NO, restored = NO;
+    do {
+      if(report > 0) usleep(25000);
+      uint64_t current;
+      @synchronized(cuAgentLock) { current = cuEpoch; }
+      if(current == epoch) {
+        if(!reverted) reverted = cuRevertActivation(target, front);
+        if(order && !restored) restored = cuRestoreFrontIfRaised(target, front);
+      }
+      fresh = cuNewWindows(ids, cuAgentWindows());
+      nowFront = cuAgentFrontPid();
+      if(fresh.count) break;
+    } while(cuNow() < deadline);
+    pid_t keyNow = cuAgentKeyFocusPid();
+    NSDictionary *result;
+    @synchronized(cuAgentLock) {
+      pid_t leased = [a[@"target"] intValue];
+      if(leased > 0) {
+        NSMutableDictionary *g = cuGuards[@(leased)];
+        if(g) { g[@"leases"] = @(MAX(0, [g[@"leases"] intValue] - 1)); g[@"until"] = @(cuNow() + 3.0); }
+      }
+      result = @{ @"ok": @YES, @"new_windows": fresh, @"front_pid_before": @(front), @"front_pid_after": @(nowFront),
+                  @"foreground_changed": @(front && nowFront && front != nowFront),
+                  @"key_focus_released": @(cuReleased - [a[@"released"] unsignedLongLongValue]),
+                  @"key_focus_missed": @(cuMissed - [a[@"missed"] unsignedLongLongValue]),
+                  @"self_activation_reverted": @(cuReverted - [a[@"reverted"] unsignedLongLongValue]),
+                  @"window_order_restored": @(cuRestored - [a[@"restored"] unsignedLongLongValue]),
+                  @"key_focus_pid": @(keyNow),
+                  @"earlier_new_windows": a[@"earlier"] ?: @[] };
+    }
+    reply(result);
+    uint64_t tail;
+    @synchronized(cuAgentLock) { tail = cuTailGen; }
+    cuWatchStart(target, front, ids, epoch, tail, order, fresh);
+    cuScheduleTapTeardown(4.0);
+  } });
+}
+static void cuAgentWaitWindow(NSDictionary *req, void (^reply)(NSDictionary *)) {
+  pid_t pid = [req[@"pid"] intValue];
+  double deadline = cuNow() + MIN(30.0, MAX(0.1, [req[@"timeout_ms"] doubleValue] / 1000.0));
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    while(YES) { @autoreleasepool {
+      for(NSDictionary *w in cuAgentWindows())
+        if([w[@"pid"] intValue] == pid) { reply(@{ @"ok": @YES, @"window": w, @"front_pid": @(cuAgentFrontPid()) }); return; }
+      if(cuNow() >= deadline) { reply(@{ @"ok": @YES, @"window": NSNull.null, @"front_pid": @(cuAgentFrontPid()) }); return; }
+      usleep(50000);
+    } }
+  });
+}
+static void cuAgentWrite(NSDictionary *message) {
+  NSData *data = [NSJSONSerialization dataWithJSONObject:message options:0 error:nil];
+  if(!data) return;
+  dispatch_async(cuAgentWriteQ, ^{
+    fwrite(data.bytes, 1, data.length, stdout);
+    fputc('\n', stdout);
+    fflush(stdout);
+  });
+}
+static void cuAgentHandle(NSDictionary *req) {
+  id rid = req[@"id"] ?: NSNull.null;
+  NSString *cmd = req[@"cmd"];
+  void (^reply)(NSDictionary *) = ^(NSDictionary *body) {
+    NSMutableDictionary *m = [body mutableCopy];
+    m[@"id"] = rid;
+    cuAgentWrite(m);
+  };
+  @try {
+    if([cmd isEqual:@"hello"]) {
+      cuAgentResolve();
+      reply(@{ @"ok": @YES, @"agent": @1, @"pid": @(getpid()), @"key_focus_guard": @(cuStealFocus && cuReleaseFocus && cuMainConn && cuKeyFocus ? 1 : 0),
+               @"display_awake": @(cuPMCreate ? 1 : 0), @"accessibility": @(AXIsProcessTrusted()) });
+    } else if([cmd isEqual:@"status"]) {
+      NSDictionary *live = @{ @"screen_locked": @(cuScreenLocked()), @"front_pid": @(cuAgentFrontPid()), @"key_focus_pid": @(cuAgentKeyFocusPid()) };
+      NSMutableDictionary *body = [@{ @"ok": @YES } mutableCopy];
+      [body addEntriesFromDictionary:live];
+      @synchronized(cuAgentLock) {
+        [body addEntriesFromDictionary:@{ @"display_awake": @(cuAwakeId != 0), @"released": @(cuReleased), @"missed": @(cuMissed), @"reverted": @(cuReverted), @"restored": @(cuRestored) }];
+      }
+      reply(body);
+    } else if([cmd isEqual:@"arm"]) reply(cuAgentArm(req));
+    else if([cmd isEqual:@"settle"]) cuAgentSettle(req, reply);
+    else if([cmd isEqual:@"wait_window"]) cuAgentWaitWindow(req, reply);
+    else if([cmd isEqual:@"intent"]) {
+      @synchronized(cuAgentLock) { cuEpoch++; cuLate = nil; [cuWatches removeAllObjects]; }
+      reply(@{ @"ok": @YES });
+    } else reply(@{ @"ok": @NO, @"error": @"unknown_command" });
+  } @catch(NSException *e) { reply(@{ @"ok": @NO, @"error": e.reason ?: e.name }); }
+}
+static int cuAgentMain(void) {
+  signal(SIGTERM, SIG_DFL);
+  signal(SIGINT, SIG_DFL);
+  cuAgentLock = [NSObject new];
+  cuWatches = [NSMutableDictionary dictionary];
+  cuAgentQ = dispatch_queue_create("net.codewhale.computer-use.agent", DISPATCH_QUEUE_SERIAL);
+  cuAgentWriteQ = dispatch_queue_create("net.codewhale.computer-use.agent.write", DISPATCH_QUEUE_SERIAL);
+  cuGuards = [NSMutableDictionary dictionary];
+  cuAgentActions = [NSMutableDictionary dictionary];
+  cuTargetTaps = [NSMutableDictionary dictionary];
+  cuAgentResolve();
+  fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL) | O_NONBLOCK);
+  NSMutableData *buffer = [NSMutableData data];
+  dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, STDIN_FILENO, 0, dispatch_get_main_queue());
+  dispatch_source_set_event_handler(source, ^{ @autoreleasepool {
+    uint8_t chunk[65536];
+    ssize_t n = read(STDIN_FILENO, chunk, sizeof chunk);
+    if(n == 0 || (n < 0 && errno != EAGAIN && errno != EINTR)) {
+      @synchronized(cuAgentLock) { if(cuAwakeId && cuPMRelease) cuPMRelease(cuAwakeId); cuAwakeId = 0; }
+      cuRemoveTap(cuFrontTap);
+      for(NSValue *v in cuTargetTaps.allValues) cuRemoveTap((CFMachPortRef)v.pointerValue);
+      exit(0);
+    }
+    if(n < 0) return;
+    [buffer appendBytes:chunk length:(NSUInteger)n];
+    while(YES) {
+      NSRange nl = [buffer rangeOfData:[NSData dataWithBytes:"\n" length:1] options:0 range:NSMakeRange(0, buffer.length)];
+      if(nl.location == NSNotFound) break;
+      NSData *line = [buffer subdataWithRange:NSMakeRange(0, nl.location)];
+      [buffer replaceBytesInRange:NSMakeRange(0, nl.location + 1) withBytes:NULL length:0];
+      id req = line.length ? [NSJSONSerialization JSONObjectWithData:line options:0 error:nil] : nil;
+      if([req isKindOfClass:NSDictionary.class]) cuAgentHandle(req);
+      else if(line.length) cuAgentWrite(@{ @"id": NSNull.null, @"ok": @NO, @"error": @"invalid_request" });
+    }
+  } });
+  dispatch_resume(source);
+  CFRunLoopTimerRef keepAlive = CFRunLoopTimerCreateWithHandler(NULL, CFAbsoluteTimeGetCurrent() + 1e9, 1e9, 0, 0, ^(CFRunLoopTimerRef t) {});
+  CFRunLoopAddTimer(CFRunLoopGetMain(), keepAlive, kCFRunLoopCommonModes);
+  while(YES) CFRunLoopRun();
+  return 0;
+}
 int main(int argc, const char **argv){ @autoreleasepool {
   signal(SIGTERM,cuCancel); signal(SIGINT,cuCancel); signal(SIGPIPE,SIG_IGN);
   @try { if(argc!=2) @throw [NSException exceptionWithName:@"args" reason:@"expected one JSON argument" userInfo:nil];
     NSError *error=nil; id p=[NSJSONSerialization JSONObjectWithData:[[NSString stringWithUTF8String:argv[1]] dataUsingEncoding:NSUTF8StringEncoding] options:0 error:&error];
     if(![p isKindOfClass:NSDictionary.class]) @throw [NSException exceptionWithName:@"json" reason:@"invalid request" userInfo:nil];
+    if([p[@"tool"] isEqual:@"agent"]) return cuAgentMain();
     id result=execute(p);
     if([p[@"args"][@"input_lease"] boolValue]) { NSMutableDictionary *ack=[result mutableCopy]; ack[@"input_lease"]=@YES; result=ack; }
     NSData *data=[NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingFragmentsAllowed error:&error];

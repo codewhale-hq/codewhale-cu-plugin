@@ -81,6 +81,57 @@ export function run(cmd, args = [], opts = {}) {
   });
 }
 
+export function startAgent(cmd, args = []) {
+  let child;
+  try { child = spawn(cmd, args, { stdio: ["pipe", "pipe", "ignore"], windowsHide: true }); }
+  catch { return null; }
+  const pending = new Map();
+  let next = 0, buffer = "", closed = false;
+  const fail = () => {
+    closed = true;
+    for (const waiter of pending.values()) { clearTimeout(waiter.timer); waiter.resolve(null); }
+    pending.clear();
+  };
+  child.on("error", fail);
+  child.on("close", fail);
+  child.stdin.on("error", () => {});
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk;
+    let nl;
+    while ((nl = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, nl);
+      buffer = buffer.slice(nl + 1);
+      let message;
+      try { message = JSON.parse(line); } catch { continue; }
+      const waiter = pending.get(message?.id);
+      if (!waiter) continue;
+      pending.delete(message.id);
+      clearTimeout(waiter.timer);
+      waiter.resolve(message);
+    }
+  });
+  child.unref();
+  child.stdin.unref?.();
+  child.stdout.unref?.();
+  return {
+    get alive() { return !closed && child.exitCode === null && child.signalCode === null; },
+    request(cmd, body = {}, timeoutMs = 1500) {
+      if (closed) return Promise.resolve(null);
+      const id = ++next;
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => { pending.delete(id); resolve(null); }, timeoutMs);
+        pending.set(id, { resolve, timer });
+        child.stdin.write(JSON.stringify({ ...body, id, cmd }) + "\n");
+      });
+    },
+    close() {
+      closed = true;
+      try { child.stdin.end(); } catch {}
+    },
+  };
+}
+
 /** A native input owner acknowledges its press, then releases on stdin EOF. */
 export async function runInputLease(cmd, args = [], opts = {}) {
   throwIfAborted();

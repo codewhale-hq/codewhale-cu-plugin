@@ -34,6 +34,7 @@ stop; never change targets or routes to bypass it.
 | --- | --- | --- |
 | `background_focus_required` | strict approval mode, or a held chord / web value replacement, would need keyboard focus | use element targets; select the app with activate:true when the task needs focus |
 | `app_upgrade_required` | the running helper predates the brief focus lease | update and restart the Codewhale Computer Use app, or use an accessibility action |
+| `screen_locked` | the Mac is locked; apps cannot be read or controlled | stop and tell the person; nothing was sent, and only they can unlock |
 | `kill_not_owned` | standard approval quits only apps this session launched | ask the person to quit that app themselves |
 | `app_not_identified` | no app is named, bound or identifiably frontmost | pass `app_ref`, or `open_application` first |
 | `bg_dispatch_unavailable` | the window-routed pointer cannot be resolved on this helper | update Computer Use or use element targets — the user's cursor is never used instead |
@@ -123,6 +124,11 @@ if the task needs focus. A typing pause does not override a denial.
 - `front_lease` is false for background deliveries: they go to the app's
   process. `menu_holds_key_focus:true` means a menu opened in a background app
   currently holds the person's key focus: pick or dismiss it immediately.
+- `window_changes` lists what the action changed on screen: `new_windows`
+  (with `menu:true` for menus), `foreground_changed`, `key_focus_kept`
+  (the person's app still has the keyboard), and the guard's own work
+  (`key_focus_released`, `self_activation_reverted`, `window_order_restored`).
+  `observed:false` means the agent could not watch; assume nothing.
 - `key_window_unconfirmed`: the target window could not be confirmed as its
   app's key window, so no key was sent (it could have reached another window
   of the same app). Close the other window, or use `activate:true`.

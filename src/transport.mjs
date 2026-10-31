@@ -4,7 +4,7 @@
 //  - ssh:   run the codewhale-cu remote agent over ssh (args travel as base64 JSON,
 //           so no tool argument can ever become remote shell syntax)
 //  - hdc:   HarmonyOS device over `hdc` shell / file push-pull
-import { run, runOk, runInputLease, ExecError, currentSignal } from "./exec.mjs";
+import { run, runOk, runInputLease, startAgent, ExecError, currentSignal } from "./exec.mjs";
 import { ensureApp, appSessionRequest } from "./app-socket.mjs";
 import { sshArgv, sshDestination, sshOptions, validateSshTarget } from "./ssh-args.mjs";
 import { PLATFORMS } from "./registry.mjs";
@@ -55,6 +55,7 @@ export function localExec() {
     run,
     runOk,
     runInputLease,
+    startAgent,
     async readFile(p) { return fs.promises.readFile(p); },
     async writeFile(p, data) { return fs.promises.writeFile(p, data); },
     tmpFile(prefix) {

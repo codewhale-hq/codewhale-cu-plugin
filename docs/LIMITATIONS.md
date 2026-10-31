@@ -455,13 +455,43 @@ way it does. Receipts: `parity/results/darwin-aqua-2026-09-07.json`,
   (`key_window_unconfirmed` otherwise). The person's app keeps the front and
   key focus; measured on macOS 26.1 with a key-focus watcher at 2 ms. 0.13.0
   borrowed the front for about 200 ms and could take a keystroke typed in
-  that window. Exception: a context or popup menu opened in a background app
-  takes key focus while it is open (measured); the receipt says
-  `menu_holds_key_focus:true`, the press first waits for a gap in the
-  person's typing, and the next raw input or a 6 s watchdog closes the menu
-  with Escape. Strict approval mode still refuses these routes with
+  that window. A context or popup menu opened in a background app takes key
+  focus while it is open (measured); since 0.14.0 the helper's resident agent
+  taps the person's app for WindowServer's key-focus notice, drops it and
+  releases the menu's theft, so the person keeps typing in their app while the
+  menu stays open for an accessibility pick (`window_changes.key_focus_released`,
+  `menu_holds_key_focus:false`). When the agent cannot run (older helper,
+  missing SPI) the press first waits for a gap in the person's typing, the
+  receipt says `menu_holds_key_focus:true`, and the next raw input or a 6 s
+  watchdog closes the menu with Escape. Strict approval mode still refuses these routes with
   `background_focus_required`. Only macOS 26.1 and AppKit/Chromium targets
   have been measured; other toolkits may ignore process-posted events.
+- **A self-activating app is put back.** Some apps activate themselves when
+  launched or when an action lands (Calculator, Chrome on cmd+L). For about
+  2.5 s after a background action, and during a background launch, the agent
+  watches WindowServer's front process; if the target took the front, the
+  person did not click in the last second and is not holding Command or
+  Control, it makes the person's window front and key again (`self_activation_reverted`) and raises
+  it back above a target window that came over it (`window_order_restored`).
+  The target is visible for a frame or two (measured 23 to 55 ms on macOS
+  26.1). A deliberate keyboard switch to that same app within those 2.5 s
+  (Cmd-Tab, Spotlight) is indistinguishable from self-activation and is
+  undone; an app that activates itself again later is not chased beyond three
+  reverts. A background menu still takes key focus for about 50 ms before the
+  agent releases it, so a keystroke in that instant can reach the menu.
+- **Window changes are reported, not inferred.** Each background action's
+  receipt carries `window_changes`: windows that appeared within 300 ms
+  (`CODEWHALE_CU_SETTLE_MS`), including sheets, panels from other processes and
+  menus (`menu:true`), whether the front process changed, and windows the
+  previous action opened after its receipt returned (`earlier_new_windows`).
+  An empty list means nothing appeared in that window, not that nothing will.
+  Titles need Screen Recording.
+- **A locked Mac refuses.** Input and observation refuse `screen_locked` while
+  the session is locked, instead of returning an empty tree or a picture of
+  the lock screen. While actions run, the agent holds a
+  `PreventUserIdleDisplaySleep` assertion that lapses 600 s after the last
+  action (`CODEWHALE_CU_KEEP_DISPLAY_AWAKE`, `0` turns it off), so idle dimming
+  does not lock the Mac mid-task; it never wakes, unlocks or dismisses anything.
 - **The agent never drives the user's cursor.** Every pointer gesture —
   clicks under any `strategy`, hover, drag and wheel — is a window-routed
   event addressed to a window of the bound app's process (`strategy:

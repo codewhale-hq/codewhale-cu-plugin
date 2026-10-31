@@ -285,10 +285,13 @@ Once the GUI is the right interface: observe once, act once, then verify.
     wheel or modified or window-targeted key is posted to the target app's
     process (`strategy:"pid-routed"`, `front_lease:false`); a chord's window is
     made key inside its app and refused with `key_window_unconfirmed` if that
-    cannot be confirmed. A context or popup menu opened in the background holds
-    the person's key focus while open (`menu_holds_key_focus:true`): pick the
-    item at once with an accessibility press; the next raw input or a 6 s
-    watchdog closes it. Prefer an accessibility action when the control has
+    cannot be confirmed. A context or popup menu opened in the background no
+    longer takes the person's keyboard when the helper's agent is running
+    (`window_changes.key_focus_released`); otherwise it holds key focus while
+    open (`menu_holds_key_focus:true`): pick the item at once with an
+    accessibility press; the next raw input or a 6 s watchdog closes it. Read
+    `window_changes.new_windows` after each action: a sheet, dialog or menu
+    that appeared is the next thing to handle. Prefer an accessibility action when the control has
     one. Web value replacement and held chords still require `activate:true`.
     A strict-mode or older helper refuses these with
     `background_focus_required` or `app_upgrade_required`. An idle moment does

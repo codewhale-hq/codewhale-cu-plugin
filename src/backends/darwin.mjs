@@ -10,6 +10,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { run, runOk, ExecError, tryJson, have, withSignal, wait, throwIfAborted, currentSignal } from "../exec.mjs";
 import { stateDir } from "../registry.mjs";
 import { isStrict } from "../approval-mode.mjs";
@@ -144,6 +145,7 @@ export function nativeErrorCode(message) {
   const m = String(message ?? "");
   if (/^background_focus_required:/.test(m)) return "background_focus_required";
   if (/^user_busy:/.test(m)) return "user_busy";
+  if (/^screen_locked:/.test(m)) return "screen_locked";
   if (/ambiguous/i.test(m)) return "window_ambiguous";
   if (/not capturable/i.test(m)) return "window_not_capturable";
   if (/several running applications match/i.test(m)) return "ambiguous_application";
@@ -176,10 +178,58 @@ export function selectApps(apps, all) {
   return apps.filter((a) => a.activation_policy === "regular" || a.frontmost === true);
 }
 
+const GUARDED_TOOLS = new Set(["type", "key_event", "bg_pointer", "bg_key", "set_value", "select_text", "perform_action", "click_element", "scroll_element", "focus_element"]);
+const callChanges = new AsyncLocalStorage();
+let sharedAgent = null;
+let agentStarting = null;
+let agentRetryAt = 0;
+
+export function displayAwakeSeconds(value = process.env.CODEWHALE_CU_KEEP_DISPLAY_AWAKE) {
+  if (value === undefined || value === "") return 600;
+  if (/^(0|off|false|no)$/i.test(String(value).trim())) return 0;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 86_400) : 600;
+}
+
+export function mergeWindowChanges(list) {
+  const seen = new Set();
+  const windows = (key) => list.flatMap((c) => c[key] ?? []).filter((w) => !seen.has(`${key}:${w.window_id}`) && seen.add(`${key}:${w.window_id}`));
+  const sum = (key) => list.reduce((n, c) => n + (c[key] ?? 0), 0);
+  const out = {
+    observed: list.every((c) => c.observed),
+    new_windows: windows("new_windows"),
+    foreground_changed: list.some((c) => c.foreground_changed),
+    key_focus_guard: list.some((c) => c.key_focus_guard),
+    key_focus_kept: list.every((c) => c.key_focus_kept !== false),
+  };
+  const earlier = windows("earlier_new_windows");
+  if (earlier.length) out.earlier_new_windows = earlier;
+  for (const key of ["key_focus_released", "self_activation_reverted", "window_order_restored"]) if (sum(key)) out[key] = sum(key);
+  return out;
+}
+
+export function windowChanges(armed, settled) {
+  if (!armed?.ok || !settled?.ok) return { observed: false };
+  const pick = (w) => ({ window_id: w.window_id, pid: w.pid, app: w.app, title: w.title || null, layer: w.layer, ...(w.layer === 101 ? { menu: true } : {}) });
+  return {
+    observed: true,
+    new_windows: (settled.new_windows ?? []).map(pick),
+    earlier_new_windows: (settled.earlier_new_windows ?? []).map(pick),
+    foreground_changed: settled.foreground_changed === true,
+    key_focus_guard: armed.key_focus_guard === true,
+    key_focus_kept: !(armed.key_focus_pid > 0) || settled.key_focus_pid === armed.key_focus_pid,
+    key_focus_released: settled.key_focus_released ?? 0,
+    self_activation_reverted: settled.self_activation_reverted ?? 0,
+    window_order_restored: settled.window_order_restored ?? 0,
+  };
+}
+
 export function create({ exec }) {
   const runL = (cmd, args, opts) => exec.run(cmd, args, opts);
   const state = { activeDisplay: 1, lastRaster: null, inputApp: null, foregroundInput: false, previewEnabled: false, pointer: null, heldDrag: null };
-  // Shared-surface politeness: front leases, real-pointer gestures,
+  const awakeSeconds = displayAwakeSeconds();
+  const settleMs = Math.max(0, Number(process.env.CODEWHALE_CU_SETTLE_MS ?? 300) || 0);
+  // Shared-surface politeness: menu-opening presses, real-pointer gestures,
   // foreground keys and activations wait for a gap in the user's hardware
   // input rather than interleave with their typing. The helper reads the
   // same HID idle clock it uses for interference accounting. gap<=0 turns
@@ -259,6 +309,28 @@ export function create({ exec }) {
     return helper;
   }
 
+  async function agent() {
+    if (!exec.startAgent || process.env.CODEWHALE_CU_AGENT === "off") return null;
+    if (sharedAgent?.alive) return sharedAgent;
+    if (agentStarting) return agentStarting;
+    if (Date.now() < agentRetryAt) return null;
+    agentRetryAt = Date.now() + 30_000;
+    agentStarting = (async () => {
+      const link = exec.startAgent(await nativeHelper(), [JSON.stringify({ tool: "agent", args: {} })]);
+      const hello = link ? await link.request("hello", {}, 3000) : null;
+      if (hello?.agent !== 1) { link?.close(); return null; }
+      sharedAgent = link;
+      agentRetryAt = 0;
+      return link;
+    })().finally(() => { agentStarting = null; });
+    return agentStarting;
+  }
+
+  async function refuseLocked() {
+    const status = await (await agent())?.request("status");
+    if (status?.screen_locked) throw Object.assign(new ExecError("screen_locked: the Mac is locked; apps cannot be read or controlled until the person unlocks it. No input was sent."), { code: "screen_locked" });
+  }
+
   function requireForegroundInput() {
     if (!state.foregroundInput) throw Object.assign(new ExecError("This action would take keyboard focus and was not sent in background mode. Use an accessibility action, browser control, or a separate computer."), { code: "background_focus_required" });
   }
@@ -277,7 +349,7 @@ export function create({ exec }) {
 
   async function native(tool, args = {}) {
     assertNotPrompt(args?.app_ref, args?.target?.app_ref, args?.from_target?.app_ref, args?.to?.app_ref, tool === "kill_app" ? args : null, state.inputApp);
-    // Window-addressed events take a brief front lease. Strict approval mode
+    // Window-addressed events take keyboard focus inside the target app. Strict approval mode
     // refuses that before even starting an older installed helper.
     if (["bg_pointer", "bg_key"].includes(tool)) requireFocusControl();
     // Every resolved target (element center or screen point) is where the
@@ -294,7 +366,23 @@ export function create({ exec }) {
     }
     if (args.observed_window && (await native("input_capabilities"))?.observed_window_input !== 1) throw Object.assign(new ExecError("Update Computer Use before acting on a captured window; this helper cannot preserve its identity"), { code: "app_upgrade_required" });
     const helper = await nativeHelper();
-    const r = await runL(helper, [JSON.stringify({ tool, args: { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, focus_lease: !isStrict(), owner_pipe: true } })], { timeoutMs: 20_000, ownerPipe: true });
+    const inputTool = GUARDED_TOOLS.has(tool) || (tool === "hit_test" && args.perform);
+    const guarded = inputTool && state.inputApp && !state.foregroundInput;
+    const intentional = (inputTool && state.foregroundInput) || (tool === "app_info" && args.activate);
+    const link = guarded || intentional ? await agent() : null;
+    if (intentional) await link?.request("intent");
+    const armed = guarded ? await link?.request("arm", { target_pid: state.inputApp.pid, awake_s: awakeSeconds }) : null;
+    let r;
+    try {
+      r = await runL(helper, [JSON.stringify({ tool, args: { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, focus_lease: !isStrict(), owner_pipe: true } })], { timeoutMs: 20_000, ownerPipe: true });
+    } finally {
+      const changes = callChanges.getStore();
+      if (armed?.ok) {
+        const reportMs = changes?.length ? Math.min(settleMs, 50) : settleMs;
+        const settled = await link.request("settle", { action: armed.action, report_ms: reportMs }, reportMs + 2000);
+        changes?.push(windowChanges(armed, settled));
+      } else if (guarded && link) changes?.push({ observed: false });
+    }
     if (r.aborted || r.timedOut || r.code !== 0) {
       const error = new ExecError(r.aborted ? "computer request cancelled" : r.timedOut ? "native accessibility helper timed out" : r.stderr.trim() || "native accessibility helper failed", r);
       if (r.aborted) error.code = "cancelled";
@@ -504,6 +592,7 @@ export function create({ exec }) {
 
   // ---------- screenshots ----------
   async function screenshot({ display, region, app_ref, window_id, path: outPath, max_dimension } = {}) {
+    await refuseLocked();
     if (max_dimension !== undefined && (!Number.isInteger(max_dimension) || max_dimension < 256 || max_dimension > 8192)) {
       throw new ExecError("max_dimension must be an integer between 256 and 8192");
     }
@@ -772,6 +861,7 @@ export function create({ exec }) {
     if (pid) find.pid = pid; else if (bid) find.bundle_id = bid; else find.name = String(name).replace(/\.app$/, "");
     let p;
     let launched = false;
+    let link = null, armed = null, firstWindow;
     // Binding an already-running app must not ask LaunchServices to reopen
     // it: reopen can raise windows even with open -g on some applications.
     if (!urlArg) {
@@ -786,7 +876,11 @@ export function create({ exec }) {
       if (urlArg) args.push(urlArg);
       if (bid) args.unshift("-b", bid); else args.unshift("-a", name);
       if (!activate) args.unshift("-g");
+      link = await agent();
+      if (activate) await link?.request("intent");
+      else armed = await link?.request("arm", { target_pid: 0, awake_s: awakeSeconds });
       const r = await runL("open", args, { timeoutMs: 25_000 });
+      if (r.code !== 0 && armed?.ok) link.request("settle", { action: armed.action, report_ms: 0 }).catch(() => {});
       if (r.code !== 0) {
         const stderr = (r.stderr ?? "").trim();
         // A name or bundle id that resolves nowhere is a stable refusal code,
@@ -796,8 +890,26 @@ export function create({ exec }) {
         throw Object.assign(new ExecError(`open failed: ${stderr.slice(0, 200)}`), { code });
       }
       launched = true;
-      await new Promise((res) => setTimeout(res, 600));
-      p = await native("app_info", { app_ref: find, activate });
+      if (link) {
+        const deadline = Date.now() + 10_000;
+        for (;;) {
+          try { p = await native("app_info", { app_ref: find, activate: false }); }
+          catch (error) { if (!error.message.includes("application not found")) throw error; }
+          if (p?.found || Date.now() >= deadline) break;
+          await wait(150);
+        }
+        if (armed?.ok) {
+          const settled = await link.request("settle", { action: armed.action, report_ms: p?.found ? settleMs : 0, ...(p?.found ? { target_pid: p.pid } : {}) }, settleMs + 2000);
+          callChanges.getStore()?.push(windowChanges(armed, settled));
+        }
+        if (!p?.found) throw Object.assign(new ExecError(`${find.name ?? find.bundle_id} did not start within 10 s of launching`), { code: "app_not_found" });
+        const shown = await link.request("wait_window", { pid: p.pid, timeout_ms: Math.max(500, deadline - Date.now()) }, 12_000);
+        firstWindow = shown?.window ? { window_id: shown.window.window_id, title: shown.window.title || null } : null;
+        p = await native("app_info", { app_ref: find, activate });
+      } else {
+        await new Promise((res) => setTimeout(res, 600));
+        p = await native("app_info", { app_ref: find, activate });
+      }
     }
     if (activate && p?.frontmost === false) throw Object.assign(new ExecError("The selected application did not become frontmost; no input mode was enabled. Continue with background control or wait for the user."), { code: "activation_not_confirmed" });
     if (p?.bundle_id === "net.codewhale.computer-use") throw Object.assign(new ExecError("The Computer Use setup and safety controls belong to the user and cannot be operated by this plugin."), { code: "protected_application" });
@@ -810,7 +922,7 @@ export function create({ exec }) {
       previewActiveAt = Date.now();
       updatePreview(true).catch(() => {});
     }
-    return { launched, activate, keyboard_delivery: activate ? "foreground-guarded" : "process", input_scope: activate ? "shared-desktop" : "application", shared_pointer: false, pointer_route: "pid-routed", isolated_desktop: false, url: urlArg ?? null, resolved: p?.found ? { name: p.name, pid: p.pid, bundle_id: p.bundle_id, frontmost: p.frontmost } : null,
+    return { launched, ...(firstWindow !== undefined ? { first_window: firstWindow } : {}), activate, keyboard_delivery: activate ? "foreground-guarded" : "process", input_scope: activate ? "shared-desktop" : "application", shared_pointer: false, pointer_route: "pid-routed", isolated_desktop: false, url: urlArg ?? null, resolved: p?.found ? { name: p.name, pid: p.pid, bundle_id: p.bundle_id, frontmost: p.frontmost } : null,
       ...(Number.isFinite(p?.yield_ms) && p.yield_ms > 0 ? { yield_ms: p.yield_ms } : {}) };
   }
 
@@ -918,10 +1030,10 @@ export function create({ exec }) {
     } catch { perms.screen_capture = "failed"; }
     caps.screenshot = perms.screen_capture === "ok";
     caps.recording = caps.screenshot;
-    return { platform: "darwin", capabilities: caps, permissions: perms, note: "macOS does not expose Screen-Recording TCC state to CLI; a black/empty screenshot means Screen Recording permission is missing. Background mode (open_application activate:false) uses accessibility actions and process-bound keyboard events; pointer gestures and modified keys take a brief front lease that waits for a gap in the person's input and is restored afterwards (strict approval mode refuses them). Foreground control (activate:true) uses the shared desktop and requires exclusive use. Neither mode is an isolated desktop. App-specific behavior still requires verification." };
+    return { platform: "darwin", capabilities: caps, permissions: perms, note: "macOS does not expose Screen-Recording TCC state to CLI; a black/empty screenshot means Screen Recording permission is missing. Background mode (open_application activate:false) uses accessibility actions and process-bound keyboard events; pointer gestures and modified keys are posted to the app's process without taking the front (strict approval mode refuses them); a self-activating app is put back behind the person's app and a background menu's key-focus grab is released. Foreground control (activate:true) uses the shared desktop and requires exclusive use. Neither mode is an isolated desktop. App-specific behavior still requires verification." };
   }
 
-  return {
+  const api = {
     platform: "darwin",
     probe,
     list_displays: displayInfo,
@@ -1213,6 +1325,20 @@ export function create({ exec }) {
     // A held drag is buffered, not held on any real button: nothing to release.
     releaseInput: async () => { state.heldDrag = null; },
   };
+  for (const [name, fn] of Object.entries(api)) {
+    if (typeof fn !== "function") continue;
+    api[name] = async (...callArgs) => {
+      if (callChanges.getStore()) return fn(...callArgs);
+      const changes = [];
+      const result = await callChanges.run(changes, () => fn(...callArgs));
+      if (changes.length && result && typeof result === "object" && !Array.isArray(result) && !("window_changes" in result)) {
+        result.window_changes = mergeWindowChanges(changes);
+        if (result.menu_holds_key_focus && result.window_changes.key_focus_kept && result.window_changes.key_focus_released) result.menu_holds_key_focus = false;
+      }
+      return result;
+    };
+  }
+  return api;
 }
 
 export default { create };
