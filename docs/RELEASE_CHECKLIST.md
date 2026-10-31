@@ -17,7 +17,9 @@ publication verdict.
 Phase 2 source commits `fa873d4` and `3a9336a` add the resident agent,
 background menu focus release, self-activation recovery, window-change
 receipts, locked-screen refusal, launch waits and new window capture routes.
-Package versions remain 0.13.1 until the release is selected.
+The founder selected 0.14.0 draft preparation on 2026-10-31. Package
+versions are 0.14.0; signing, packaging, notarization and a GitHub draft are
+authorized. Publication remains a separate founder decision.
 
 The installed dev helper reports runtime fingerprint `6643c21e03aff0f5`
 and passes deep/strict Developer ID signature verification. It is not a
@@ -34,7 +36,9 @@ Live UI proofs are paused. Off-Space capture remains unqualified; no desktop
 was rearranged for a proof. Other macOS versions, Electron targets, a live
 locked screen and notarized packaging also remain unqualified. Final
 exact-commit validation, packaging, notarization and publication have not
-run for 0.14.0; the 0.13.1 procedure below is the release path when authorized.
+run for 0.14.0 at this source freeze; the authorized preparation follows the
+0.13.1 procedure below. The installed helper and host configurations are
+unchanged, and live UI proofs remain paused.
 
 ### 0.13.1 — published 2026-10-31
 

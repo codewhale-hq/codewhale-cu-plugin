@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased (0.14.0 candidate)
+## 0.14.0 — 2026-10-31 (draft, unpublished)
 
 - **Backup cleanup reports failures.** Install and update cleanup makes expired backup directories writable before removal, without following their symlinks. Read or removal failures now produce a warning instead of silently retaining the backup. The newly retained rollback bundle and the configured retention count remain protected. Verified with disposable filesystem fixtures on macOS; Windows remains unqualified.
 - Installer connection guidance says to quit Claude Desktop before editing its MCP configuration and verify the saved command after reopening; Desktop may rewrite it on restart. The README now distinguishes published v0.13.1 from the 0.14.0 candidate and describes the process-routed background gestures available since v0.13.1.
