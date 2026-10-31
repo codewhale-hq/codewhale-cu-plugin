@@ -18,8 +18,8 @@ keyboard focus.
    remain available under **Settings…**.
 4. In Codewhale's **Connectors**, install, review and enable the ordinary
    Computer Use plugin from a stable published plugin release, then start a
-   task. The portable plugin release asset is planned for 0.13.0 and is not
-   yet published; see [distribution](DISTRIBUTION.md). With the 0.13.0 candidate
+   task. The portable plugin asset ships with each release since 0.13.0; see
+   [distribution](DISTRIBUTION.md). With the 0.13.0
    plugin and helper there is nothing further to approve: standard approval
    (the default on a Mac) opens every app you have not denied.
 
@@ -30,11 +30,11 @@ native trust panel (**Trust until revoked…**, confirmed with Touch ID or your
 Mac password); that is key pairing, not verification of the host's vendor code
 signature, see the [trust boundary](LIMITATIONS.md).
 
-The compact Codewhale controller and strict-mode trust flow are 0.13.0 candidate
+The compact Codewhale controller and strict-mode trust flow are 0.13.0
 features. A signed candidate passed human approval, reconnect after helper
 restart, background input/capture and human revocation on one maintainer Mac.
-The simplified native UI and release packaging still need qualification;
-publication remains pending. Older installed clients can retain their own
+The released helper is notarized; screen-reader behavior and macOS versions
+other than 26.1 are not yet qualified. Older installed clients can retain their own
 consent cards or per-app gates. Update the plugin through Connectors and the
 separate helper through its app updater, then restart their connections.
 Changing this checkout updates neither installed component.

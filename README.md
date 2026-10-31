@@ -28,8 +28,8 @@ menu-bar app.
   your app back afterwards. There is no per-app prompt in the default standard
   approval mode; apps you deny stay off limits, and human-input yielding and
   Pause/Stop remain.
-- **Stay in control.** See selected apps and their input modes. The 0.13.0
-  candidate adds a compact Codewhale controller while an app is in use. Pause cancels
+- **Stay in control.** See selected apps and their input modes. 0.13.0
+  adds a compact Codewhale controller while an app is in use. Pause cancels
   queued work and releases held input; Stop ends existing sessions. Only the
   person using the menu-bar controls can allow input again.
 - **Update deliberately.** The app checks for stable releases on request.

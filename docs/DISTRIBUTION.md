@@ -1,9 +1,8 @@
 # Plugin and native helper distribution
 
 Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). The published
-0.12.0 release includes the notarized macOS helper. The 0.13.0 working tree is
-a candidate: its native app has been built and signed, but live qualification
-and publication remain pending.
+0.13.0 release includes the notarized macOS helper and the portable plugin
+asset.
 
 Computer Use is an ordinary plugin, installed and updated through Codewhale's
 **Connectors** from a stable published release using the existing plugin
@@ -11,9 +10,8 @@ installer. The separate native helper owns macOS permissions, approval and
 Pause/Stop controls. Neither component is embedded in Engine, and neither
 requires an Engine release to update.
 
-The 0.13.0 candidate plans a portable `computer-use.tar.gz` asset alongside the
-native installers in this repository's stable release. That asset is not yet
-published. It supplies the plugin runtime, MCP entry point and skills for the
+Since 0.13.0 each stable release carries a portable `computer-use.tar.gz` asset
+alongside the native installers. It supplies the plugin runtime, MCP entry point and skills for the
 existing installer. Native app updates continue through its own updater.
 
 The public entry point is [codewhale.net/computer-use](https://codewhale.net/computer-use).
@@ -100,7 +98,7 @@ published plugin release. For the native helper, open the disk image and drag
 the app into Applications. Open it once to register the helper, then use its
 setup panel. The versioned macOS archive on the same release is what **Check
 for updates…** installs; `computer-use.tar.gz` is the separate portable plugin
-asset planned for 0.13.0. Restart plugin connections after an update so they
+asset. Restart plugin connections after an update so they
 use the installed version. Changing a source checkout updates neither the
 installed plugin nor the native app.
 
