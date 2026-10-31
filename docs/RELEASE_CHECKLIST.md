@@ -12,7 +12,7 @@ Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). Records below
 come from one maintainer Mac (arm64, Retina) and are evidence, not a
 publication verdict.
 
-### 0.14.0 — draft prepared, 2026-10-31 (unpublished)
+### 0.14.0 — published 2026-10-31
 
 Frozen release source: `8c9ed973fbb215a821b6f19c2410dbd26bb713b6`, runtime
 fingerprint `94e2d6a55cff70e0`. Phase 2 commits `fa873d4` / `3a9336a` add
@@ -31,16 +31,29 @@ the 4,069-byte guide without UI input.
 Apple accepted app submission `9a043925-25eb-4b42-97ab-115f766180f6` and
 DMG submission `eefeea72-ed5c-420e-8443-11646588b93e`; both are Developer
 ID signed, stapled and accepted by Gatekeeper. The finished DMG passed its
-read-only mounted-content check. GitHub draft release ID `430211759`
+read-only mounted-content check. GitHub release ID `430211759`
 contains all 11 assets, each size and SHA-256 matching its local file.
 The CI-produced portable archive matches the frozen git archive byte-for-byte.
-Publication is not authorized or performed; latest remains v0.13.1.
+Published as latest at 22:34:24Z after the founder-authorized installed test.
+Anonymous portable archive, release receipt and DMG downloads match their
+published digests. The live setup page offers the 0.14.0 DMG and ZIP.
 
-The installed helper remains dev build `6643c21e03aff0f5`, signed but
-unnotarized and without bundled Node; no install, restart or host-config edit
-occurred. Earlier agent proof (16/16) and capture proof (6/7, an OCR reply-size
-miss) used builds `04903a154bee8a35` / `285cead40194acac`; they are not fresh
-exact-build live acceptance of this candidate. Live UI proofs remain paused.
+The notarized helper is installed globally at
+`/Applications/Codewhale Computer Use.app`, build `94e2d6a55cff70e0`, with
+bundled Node. Older installed CU versions and the stale runtime cache were
+removed; the old per-user app path resolves to this same global app. The
+Engine lists one enabled, trusted, user-scope 0.14.0 plugin with 38 tools.
+
+Native installed-helper checks passed 15/16: capture, text, click, drag,
+chord, cursor preservation and refusals passed; a macOS system alert
+interrupted the foreground baseline. After the person cleared it, a real
+Codewhale 0.10.2 (`f510a59d94ab`) run using DeepSeek `deepseek-flash` typed
+Unicode text, pressed Apply and verified the result. An independent fixture
+oracle confirmed the exact text; 1,460 desktop samples over 23.85 s recorded
+zero cursor movement and zero foreground changes. The first model attempt
+had a restricted test allow-list without discovery; adding `tool_search`
+enabled the normal deferred tools. No product code changed during these checks.
+
 Off-Space capture, a live locked screen, Electron, other macOS versions and
 inherited permission-revocation, non-admin upgrade, VoiceOver/keyboard and
 real updater-apply gates remain unqualified. Windows is an unsigned
@@ -448,6 +461,7 @@ receipts belong in a public issue.
 - [x] **Publish release** — v0.12.0 published 2026-09-22 (PDT) at Hunter Bown's direction (GitHub release created and published by Claude Opus 5.5 from the human's authenticated `gh` session); tag on `843569235f15`; exact-head three-platform CI run 35806096151 success (ubuntu, macos, windows); Apple accepted app `57e98ea7-750d-4260-a9f1-dd2aa3ab29a6` and disk image `589fd26e-e2e1-4ee6-9080-c0aa5ea7d5a6`, both stapled and Gatekeeper `Notarized Developer ID`; all 11 GitHub asset digests match the local receipt (zip b3a8afe60604…, dmg 65957a23b541…); anonymous latest `release.json` download verified; marketplace mirror `c1aa7a9221455145758872e9b3d0458ec5cd02da`.
 - [x] **Publish release** — v0.13.0 published 2026-10-31 (PDT) at Hunter Bown's direction (GitHub release published by Claude Opus 5.5 from the human's authenticated `gh` session); tag on `8dfb783047eeb1055c6a2d28a0952018ae0f3ffb`; exact-head three-platform CI run 41235898223 success; Apple accepted app `10d47cb5-3ad2-4f3b-a42b-26735d5fefd4` and disk image `e47b4341-5d22-44f5-9a0b-db4d86c640af`, both stapled and Gatekeeper `Notarized Developer ID`; all 11 GitHub asset digests match the local receipt (zip 150e3fe29f14…, dmg 63817bdfbfb5…, plugin archive c258dc569d52…); anonymous latest downloads verified.
 - [x] **Publish release** — v0.13.1 published 2026-10-31 (PDT) at Hunter Bown's direction (GitHub release published by Claude Opus 5.5 from the human's authenticated `gh` session); tag on `bd27f14`; exact-head three-platform CI run 41240109169 success; Apple accepted app `4f4c079f-7703-4188-83a7-47c99a2fc2b9` and disk image `8ec068ea-3b57-41a5-abe9-8312ddb627a1`, both stapled; all 11 GitHub asset digests match the local receipt (zip dc84c05b1eb2…, dmg cefe20e8c0e3…, plugin archive 07fe2c17659c…); anonymous latest downloads and marketplace install verified.
+- [x] **Publish release** — v0.14.0 published 2026-10-31 at 22:34:24Z at Hunter Bown's conditional direction after the installed Codewhale/DeepSeek task passed. Tag `8c9ed973fbb215a821b6f19c2410dbd26bb713b6`, runtime `94e2d6a55cff70e0`; three-platform CI run 41245842096 success; app and DMG Apple Accepted/stapled/Gatekeeper accepted. All 11 asset digests and anonymous portable archive, release receipt and DMG downloads verified. Mac ZIP `9c0323f0ac95…`, DMG `a237f67e0995…`, portable archive `80c12cb7975e…`. Prepared, installed, verified and published by Codex from the authenticated maintainer session; remaining gates above stay open.
 
 ---
 

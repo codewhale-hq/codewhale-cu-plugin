@@ -1,6 +1,8 @@
 # Release notes
 
-## 0.14.0 — 2026-10-31 (draft, unpublished)
+## 0.14.0 — 2026-10-31
+
+Published with notarized universal Mac ZIP/DMG and 11 verified release assets. A live task through the installed Codewhale Engine and DeepSeek verified Unicode entry and Apply in a background AppKit fixture; an independent oracle confirmed the result, with zero cursor or foreground changes across 1,460 observer samples. Platform and workflow qualification limits remain in the release checklist.
 
 - **Backup cleanup reports failures.** Install and update cleanup makes expired backup directories writable before removal, without following their symlinks. Read or removal failures now produce a warning instead of silently retaining the backup. The newly retained rollback bundle and the configured retention count remain protected. Verified with disposable filesystem fixtures on macOS; Windows remains unqualified.
 - Installer connection guidance says to quit Claude Desktop before editing its MCP configuration and verify the saved command after reopening; Desktop may rewrite it on restart. The README now distinguishes published v0.13.1 from the 0.14.0 candidate and describes the process-routed background gestures available since v0.13.1.

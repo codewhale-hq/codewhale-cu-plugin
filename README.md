@@ -7,7 +7,7 @@
 
 **By Codewhale · macOS beta (notarized app and source) · Windows experimental unsigned preview · Linux experimental: X11 verified on a virtual desktop (Xvfb + openbox) and in the Docker test image, from source; Wayland input on sway (verified on headless sway), other Wayland desktops observation only**
 
-The [0.13.1 release](https://github.com/codewhale-hq/codewhale-cu-plugin/releases/tag/v0.13.1)
+The [0.14.0 release](https://github.com/codewhale-hq/codewhale-cu-plugin/releases/tag/v0.14.0)
 provides the notarized universal Mac app and an **unsigned Windows x64 preview**.
 The Windows ZIP bundles Node and includes setup instructions; it is intended
 for testing, with physical-device, mixed-DPI and signing acceptance still open.
@@ -25,9 +25,8 @@ menu-bar app.
   never moves your cursor. Accessibility actions and process-directed typing
   touch nothing you are using. A pixel click, drag, wheel or modified key is
   posted to the target app's process, so your app keeps the front and your
-  keyboard. In v0.13.1 a background menu can hold your keyboard until it is
-  picked or closed (at most 6 s). The unreleased 0.14.0 candidate releases
-  that grab after about 50 ms on the measured Mac. There is no per-app prompt
+  keyboard. Since v0.14.0 a native agent releases a background menu's
+  keyboard grab after about 50 ms on the measured Mac. There is no per-app prompt
   in the default standard approval mode; apps you deny stay off limits, and
   human-input yielding and Pause/Stop remain.
 - **Stay in control.** See selected apps and their input modes. 0.13.0
@@ -128,7 +127,7 @@ parity](docs/CUA_PARITY.md) records the upstream reference and proof gaps.
 **Status.** Release status is recorded in [CHANGELOG.md](CHANGELOG.md). The
 notarized Mac app is published on this repository's
 [GitHub releases](https://github.com/codewhale-hq/codewhale-cu-plugin/releases)
-(stable release: v0.13.1; this checkout prepares 0.14.0); remaining
+(stable release: v0.14.0); remaining
 gates are tracked in [the release checklist](docs/RELEASE_CHECKLIST.md). The
 [setup page](https://codewhale.net/computer-use) offers the notarized disk
 image directly.
@@ -207,11 +206,13 @@ your host at the server:
 
 `/path/to/mcp/server.mjs` can be this checkout or the stable copy inside the
 installed app (`install:app` prints it — on macOS
-`~/Applications/Codewhale Computer Use.app/Contents/Resources/plugin/mcp/server.mjs`).
+`/Applications/Codewhale Computer Use.app/Contents/Resources/plugin/mcp/server.mjs`
+after dragging the release app to Applications, or the corresponding
+`~/Applications/` path with the source installer).
 `npm link` also gives you a `codewhale-cu` command for hosts that want one.
 
 For the self-contained Mac release, use its bundled
-`~/Applications/Codewhale Computer Use.app/Contents/MacOS/node` as the host's
+`<installed app>/Contents/MacOS/node` as the host's
 command to avoid depending on a Homebrew Node installation. Quit Claude
 Desktop before editing its MCP configuration, then reopen it and verify the
 saved command; Desktop may rewrite its configuration on restart.

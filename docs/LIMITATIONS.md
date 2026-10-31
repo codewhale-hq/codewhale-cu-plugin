@@ -38,10 +38,11 @@ a persistent pairing key receive approval for the current connection only.
 Deny, closing the panel or no answer refuses access.
 
 The notarized 0.13.0 release shipped this trust flow and compact Codewhale
-controller; v0.13.1 is the current stable release. Installed-helper evidence
+controller; v0.14.0 is the current stable release. Installed-helper evidence
 and remaining human-interaction and platform gates are recorded in
 [the release checklist](RELEASE_CHECKLIST.md). The resident native agent and
-new capture routes in this checkout remain an unreleased 0.14.0 candidate.
+new capture routes shipped in 0.14.0; live acceptance remains scoped to the
+recorded applications and workflows.
 
 - **The identity is an installation key.** Codewhale supplies its stable
   ledger secret as the first message on the installed plugin's private stdin
