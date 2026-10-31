@@ -12,9 +12,26 @@ Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). Records below
 come from one maintainer Mac (arm64, Retina) and are evidence, not a
 publication verdict.
 
-### 0.13.0 — source candidate, 2026-10-26
+### 0.13.0 — published 2026-10-31
 
-Publication remains pending. The independently installed plugin and signed
+Published from `8dfb783` (runtime fingerprint `9e0a62f22d68af92`). Exact-commit
+CI run 41235898223 passed on Ubuntu, macOS and Windows; local `npm test` 581
+tests, 552 pass, 0 fail, 29 platform skips at the parent `389f1d1`. Apple
+accepted the app (`10d47cb5-3ad2-4f3b-a42b-26735d5fefd4`) and disk image
+(`e47b4341-5d22-44f5-9a0b-db4d86c640af`), both stapled, Gatekeeper `Notarized
+Developer ID`. The app installed from the release ZIP over the previous build
+kept its grants and passed 16/16 installed-helper checks against disposable
+fixtures, launched with the bundled Node; a Claude Code session drove
+Calculator in the background through it. After publication, anonymous
+downloads of `computer-use.tar.gz`, `release.json` and the DMG matched the
+receipts, and the installed engine (`785f7d0d4458`) installed the plugin from
+the `releases/latest` marketplace URL in an isolated home. Not qualified:
+input refusal after a mid-session permission revocation, non-admin
+/Applications upgrade, VoiceOver/keyboard review, a person typing during a
+front lease, other macOS versions, and the updater apply from an installed
+0.12.0.
+
+Earlier source-candidate record, 2026-10-26: The independently installed plugin and signed
 native helper are separate from Engine packaging.
 
 - The host-pairing runtime checks passed **50/50** existing cases. After the
@@ -373,6 +390,7 @@ receipts belong in a public issue.
 - [x] **Publish release** — v0.6.0 published 2026-09-15 at Hunter Bown's direction (GitHub release created and published by Devin from the human's authenticated `gh` session); tag on `c9d36d9`; GitHub's asset digests match the receipt (zip c8f25537a162…, dmg 20d63bf43e40…); anonymous `release.json` download verified.
 - [x] **Publish release** — v0.11.3 published 2026-09-21 (PDT) at Hunter Bown's direction (GitHub release created and published by Claude Opus 5 from the human's authenticated `gh` session); tag on `b06279b67abb856fcfab289d06120910fe7e85ff`; exact-head three-platform CI run 35678169352 success (ubuntu, macos, windows); Apple accepted app `eeed7947-6ffd-4ae5-aa7e-d76e39029a5f` and disk image `ed5e88e0-88df-4e52-be9a-3bccb51f596f`, both stapled and Gatekeeper `Notarized Developer ID`; all 11 GitHub asset digests match the local receipt (zip 409ed976f58e…, dmg ddbbd037763b…); marketplace mirror `1ad65160c63f92042243c522fea4a47cff717481`.
 - [x] **Publish release** — v0.12.0 published 2026-09-22 (PDT) at Hunter Bown's direction (GitHub release created and published by Claude Opus 5.5 from the human's authenticated `gh` session); tag on `843569235f15`; exact-head three-platform CI run 35806096151 success (ubuntu, macos, windows); Apple accepted app `57e98ea7-750d-4260-a9f1-dd2aa3ab29a6` and disk image `589fd26e-e2e1-4ee6-9080-c0aa5ea7d5a6`, both stapled and Gatekeeper `Notarized Developer ID`; all 11 GitHub asset digests match the local receipt (zip b3a8afe60604…, dmg 65957a23b541…); anonymous latest `release.json` download verified; marketplace mirror `c1aa7a9221455145758872e9b3d0458ec5cd02da`.
+- [x] **Publish release** — v0.13.0 published 2026-10-31 (PDT) at Hunter Bown's direction (GitHub release published by Claude Opus 5.5 from the human's authenticated `gh` session); tag on `8dfb783047eeb1055c6a2d28a0952018ae0f3ffb`; exact-head three-platform CI run 41235898223 success; Apple accepted app `10d47cb5-3ad2-4f3b-a42b-26735d5fefd4` and disk image `e47b4341-5d22-44f5-9a0b-db4d86c640af`, both stapled and Gatekeeper `Notarized Developer ID`; all 11 GitHub asset digests match the local receipt (zip 150e3fe29f14…, dmg 63817bdfbfb5…, plugin archive c258dc569d52…); anonymous latest downloads verified.
 
 ---
 
