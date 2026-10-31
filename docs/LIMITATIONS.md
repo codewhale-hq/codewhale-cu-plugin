@@ -1,6 +1,6 @@
 # Limitations
 
-## Approval modes (0.13.0 source candidate)
+## Approval modes (since 0.13.0)
 
 On macOS the default is **standard** approval, in the spirit of cua-driver's
 promptless default. Every app the person has not denied is available from the
@@ -28,7 +28,7 @@ a hostile local program. A switch only the person can flip (a helper Settings
 control stored in Keychain behind Touch ID) is not built. Strict is the only
 behavior on Windows, Linux, HarmonyOS and non-local computers.
 
-## Native macOS installation trust, strict approval (0.13.0 source candidate)
+## Native macOS installation trust, strict approval (since 0.13.0)
 
 In strict mode the updated helper asks once when a host first requests local
 app contents or an action. The person can trust the Codewhale installation until
@@ -37,11 +37,11 @@ apps for the task without per-app, per-task or per-model approval. Hosts without
 a persistent pairing key receive approval for the current connection only.
 Deny, closing the panel or no answer refuses access.
 
-**This is candidate behavior.** The 0.13.0 native app has been built and signed.
-Its trust flow and compact Codewhale controller still need live qualification.
-Source and injected-runner checks do not establish installed or
-human-interaction results, and a signed candidate is not a published release.
-See [the release checklist](RELEASE_CHECKLIST.md).
+The notarized 0.13.0 release shipped this trust flow and compact Codewhale
+controller; v0.13.1 is the current stable release. Installed-helper evidence
+and remaining human-interaction and platform gates are recorded in
+[the release checklist](RELEASE_CHECKLIST.md). The resident native agent and
+new capture routes in this checkout remain an unreleased 0.14.0 candidate.
 
 - **The identity is an installation key.** Codewhale supplies its stable
   ledger secret as the first message on the installed plugin's private stdin

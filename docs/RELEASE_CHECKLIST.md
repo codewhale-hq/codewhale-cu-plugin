@@ -4,13 +4,37 @@ Keyed to the release commit. Fill in results as steps run; a release is only
 publishable when every applicable row has a recorded result. Steps marked
 **human-only** are never performed by scripts.
 
-Release commit: `e52a124f832f340330fd522cefc52e50363a8a96` — date: `2026-09-15` — operator: `Hunter Bown (build and packaging run by Devin)`
+Original checklist record: `e52a124f832f340330fd522cefc52e50363a8a96` — date: `2026-09-15` — operator: `Hunter Bown (build and packaging run by Devin)`. Per-version records below identify later candidates and releases.
 
 ## Qualification record
 
 Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). Records below
 come from one maintainer Mac (arm64, Retina) and are evidence, not a
 publication verdict.
+
+### 0.14.0 — unreleased candidate, 2026-10-31
+
+Phase 2 source commits `fa873d4` and `3a9336a` add the resident agent,
+background menu focus release, self-activation recovery, window-change
+receipts, locked-screen refusal, launch waits and new window capture routes.
+Package versions remain 0.13.1 until the release is selected.
+
+The installed dev helper reports runtime fingerprint `6643c21e03aff0f5`
+and passes deep/strict Developer ID signature verification. It is not a
+notarized 0.14.0 release. Earlier agent proof (16/16) and capture proof (6/7,
+the miss an OCR reply-size limit) used dev fingerprints `04903a154bee8a35`
+and `285cead40194acac`, respectively; these are not fresh exact-build
+proofs of the installed fingerprint. The inherited source-suite receipt records
+580 tests, 551 pass, 0 fail and 29 platform skips. The subsequent installer
+cleanup slice passed 18 existing updater/MCP checks and disposable filesystem
+observations for read-only removal, retained rollbacks, symlinks and warning
+delivery. That installer change has not replaced the installed helper.
+
+Live UI proofs are paused. Off-Space capture remains unqualified; no desktop
+was rearranged for a proof. Other macOS versions, Electron targets, a live
+locked screen and notarized packaging also remain unqualified. Final
+exact-commit validation, packaging, notarization and publication have not
+run for 0.14.0; the 0.13.1 procedure below is the release path when authorized.
 
 ### 0.13.1 — published 2026-10-31
 

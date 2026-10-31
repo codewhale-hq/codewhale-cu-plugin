@@ -7,7 +7,7 @@
 
 **By Codewhale · macOS beta (notarized app and source) · Windows experimental unsigned preview · Linux experimental: X11 verified on a virtual desktop (Xvfb + openbox) and in the Docker test image, from source; Wayland input on sway (verified on headless sway), other Wayland desktops observation only**
 
-The [0.12.0 release](https://github.com/codewhale-hq/codewhale-cu-plugin/releases/tag/v0.12.0)
+The [0.13.1 release](https://github.com/codewhale-hq/codewhale-cu-plugin/releases/tag/v0.13.1)
 provides the notarized universal Mac app and an **unsigned Windows x64 preview**.
 The Windows ZIP bundles Node and includes setup instructions; it is intended
 for testing, with physical-device, mixed-DPI and signing acceptance still open.
@@ -25,10 +25,11 @@ menu-bar app.
   never moves your cursor. Accessibility actions and process-directed typing
   touch nothing you are using. A pixel click, drag, wheel or modified key is
   posted to the target app's process, so your app keeps the front and your
-  keyboard. A menu opened in the background holds your keyboard until it is
-  picked or closed (at most 6 s). There is no per-app prompt in the default standard
-  approval mode; apps you deny stay off limits, and human-input yielding and
-  Pause/Stop remain.
+  keyboard. In v0.13.1 a background menu can hold your keyboard until it is
+  picked or closed (at most 6 s). The unreleased 0.14.0 candidate releases
+  that grab after about 50 ms on the measured Mac. There is no per-app prompt
+  in the default standard approval mode; apps you deny stay off limits, and
+  human-input yielding and Pause/Stop remain.
 - **Stay in control.** See selected apps and their input modes. 0.13.0
   adds a compact Codewhale controller while an app is in use. Pause cancels
   queued work and releases held input; Stop ends existing sessions. Only the
@@ -127,7 +128,7 @@ parity](docs/CUA_PARITY.md) records the upstream reference and proof gaps.
 **Status.** Release status is recorded in [CHANGELOG.md](CHANGELOG.md). The
 notarized Mac app is published on this repository's
 [GitHub releases](https://github.com/codewhale-hq/codewhale-cu-plugin/releases)
-(stable release: v0.13.0; this checkout prepares 0.13.1); remaining
+(stable release: v0.13.1; this checkout prepares 0.14.0); remaining
 gates are tracked in [the release checklist](docs/RELEASE_CHECKLIST.md). The
 [setup page](https://codewhale.net/computer-use) offers the notarized disk
 image directly.
@@ -208,6 +209,12 @@ your host at the server:
 installed app (`install:app` prints it — on macOS
 `~/Applications/Codewhale Computer Use.app/Contents/Resources/plugin/mcp/server.mjs`).
 `npm link` also gives you a `codewhale-cu` command for hosts that want one.
+
+For the self-contained Mac release, use its bundled
+`~/Applications/Codewhale Computer Use.app/Contents/MacOS/node` as the host's
+command to avoid depending on a Homebrew Node installation. Quit Claude
+Desktop before editing its MCP configuration, then reopen it and verify the
+saved command; Desktop may rewrite its configuration on restart.
 
 ### Kimi Code
 
@@ -350,12 +357,15 @@ control and uses accessibility (`strategy: "a11y"`). Text fields focus directly,
 rows can select, and menu items can use their advertised pick action. Right-click
 uses an advertised context-menu action. Background scrolling uses the selected
 scrollbar: native increments when advertised, otherwise normalized 5% steps,
-with the actual unit and value change in the receipt. Unsupported gestures,
-including raw double/triple/middle click, drag and hover, remain unavailable in
-background mode. There is no automatic foreground fallback.
+with the actual unit and value change in the receipt. With v0.13.1 or newer,
+standard approval mode also permits raw clicks, drag, hover and wheel events
+posted to the selected window's process. A coordinate scroll without an
+accessibility scrollbar uses that wheel route. Strict approval mode requires
+`activate: true` for raw gestures. There is no automatic foreground fallback.
 
 When the authorized task needs focus in an allowed app, select `activate: true`
-for foreground control without a second approval prompt. Raw clicks, hover, drag and wheel then go to the bound
+for foreground control without a second approval prompt. In either mode,
+raw clicks, hover, drag and wheel go to the bound
 app's window as process-routed events (`strategy: "pid-routed"`,
 `pointer_moved: false`) — the agent has its own pointer, drawn in the preview,
 and **the user's cursor is never moved, warped or held on macOS**. There is no
@@ -393,11 +403,12 @@ that disappears stops renewing the panel, which then expires.
 
 ### Consent and shared-machine manners on the local computer
 
-The 0.13.0 Mac helper owns local admission. A native decision grants this
-Codewhale installation permission to use the Mac until the person revokes it
-in Computer Use. The agent can then choose apps needed for the task without
-per-app, per-task or per-model prompts. Other hosts without a persistent key
-receive connection-scoped approval. Discovery and `consent {action:"status"}`
+The Mac helper owns local admission. Default standard mode admits local hosts
+without a trust panel or per-app prompt, subject to denied apps and the human
+controls above. In strict mode, a native decision grants this Codewhale
+installation permission until the person revokes it in Computer Use; other
+hosts without a persistent key receive connection-scoped approval.
+Discovery and `consent {action:"status"}`
 do not themselves ask for access. The latter reports the helper's actual trust
 and exclusions. An installed older plugin may still use the legacy per-app
 ledger until it is updated.

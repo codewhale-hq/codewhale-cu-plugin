@@ -265,6 +265,10 @@ Point any MCP host at the installed server (any harness, any model):
   Gemini CLI     {"mcpServers":{"computer":{"command":${executable},"args":[${q}]}}}  (~/.gemini/settings.json)
   opencode       {"mcp":{"computer":{"type":"local","command":[${executable},${q}]}}} (opencode.json)
   Codewhale      already discovers the plugin bundle; nothing to configure.
+
+Quit Claude Desktop before editing its MCP configuration. Reopen your MCP
+host to load the updated server, then verify the saved command; Claude
+Desktop may rewrite its configuration on restart.
 `;
 }
 

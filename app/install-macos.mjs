@@ -14,8 +14,17 @@ export function pruneBackups(dir, keep = backupsToKeep(), protect = null) {
   const removed = [];
   if (!Number.isInteger(keep) || keep < 1) return removed;
   let names;
-  try { names = fs.readdirSync(dir); } catch { return removed; }
-  const ours = names.map((name) => ({ name, match: BACKUP_NAME.exec(name) })).filter((entry) => entry.match)
+  try {
+    if (fs.lstatSync(dir).isSymbolicLink()) {
+      console.warn(`Computer Use will not prune a symlinked backup directory ${JSON.stringify(dir)}`);
+      return removed;
+    }
+    names = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (error) {
+    if (error.code !== "ENOENT") console.warn(`Computer Use could not read backup directory ${JSON.stringify(dir)}: ${error.code ?? error.message}`);
+    return removed;
+  }
+  const ours = names.filter((entry) => entry.isDirectory()).map(({ name }) => ({ name, match: BACKUP_NAME.exec(name) })).filter((entry) => entry.match)
     .sort((a, b) => Number(b.match[1]) - Number(a.match[1]) || (a.name < b.name ? 1 : -1));
   const kept = new Set(protect ? [path.basename(protect)] : []);
   for (const { name } of ours) if (kept.size < keep) kept.add(name);
@@ -24,9 +33,19 @@ export function pruneBackups(dir, keep = backupsToKeep(), protect = null) {
     const target = path.join(dir, name);
     try {
       if (fs.lstatSync(target).isSymbolicLink()) continue;
+      const pending = [target];
+      while (pending.length) {
+        const current = pending.pop();
+        const stat = fs.lstatSync(current);
+        if (!stat.isDirectory()) continue;
+        fs.chmodSync(current, stat.mode | 0o700);
+        for (const child of fs.readdirSync(current)) pending.push(path.join(current, child));
+      }
       fs.rmSync(target, { recursive: true, force: true });
       removed.push(target);
-    } catch { continue; }
+    } catch (error) {
+      console.warn(`Computer Use could not remove expired backup ${JSON.stringify(target)}: ${error.code ?? error.message}`);
+    }
   }
   return removed;
 }
