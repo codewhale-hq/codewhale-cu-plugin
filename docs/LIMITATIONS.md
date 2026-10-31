@@ -177,8 +177,8 @@ the default local flow. Shared-input yielding still applies to both.
   `CODEWHALE_CU_YIELD_GAP_MS`, default 450, and 0 disables). If the person remains active at the deadline, the call refuses
   `user_busy` before sending input. Foreground key presses recheck the
   bound app after waiting, so a switch during the wait cannot redirect them.
-  Input arriving mid-action is still reported (`user_input_during_lease`),
-  not prevented.
+  Background routes do not need the wait: they post to the target app's
+  process and the person's app keeps key focus (see below).
 - **App approval covers foreground selection on every local platform** —
   `activate:true` uses that app's permission without another prompt; a recorded
   foreground denial still blocks it. Only macOS has a real background/foreground split:
@@ -448,20 +448,26 @@ way it does. Receipts: `parity/results/darwin-aqua-2026-09-07.json`,
   hit test with the window rather than the control). A hit performs the
   element's supported click, focus or selection action: no pointer motion, no activation. The receipt says
   `strategy: "a11y"`.
-- **Background input never takes a window-record focus lease.** Earlier
-  versions borrowed the front process for raw clicks, drags, scrolling,
-  shortcuts, web value replacement and some Unicode/hosted-panel typing.
-  Even without cursor movement this redirects the user's keyboard. These
-  paths now refuse with `background_focus_required` before a lease or input.
-  Accessibility actions remain available; unsupported controls need browser
-  control or a separate computer. A quiet-input wait is not isolation.
+- **Background input never borrows the front process.** Since 0.13.1, raw
+  clicks, drags, scrolling, chords and hosted-panel typing are posted to the
+  target app's process (`SLEventPostToPid`) after a focus record to its
+  window, and a chord's window is made key inside its app and read back first
+  (`key_window_unconfirmed` otherwise). The person's app keeps the front and
+  key focus; measured on macOS 26.1 with a key-focus watcher at 2 ms. 0.13.0
+  borrowed the front for about 200 ms and could take a keystroke typed in
+  that window. Exception: a context or popup menu opened in a background app
+  takes key focus while it is open (measured); the receipt says
+  `menu_holds_key_focus:true`, the press first waits for a gap in the
+  person's typing, and the next raw input or a 6 s watchdog closes the menu
+  with Escape. Strict approval mode still refuses these routes with
+  `background_focus_required`. Only macOS 26.1 and AppKit/Chromium targets
+  have been measured; other toolkits may ignore process-posted events.
 - **The agent never drives the user's cursor.** Every pointer gesture —
   clicks under any `strategy`, hover, drag and wheel — is a window-routed
-  event record addressed to a window of the bound app (`strategy:
-  "window-record"`, `pointer_moved: false`). There is no HID-tap route and no
+  event addressed to a window of the bound app's process (`strategy:
+  "pid-routed"`, `pointer_moved: false`). There is no HID-tap route and no
   move-and-restore fallback; the helper refuses `pointer_sequence` and
-  `release_input` with `real_pointer_refused`. Raw pointer input still needs
-  `activate:true`, because the window route briefly makes the app key.
+  `release_input` with `real_pointer_refused`.
   `left_mouse_down`/`mouse_move`/`left_mouse_up` buffer a drag and deliver it
   on release, so the agent cannot observe mid-drag. A helper without the
   window route refuses `bg_dispatch_unavailable`.

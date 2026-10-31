@@ -117,7 +117,7 @@ Type into the document body:
 Close a window without borrowing focus:
 1. Press the window's close-button element (`click` on the window's
    `AXButton`), or use an available `invoke_menu` close action. A modified
-   key such as cmd+w also works, through a brief restored front lease.
+   key such as cmd+w also works; it goes to the app's process.
 2. `list_windows` → window gone
 
 Fill and submit a web form (CDP, no pixels):

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import zlib from 'node:zlib';
 import crypto from 'node:crypto';
-import { create, leaseVerdict, leaseAccounting } from '../src/backends/darwin.mjs';
+import { create } from '../src/backends/darwin.mjs';
 import { withSignal, currentSignal, runInputLease } from '../src/exec.mjs';
 process.env.CODEWHALE_CU_APPROVAL = "strict";
 
@@ -326,20 +326,6 @@ test('macOS failed activation cannot leave a previous shared-desktop binding arm
   assert.ok(!calls.some(r=>['pointer_sequence','bg_pointer'].includes(r.tool)));
 });
 
-test('macOS lease verdict flags hardware input inside the borrow window only', () => {
-  const base = { front_lease: true, lease_ms: 120, idle_before_s: 5.0 };
-  assert.equal(leaseVerdict({ ...base, idle_after_s: 5.12 }), false);
-  assert.equal(leaseVerdict({ ...base, idle_after_s: 0.05 }), true);
-  assert.equal(leaseVerdict({ ...base, idle_after_s: 5.12 - 0.24 }), false);
-  assert.equal(leaseVerdict({ front_lease: false, lease_ms: 120, idle_before_s: 5, idle_after_s: 0.01 }), null);
-  assert.equal(leaseVerdict({ front_lease: true, lease_ms: 120 }), null);
-  assert.equal(leaseVerdict(null), null);
-  const threaded = leaseAccounting({ ...base, idle_after_s: 0.05, user_input_during_lease: true });
-  assert.deepEqual(threaded, { lease_ms: 120, idle_before_s: 5.0, idle_after_s: 0.05, user_input_during_lease: true });
-  assert.deepEqual(leaseAccounting({ front_lease: true }), {});
-  assert.deepEqual(leaseAccounting({ front_lease: false }), {});
-});
-
 test('background key focus is refused even when an older helper advertises window records', async t => {
   const { backend, calls } = stubBackend(t, r => r.tool === 'input_capabilities' ? { input_lease: 1, window_record: 1 } : null);
   for (const args of [{text:'cmd+w'}, {text:'return',target:{type:'element',index:1}}]) {
@@ -408,7 +394,7 @@ test('macOS foreground binding never shares the pointer, and returning to backgr
   const binding=await backend.open_application({name:'Fixture',activate:true});
   assert.equal(binding.input_scope,'shared-desktop');
   assert.equal(binding.shared_pointer,false);
-  assert.equal(binding.pointer_route,'window-record');
+  assert.equal(binding.pointer_route,'pid-routed');
   assert.equal(binding.isolated_desktop,false);
   await backend.left_mouse_down({target:{x:70,y:80}});
   await backend.open_application({name:'Fixture',activate:false});
@@ -465,7 +451,7 @@ test('macOS explicit event selection skips the tree and stays window-routed', as
   const {backend,calls}=stubBackend(t,r=>r.tool==='input_capabilities'?{input_lease:1,window_record:1,background_actions:1}:null);
   await backend.open_application({name:'Fixture',activate:true});
   const receipt=await backend.left_click({target:FILES_TARGET,strategy:'event'});
-  assert.equal(receipt.strategy,'window-record');
+  assert.equal(receipt.strategy,'pid-routed');
   assert.equal(receipt.pointer_moved,false);
   const seq=calls.find(r=>r.tool==='bg_pointer');
   assert.deepEqual([seq.args.steps[1].x,seq.args.steps[1].y],[1607,692]);
@@ -631,7 +617,7 @@ test('macOS coordinate left_click falls back to a window-routed click when no el
   const { backend, calls } = stubBackend(t, (r) => (r.tool === 'input_capabilities' ? {input_lease:1,background_actions:1,window_record:1} : r.tool === 'hit_test' ? NOT_PRESSABLE : null));
   await backend.open_application({ name: 'TextEdit', activate:true });
   const receipt = await backend.left_click({ target: { x: 40, y: 90 } });
-  assert.equal(receipt.strategy, 'window-record');
+  assert.equal(receipt.strategy, 'pid-routed');
   assert.equal(receipt.pointer_moved, false, 'the user cursor never moves');
   assert.equal(receipt.a11y_reason, 'no_pressable_element');
   const seq = calls.find((c) => c.tool === 'bg_pointer');
@@ -645,7 +631,7 @@ test('macOS click strategies: event skips the tree and a11y fails closed', async
   await backend.open_application({ name: 'TextEdit', activate:true });
 
   const forced = await backend.left_click({ target: { x: 10, y: 20 }, strategy: 'event' });
-  assert.equal(forced.strategy, 'window-record');
+  assert.equal(forced.strategy, 'pid-routed');
   assert.ok(!calls.some((c) => c.tool === 'hit_test'), 'strategy=event never hit-tests');
 
   await assert.rejects(backend.left_click({ target: { x: 10, y: 20 }, strategy: 'a11y' }), /no supported accessibility click/);
@@ -653,9 +639,9 @@ test('macOS click strategies: event skips the tree and a11y fails closed', async
 
   calls.length = 0;
   const dbl = await backend.double_click({ target: { x: 10, y: 20 } });
-  assert.equal(dbl.strategy, 'window-record');
+  assert.equal(dbl.strategy, 'pid-routed');
   assert.deepEqual(calls.find((c) => c.tool === 'bg_pointer').args.steps.map((s) => s.clickState), [0, 1, 1, 2, 2]);
-  assert.equal((await backend.right_click({ target: { x: 10, y: 20 } })).strategy, 'window-record');
+  assert.equal((await backend.right_click({ target: { x: 10, y: 20 } })).strategy, 'pid-routed');
   assert.equal(calls.find(c => c.tool === 'hit_test').args.operation, 'context');
 });
 

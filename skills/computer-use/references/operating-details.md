@@ -111,16 +111,14 @@ identity; it does not protect against arbitrary same-user code with access to
 the host's secret store. Do not treat it as an OS sandbox.
 
 Only in explicitly selected foreground mode for an approved app, where a shared surface is taken
-— a front lease for window-record
-input, a real-pointer gesture, foreground keys, an activation — the helper
+— a real-pointer gesture, foreground keys, an activation — or before a
+press that opens a menu in a background app, the helper
 first waits for a gap in the person's hardware input rather than cutting
 between their keystrokes. The wait is bounded, never infinite, and every
 successful receipt that waited reports `yield_ms`. If no quiet window
 arrives, `user_busy` means no input was sent: wait for the person to finish
 or use an already-authorized isolated computer; do not disable the yield
-or loop on retries. It is turn-taking, not a lock:
-`user_input_during_lease:true` still means the outcome is contested —
-say so.
+or loop on retries. It is turn-taking, not a lock.
 
 ## Choose the interface
 
@@ -282,17 +280,19 @@ Once the GUI is the right interface: observe once, act once, then verify.
     Prefer them. Text entry uses writable accessibility selection when
     available; verify the resulting value. `get_app_state`, `list_windows`
     and `screenshot` default to the selected app.
-  - **Background pointer and chord input take a brief front lease.** The
-    user's cursor is never moved. A pixel click, drag, scroll wheel or modified
-    or window-targeted key makes the target window key with a front-process
-    lease, first waits for a gap in the person's own input (refusing
-    `user_busy` rather than interrupting them), then gives the front back; the
-    receipt reports `front_lease`, `lease_ms`, `yield_ms`, `front_restored` and
-    `user_input_during_lease`. Prefer an accessibility action when the control
-    has one, since it needs no lease. Web value replacement and held chords
-    still require `activate:true`. A strict-mode or older helper refuses these
-    with `background_focus_required` or `app_upgrade_required`. An idle moment
-    does not override a recorded denial.
+  - **Background pointer and chord input go to the app's process.** The
+    user's cursor and front app are never touched. A pixel click, drag, scroll
+    wheel or modified or window-targeted key is posted to the target app's
+    process (`strategy:"pid-routed"`, `front_lease:false`); a chord's window is
+    made key inside its app and refused with `key_window_unconfirmed` if that
+    cannot be confirmed. A context or popup menu opened in the background holds
+    the person's key focus while open (`menu_holds_key_focus:true`): pick the
+    item at once with an accessibility press; the next raw input or a 6 s
+    watchdog closes it. Prefer an accessibility action when the control has
+    one. Web value replacement and held chords still require `activate:true`.
+    A strict-mode or older helper refuses these with
+    `background_focus_required` or `app_upgrade_required`. An idle moment does
+    not override a recorded denial.
   - Shared-desktop gestures and foreground keyboard delivery require explicit
     `open_application(activate:true)` on the approved app; the existing app
     permission covers this selection without another prompt. Foreground

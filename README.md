@@ -23,9 +23,10 @@ menu-bar app.
   right Settings pane, then run a check in a disposable practice window.
 - **Keep working.** macOS selects apps in background mode by default and
   never moves your cursor. Accessibility actions and process-directed typing
-  touch nothing you are using. A pixel click, drag, wheel or modified key
-  takes a brief front lease that waits for a gap in your own typing and gives
-  your app back afterwards. There is no per-app prompt in the default standard
+  touch nothing you are using. A pixel click, drag, wheel or modified key is
+  posted to the target app's process, so your app keeps the front and your
+  keyboard. A menu opened in the background holds your keyboard until it is
+  picked or closed (at most 6 s). There is no per-app prompt in the default standard
   approval mode; apps you deny stay off limits, and human-input yielding and
   Pause/Stop remain.
 - **Stay in control.** See selected apps and their input modes. 0.13.0
@@ -56,8 +57,8 @@ Install the helper and connect your host, or build from source:
    plugin through **Connectors**, using a stable published plugin release.
    Plugin updates are independent of Engine updates. On macOS, install the
    separate Computer Use app above; it owns permissions and the human controls.
-   The portable `computer-use.tar.gz` asset for this installation path is
-   planned for the 0.13.0 release and is not yet published. Run `request_access`
+   Each release carries the portable `computer-use.tar.gz` asset for this
+   installation path. Run `request_access`
    and follow its setup hint; a missing helper returns `app_setup_required`.
 3. **From source.** Clone, test, install:
    ```bash
@@ -79,7 +80,7 @@ mode is an explicit developer override. A missing or disconnected helper is
 never permission to bypass its controls. Permission recovery is in
 [Setup and troubleshooting](docs/TROUBLESHOOTING.md).
 
-**Standard approval (0.13.0 source candidate).** On a Mac, the default is
+**Standard approval (since 0.13.0).** On a Mac, the default is
 `standard`, modelled on cua-driver's promptless default: once you have granted
 macOS Accessibility and Screen Recording to the helper, your agent can read and
 operate any app you have not denied. There is no trust panel, no Touch ID step
@@ -100,7 +101,7 @@ is an ordinary preference: any program running as you can rewrite it, so strict
 restores the questions, not protection from a hostile local program.
 
 Both an updated MCP plugin and an updated helper are needed for standard mode,
-and Codewhale must load the 0.13.0 plugin rather than an older built-in copy.
+and Codewhale must load the 0.13 plugin rather than an older built-in copy.
 Older clients can retain their own consent cards or per-app gates.
 
 **Choose your surface.** Apps on this Mac use Computer Use; your signed-in Chrome
@@ -126,7 +127,7 @@ parity](docs/CUA_PARITY.md) records the upstream reference and proof gaps.
 **Status.** Release status is recorded in [CHANGELOG.md](CHANGELOG.md). The
 notarized Mac app is published on this repository's
 [GitHub releases](https://github.com/codewhale-hq/codewhale-cu-plugin/releases)
-(stable release: v0.12.0; this checkout prepares 0.13.0); remaining
+(stable release: v0.13.0; this checkout prepares 0.13.1); remaining
 gates are tracked in [the release checklist](docs/RELEASE_CHECKLIST.md). The
 [setup page](https://codewhale.net/computer-use) offers the notarized disk
 image directly.
@@ -355,7 +356,7 @@ background mode. There is no automatic foreground fallback.
 
 When the authorized task needs focus in an allowed app, select `activate: true`
 for foreground control without a second approval prompt. Raw clicks, hover, drag and wheel then go to the bound
-app's window as window-routed event records (`strategy: "window-record"`,
+app's window as process-routed events (`strategy: "pid-routed"`,
 `pointer_moved: false`) — the agent has its own pointer, drawn in the preview,
 and **the user's cursor is never moved, warped or held on macOS**. There is no
 real-cursor fallback: a helper that cannot resolve the window route refuses
@@ -370,10 +371,10 @@ nature — background there means the launch does not steal focus, not that
 input becomes background-safe.
 
 The binding receipt exposes `input_scope`, `shared_pointer: false`,
-`pointer_route: "window-record"` and `isolated_desktop: false`. The preview title distinguishes background app
+`pointer_route: "pid-routed"` and `isolated_desktop: false`. The preview title distinguishes background app
 control from shared-desktop control. It is a view of the app, not a sandbox.
 
-The 0.13.0 candidate uses a compact Codewhale controller naming the app, with
+Since 0.13.0 the helper uses a compact Codewhale controller naming the app, with
 a direct Stop computer use button and Pause in its menu. Stop ends all current
 computer sessions. Idle shows Ready; Settings holds remembered access, previous
 connections and the optional background diagnostic. It is Codewhale's own UI, not an assertion that macOS shows an
@@ -436,8 +437,8 @@ See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for the decision paths and their
 verification limits.
 
 In explicitly selected foreground mode for an approved app, whenever a shared surface is taken —
-a front lease for window-record input,
-a real-pointer gesture, foreground keys, or an activation — the helper waits
+a real-pointer gesture, foreground keys, or an activation — and before a
+press that opens a menu in a background app, the helper waits
 for a gap in the user's hardware input first (bounded, ~450 ms gap within a
 2.5 s window by default; `CODEWHALE_CU_YIELD_GAP_MS` /
 `CODEWHALE_CU_YIELD_WAIT_MS`). If no quiet window arrives, the call refuses
@@ -777,8 +778,8 @@ platforms).
 This repository supplies the independently installed Computer Use plugin and
 native helper. Codewhale installs and updates the plugin through Connectors
 from a stable published release; the helper has its own verified app updater.
-The 0.13.0 candidate plans a portable `computer-use.tar.gz` release asset for
-the existing plugin installer. Changing this checkout updates neither installed
+Each release carries a portable `computer-use.tar.gz` asset for the existing
+plugin installer. Changing this checkout updates neither installed
 component. Plugin and helper updates do not require rebuilding Engine.
 
 ## Support and contributing

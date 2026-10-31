@@ -108,8 +108,13 @@ const KEY_CODES = {
   a: 0, s: 1, d: 2, f: 3, h: 4, g: 5, z: 6, x: 7, c: 8, v: 9, b: 11, q: 12,
   w: 13, e: 14, r: 15, y: 16, t: 17, "1": 18, "2": 19, "3": 20, "4": 21,
   "5": 23, "6": 22, "7": 26, "8": 28, "9": 25, "0": 29, "-": 27, "=": 24,
-  "[": 33, "]": 30, "\\": 42, ";": 41, "'": 39, ",": 43, ".": 47, "/": 44,
+  "[": 33, "]": 30, "\\": 42, ";": 41, "'": 39, ",": 43, ".": 47, "/": 44, "`": 50,
   o: 31, u: 32, i: 34, p: 35, l: 37, j: 38, k: 40, n: 45, m: 46,
+};
+// Shifted symbols on a US layout, sent as shift plus their base key.
+const SHIFTED = {
+  "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6", "&": "7", "*": "8", "(": "9", ")": "0",
+  "_": "-", "+": "=", "{": "[", "}": "]", "|": "\\", ":": ";", "\"": "'", "<": ",", ">": ".", "?": "/", "~": "`",
 };
 const MODIFIERS = {
   cmd: 1 << 20, command: 1 << 20, win: 1 << 20, meta: 1 << 20,
@@ -169,37 +174,6 @@ export function pickMenuElement(elements, label, menuBar) {
 export function selectApps(apps, all) {
   if (all || !apps.some((a) => a.activation_policy)) return apps;
   return apps.filter((a) => a.activation_policy === "regular" || a.frontmost === true);
-}
-
-/**
- * Front-lease interference verdict (SHA-6643 slice 1). The native helper
- * reports the borrow window (lease_ms) and the HID idle clock around it
- * (idle_before_s/idle_after_s); synthesized events do not tick that clock,
- * so a clock that fails to advance across the window means hardware input
- * arrived mid-lease. Null when the reply carries no accounting (no borrow,
- * or a helper that predates it) — receipts stay quiet then.
- */
-const LEASE_IDLE_EPSILON_S = 0.25;
-export function leaseVerdict(r) {
-  if (r?.front_lease !== true) return null;
-  const leaseMs = r.lease_ms, before = r.idle_before_s, after = r.idle_after_s;
-  if (![leaseMs, before, after].every(Number.isFinite)) return null;
-  return after < before + leaseMs / 1000 - LEASE_IDLE_EPSILON_S;
-}
-
-/**
- * Threads the interference accounting from a native lease reply into a
- * model-facing receipt. Call sites that build receipts field-by-field
- * spread this; verbatim flows (type) already carry it via native().
- */
-export function leaseAccounting(r) {
-  if (r?.front_lease !== true) return {};
-  const out = {};
-  for (const k of ["lease_ms", "idle_before_s", "idle_after_s", "yield_ms"]) {
-    if (Number.isFinite(r[k])) out[k] = r[k];
-  }
-  if (typeof r.user_input_during_lease === "boolean") out.user_input_during_lease = r.user_input_during_lease;
-  return out;
 }
 
 export function create({ exec }) {
@@ -334,12 +308,6 @@ export function create({ exec }) {
     }
     const result = tryJson(r.stdout, null);
     if (tool === "get_app_state" || tool === "window_info") assertNotPrompt(result);
-    const interference = leaseVerdict(result);
-    if (interference !== null) result.user_input_during_lease = interference;
-    if (interference === true && result.action_sent) {
-      result.verified = false;
-      result.verification_required = "observation";
-    }
     if (state.previewEnabled && state.inputApp && ["type", "key_event", "bg_pointer", "bg_key", "set_value", "select_text", "perform_action", "hit_test", "click_element", "scroll_element", "focus_element"].includes(tool)) {
       previewActiveAt = Date.now();
       try { await updatePreview(!previewVisible); } catch (error) { result.preview_error = error.message; }
@@ -439,15 +407,15 @@ export function create({ exec }) {
     if (caps?.window_record !== 1) {
       throw Object.assign(new ExecError("Pointer input needs the window-routed pointer, which this helper cannot resolve; update Computer Use or use an accessibility action. The user's cursor is never used instead."), { code: "bg_dispatch_unavailable" });
     }
-    if (!state.foregroundInput && caps?.focus_lease !== 1) {
-      throw Object.assign(new ExecError("Background pointer input needs a helper that can take a brief focus lease; update the Codewhale Computer Use app, or use an accessibility action."), { code: "app_upgrade_required" });
+    if (!state.foregroundInput && caps?.pid_input !== 1) {
+      throw Object.assign(new ExecError("Background pointer input needs a helper that posts to the app's process; update the Codewhale Computer Use app, or use an accessibility action."), { code: "app_upgrade_required" });
     }
     const r = await native("bg_pointer", { steps, ...extra, ...binding });
-    return { action_sent: true, strategy: "window-record", input_scope: "application-window", pointer_moved: false,
+    return { action_sent: true, strategy: "pid-routed", input_scope: "application-window", pointer_moved: false,
              ...(typeof r.verified === "boolean" ? { verified: r.verified, verification_required: r.verification_required } : {}),
-             front_lease: r.front_lease === true, window: r.window ?? null, ...leaseAccounting(r),
-             ...(typeof r.front_restored === "boolean" ? { front_restored: r.front_restored } : {}),
-             ...(r.menu_lease_held ? { menu_lease_held: true } : {}) };
+             front_lease: false, window: r.window ?? null,
+             ...(Number.isFinite(r.yield_ms) ? { yield_ms: r.yield_ms } : {}),
+             ...(r.menu_lease_held ? { menu_lease_held: true, menu_holds_key_focus: true } : {}) };
   }
 
   function clickSteps(button, x, y, clicks) {
@@ -478,7 +446,9 @@ export function create({ exec }) {
       const hit = await native("hit_test", { x, y, perform: true, ...binding, ...(button === "right" ? { operation: "context" } : {}) });
       if (hit?.action_sent) {
         return { action_sent: true, strategy: "a11y", action: hit.action, pointer_moved: false, at: { x, y }, button, clicks,
-                 element: { role: hit.element?.role ?? null, label: hit.element?.label ?? null } };
+                 element: { role: hit.element?.role ?? null, label: hit.element?.label ?? null },
+                 ...(Number.isFinite(hit.yield_ms) ? { yield_ms: hit.yield_ms } : {}),
+                 ...(hit.menu_lease_held ? { menu_lease_held: true, menu_holds_key_focus: true } : {}) };
       }
       a11yReason = hit?.reason ?? "not_found";
       if (strategy === "a11y") {
@@ -507,7 +477,9 @@ export function create({ exec }) {
   }
 
   function parseChord(text) {
-    const parts = String(text).split("+").map((s) => {
+    const raw = String(text);
+    const tokens = raw === "+" ? ["+"] : raw.endsWith("++") ? [...raw.slice(0, -2).split("+"), "+"] : raw.split("+");
+    const parts = tokens.map((s) => {
       const key = s.trim().toLowerCase();
       const normalized = key.length > 1 ? key.replace(/[\s_-]/g, "") : key;
       return KEY_ALIASES[normalized] ?? normalized;
@@ -517,8 +489,11 @@ export function create({ exec }) {
     let key = null;
     for (const p of parts) {
       if (MODIFIERS[p] != null) flags |= MODIFIERS[p];
-      else if (KEY_CODES[p] != null) { if (key) throw new ExecError(`multiple non-modifier keys in "${text}"`); key = p; }
-      else throw new ExecError(`unknown key "${p}" (supported: ${Object.keys(KEY_CODES).join(", ")} + modifiers cmd/ctrl/alt/shift/fn)`);
+      else if (KEY_CODES[p] != null || SHIFTED[p] != null) {
+        if (key) throw new ExecError(`multiple non-modifier keys in "${text}"`);
+        if (SHIFTED[p] != null) { flags |= MODIFIERS.shift; key = SHIFTED[p]; } else key = p;
+      }
+      else throw new ExecError(`unknown key "${p}" (supported: ${Object.keys(KEY_CODES).join(", ")}, ${Object.keys(SHIFTED).join(" ")} + modifiers cmd/ctrl/alt/shift/fn)`);
     }
     if (key == null) throw new ExecError(`no non-modifier key in "${text}"`);
     return { flags, code: KEY_CODES[key], key };
@@ -835,7 +810,7 @@ export function create({ exec }) {
       previewActiveAt = Date.now();
       updatePreview(true).catch(() => {});
     }
-    return { launched, activate, keyboard_delivery: activate ? "foreground-guarded" : "process", input_scope: activate ? "shared-desktop" : "application", shared_pointer: false, pointer_route: "window-record", isolated_desktop: false, url: urlArg ?? null, resolved: p?.found ? { name: p.name, pid: p.pid, bundle_id: p.bundle_id, frontmost: p.frontmost } : null,
+    return { launched, activate, keyboard_delivery: activate ? "foreground-guarded" : "process", input_scope: activate ? "shared-desktop" : "application", shared_pointer: false, pointer_route: "pid-routed", isolated_desktop: false, url: urlArg ?? null, resolved: p?.found ? { name: p.name, pid: p.pid, bundle_id: p.bundle_id, frontmost: p.frontmost } : null,
       ...(Number.isFinite(p?.yield_ms) && p.yield_ms > 0 ? { yield_ms: p.yield_ms } : {}) };
   }
 
@@ -1069,7 +1044,7 @@ export function create({ exec }) {
         if (state.heldDrag.path.length >= 64) throw new ExecError("a held drag takes at most 64 intermediate points; release it with left_mouse_up");
         state.heldDrag.path.push({ x: target.x, y: target.y });
         state.pointer = { x: target.x, y: target.y };
-        return { action_sent: false, deferred: true, strategy: "window-record", at: state.pointer, pointer_moved: false,
+        return { action_sent: false, deferred: true, strategy: "pid-routed", at: state.pointer, pointer_moved: false,
                  note: "the button is held on the Codewhale pointer; the drag reaches the window on left_mouse_up" };
       }
       const r = await windowPointer([{ type: MOUSE_MOVED, x: target.x, y: target.y, button: 0, clickState: 0 }], {}, pointerBinding(target));
@@ -1084,7 +1059,7 @@ export function create({ exec }) {
       }
       state.heldDrag = { from: { x: target.x, y: target.y }, path: [], app: state.inputApp, binding: pointerBinding(target) };
       state.pointer = { x: target.x, y: target.y };
-      return { action_sent: false, deferred: true, strategy: "window-record", at: state.pointer, pointer_moved: false,
+      return { action_sent: false, deferred: true, strategy: "pid-routed", at: state.pointer, pointer_moved: false,
                note: "the button is held on the Codewhale pointer; the press reaches the window with the rest of the drag on left_mouse_up" };
     },
     left_mouse_up: async ({ target } = {}) => {
@@ -1151,11 +1126,11 @@ export function create({ exec }) {
     key: async ({ text, repeat = 1, target } = {}) => {
       const { flags, code, key } = parseChord(text);
       const n = Math.max(1, Math.min(100, repeat));
-      // Modified and window-targeted keys need a key window: a brief front
-      // lease supplies it (strict approval mode refuses).
+      // Modified and window-targeted keys go to the app's key window, made
+      // key inside the app without activating it (strict approval refuses).
       const routed = target != null || (flags !== 0 && !state.foregroundInput);
       if (routed) requireFocusControl();
-      if (routed && !state.foregroundInput && (await native("input_capabilities"))?.focus_lease !== 1) {
+      if (routed && !state.foregroundInput && (await native("input_capabilities"))?.pid_input !== 1) {
         throw Object.assign(new ExecError("Update the Codewhale Computer Use app before sending a modified key to a background app."), { code: "app_upgrade_required" });
       }
       if (target != null) {
@@ -1170,7 +1145,7 @@ export function create({ exec }) {
         if (Number.isFinite(press?.yield_ms)) yieldMs = Math.max(yieldMs, press.yield_ms);
         if (i < n - 1) await wait(30);
       }
-      return { ...receipt, action_sent: true, key, code, keyboard_delivery: routed ? "window-record" : state.foregroundInput ? "foreground-guarded" : "process", repeat: n,
+      return { ...receipt, action_sent: true, key, code, keyboard_delivery: routed ? "process" : state.foregroundInput ? "foreground-guarded" : "process", repeat: n,
         ...(yieldMs > 0 ? { yield_ms: yieldMs } : {}) };
     },
     hold_key: async ({ text, duration } = {}) => {

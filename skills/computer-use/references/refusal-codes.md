@@ -120,8 +120,12 @@ if the task needs focus. A typing pause does not override a denial.
 
 - `action_sent` / `verified` mean dispatch (and, where available, read-back) —
   not task success. Verify the effect with a fresh observation.
-- `front_lease` / `front_restored` describe focus accounting for window-record
-  deliveries in explicitly authorized foreground mode. `front_restored:false` is a person-visible event: say it out loud.
+- `front_lease` is false for background deliveries: they go to the app's
+  process. `menu_holds_key_focus:true` means a menu opened in a background app
+  currently holds the person's key focus: pick or dismiss it immediately.
+- `key_window_unconfirmed`: the target window could not be confirmed as its
+  app's key window, so no key was sent (it could have reached another window
+  of the same app). Close the other window, or use `activate:true`.
 - `outcome_unknown: true` (with `request_dispatched: true`) on an error means
   the action was already handed to the helper, remote agent or browser when it
   timed out, was cancelled or lost its reply: observe the target before doing
