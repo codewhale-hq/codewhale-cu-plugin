@@ -486,6 +486,14 @@ way it does. Receipts: `parity/results/darwin-aqua-2026-09-07.json`,
   previous action opened after its receipt returned (`earlier_new_windows`).
   An empty list means nothing appeared in that window, not that nothing will.
   Titles need Screen Recording.
+- **Window capture uses ScreenCaptureKit, then the window's backing store.**
+  App window screenshots are taken by the resident agent with
+  ScreenCaptureKit; a fully transparent frame counts as a failure, and a
+  window on another Space is read from its WindowServer backing store without
+  switching Spaces. Only this one window is captured, never what covers it.
+  `screencapture -l` remains the fallback when the agent is unavailable.
+  Input to an off-Space window is refused (`window_off_space`); the off-Space
+  route itself has no live receipt yet.
 - **A locked Mac refuses.** Input and observation refuse `screen_locked` while
   the session is locked, instead of returning an empty tree or a picture of
   the lock screen. While actions run, the agent holds a

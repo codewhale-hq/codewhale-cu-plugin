@@ -45,6 +45,7 @@ static void cuLockInput(void) {
 }
 static BOOL cuFrontmostIsPid(pid_t pid);
 static BOOL cuScreenLocked(void);
+static NSNumber *cuWindowOnCurrentSpace(uint32_t wid);
 static BOOL cuIsOwnHelper(NSRunningApplication *a) {
   return a.processIdentifier == getpid() || ([a.bundleIdentifier isEqual:@"net.codewhale.computer-use"] && [a.executableURL.lastPathComponent isEqual:@"accessibility"]);
 }
@@ -1451,8 +1452,18 @@ static id execute(NSDictionary *p) {
     BOOL integerIndex=!args[@"window_id"] || ([args[@"window_id"] isKindOfClass:NSNumber.class] && [args[@"window_id"] doubleValue]==index);
     BOOL valid=integerIndex && index>=0 && index<axWindows.count && cuFrame((__bridge AXUIElementRef)axWindows[index],&preferred);
     CFRelease(ax);
-    if(!valid) @throw [NSException exceptionWithName:@"window" reason:@"the selected app window has no accessibility geometry; call list_windows for a valid window index" userInfo:nil];
     NSArray *windows=CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionAll,kCGNullWindowID));
+    if(!valid && [args[@"allow_off_space"] boolValue] && index==0) {
+      for(NSDictionary *w in windows) {
+        if([w[(__bridge NSString *)kCGWindowOwnerPID] intValue]!=a.processIdentifier || [w[(__bridge NSString *)kCGWindowLayer] intValue]!=0) continue;
+        CGRect b; if(!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(__bridge NSString *)kCGWindowBounds],&b) || b.size.width<40 || b.size.height<40) continue;
+        uint32_t wid=[w[(__bridge NSString *)kCGWindowNumber] unsignedIntValue];
+        if(![cuWindowOnCurrentSpace(wid) isEqual:@NO]) continue;
+        return @{@"window_id":@(wid),@"name":a.localizedName?:@"App",@"pid":@(a.processIdentifier),@"off_space":@YES,
+                 @"title":w[(__bridge NSString *)kCGWindowName]?:@"",@"points":@{@"x":@(b.origin.x),@"y":@(b.origin.y),@"w":@(b.size.width),@"h":@(b.size.height)}};
+      }
+    }
+    if(!valid) @throw [NSException exceptionWithName:@"window" reason:@"the selected app window has no accessibility geometry; call list_windows for a valid window index" userInfo:nil];
     NSMutableDictionary *result = [capturableWindow(windows,a.processIdentifier,a.localizedName,preferred) mutableCopy];
     result[@"pid"] = @(a.processIdentifier);
     return result;
@@ -2358,6 +2369,139 @@ static void cuAgentWaitWindow(NSDictionary *req, void (^reply)(NSDictionary *)) 
     } }
   });
 }
+typedef CFArrayRef (*cuCopySpacesFn)(uint32_t, int, CFArrayRef);
+typedef CFStringRef (*cuCopyDisplayForWindowFn)(uint32_t, uint32_t);
+typedef uint64_t (*cuDisplaySpaceFn)(uint32_t, CFStringRef);
+typedef CFArrayRef (*cuHWCaptureFn)(uint32_t, uint32_t *, int, uint32_t);
+static cuCopySpacesFn cuCopySpaces;
+static cuCopyDisplayForWindowFn cuCopyDisplayForWindow;
+static cuDisplaySpaceFn cuDisplaySpace;
+static cuHWCaptureFn cuHWCapture;
+static void cuResolveCapture(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    void *sl = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY);
+    if(!sl) return;
+    cuCopySpaces = (cuCopySpacesFn)dlsym(sl, "SLSCopySpacesForWindows");
+    cuCopyDisplayForWindow = (cuCopyDisplayForWindowFn)dlsym(sl, "SLSCopyManagedDisplayForWindow");
+    cuDisplaySpace = (cuDisplaySpaceFn)dlsym(sl, "SLSManagedDisplayGetCurrentSpace");
+    cuHWCapture = (cuHWCaptureFn)dlsym(sl, "SLSHWCaptureWindowList");
+    if(!cuMainConn) cuMainConn = (cuMainConnFn)dlsym(sl, "SLSMainConnectionID");
+  });
+}
+static NSNumber *cuWindowOnCurrentSpace(uint32_t wid) {
+  cuResolveCapture();
+  if(!cuCopySpaces || !cuCopyDisplayForWindow || !cuDisplaySpace || !cuMainConn) return nil;
+  uint32_t cid = cuMainConn();
+  NSArray *spaces = CFBridgingRelease(cuCopySpaces(cid, 0x7, (__bridge CFArrayRef)@[@(wid)]));
+  CFStringRef display = cuCopyDisplayForWindow(cid, wid);
+  if(!display) return spaces.count ? nil : @NO;
+  uint64_t current = cuDisplaySpace(cid, display);
+  CFRelease(display);
+  if(!current || ![spaces isKindOfClass:NSArray.class]) return nil;
+  return @([spaces containsObject:@(current)]);
+}
+static BOOL cuImageBlank(CGImageRef image) {
+  if(!image || CGImageGetWidth(image) < 1 || CGImageGetHeight(image) < 1) return YES;
+  enum { side = 48 };
+  uint8_t px[side * side * 4];
+  memset(px, 0, sizeof px);
+  CGColorSpaceRef rgb = CGColorSpaceCreateDeviceRGB();
+  CGContextRef ctx = CGBitmapContextCreate(px, side, side, 8, side * 4, rgb, (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+  CGColorSpaceRelease(rgb);
+  if(!ctx) return NO;
+  CGContextDrawImage(ctx, CGRectMake(0, 0, side, side), image);
+  CGContextRelease(ctx);
+  for(size_t i = 3; i < sizeof px; i += 4) if(px[i]) return NO;
+  return YES;
+}
+static CGImageRef cuHWCaptureWindow(uint32_t wid) {
+  cuResolveCapture();
+  if(!cuHWCapture || !cuMainConn) return NULL;
+  uint32_t window = wid;
+  CFArrayRef images = cuHWCapture(cuMainConn(), &window, 1, (1u << 11) | (1u << 8));
+  if(!images) return NULL;
+  CGImageRef image = NULL;
+  if(CFArrayGetCount(images) > 0) {
+    CFTypeRef first = CFArrayGetValueAtIndex(images, 0);
+    if(first && CFGetTypeID(first) == CGImageGetTypeID()) image = (CGImageRef)CFRetain(first);
+  }
+  CFRelease(images);
+  return image;
+}
+static CGImageRef cuSCKCaptureWindow(uint32_t wid, NSString **why) API_AVAILABLE(macos(14.0)) {
+  __block SCShareableContent *content = nil;
+  __block NSError *error = nil;
+  dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+  [SCShareableContent getShareableContentExcludingDesktopWindows:YES onScreenWindowsOnly:NO completionHandler:^(SCShareableContent *c, NSError *e) { content = c; error = e; dispatch_semaphore_signal(sem); }];
+  if(dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC)) != 0) { *why = @"shareable content timed out"; return NULL; }
+  if(!content) { *why = error.localizedDescription ?: @"no shareable content"; return NULL; }
+  SCWindow *window = nil;
+  for(SCWindow *w in content.windows) if(w.windowID == wid) { window = w; break; }
+  if(!window) { *why = @"ScreenCaptureKit does not list the window"; return NULL; }
+  SCContentFilter *filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:window];
+  SCStreamConfiguration *config = [SCStreamConfiguration new];
+  CGFloat scale = filter.pointPixelScale > 0 ? filter.pointPixelScale : 2;
+  CGRect rect = filter.contentRect;
+  if(rect.size.width < 1 || rect.size.height < 1) rect = window.frame;
+  config.width = (size_t)MAX(1, llround(rect.size.width * scale));
+  config.height = (size_t)MAX(1, llround(rect.size.height * scale));
+  config.showsCursor = NO;
+  config.ignoreShadowsSingleWindow = YES;
+  __block CGImageRef image = NULL;
+  [SCScreenshotManager captureImageWithFilter:filter configuration:config completionHandler:^(CGImageRef img, NSError *e) {
+    if(img) image = CGImageRetain(img);
+    error = e;
+    dispatch_semaphore_signal(sem);
+  }];
+  if(dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) { *why = @"capture timed out"; return NULL; }
+  if(!image) *why = error.localizedDescription ?: @"no image";
+  return image;
+}
+static BOOL cuWriteImage(CGImageRef image, NSString *file, BOOL png) {
+  CFURLRef url = (__bridge CFURLRef)[NSURL fileURLWithPath:file];
+  CGImageDestinationRef dest = CGImageDestinationCreateWithURL(url, png ? CFSTR("public.png") : CFSTR("public.jpeg"), 1, NULL);
+  if(!dest) return NO;
+  NSDictionary *props = png ? @{} : @{ (__bridge NSString *)kCGImageDestinationLossyCompressionQuality: @0.85 };
+  CGImageDestinationAddImage(dest, image, (__bridge CFDictionaryRef)props);
+  BOOL ok = CGImageDestinationFinalize(dest);
+  CFRelease(dest);
+  return ok;
+}
+static void cuAgentCapture(NSDictionary *req, void (^reply)(NSDictionary *)) {
+  uint32_t wid = [req[@"window_id"] unsignedIntValue];
+  NSString *file = req[@"file"];
+  BOOL png = [req[@"format"] isEqual:@"png"];
+  if(!wid || ![file isKindOfClass:NSString.class] || !file.length) { reply(@{ @"ok": @NO, @"error": @"bad_args" }); return; }
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ @autoreleasepool {
+    if(cuScreenLocked()) { reply(@{ @"ok": @NO, @"error": @"screen_locked" }); return; }
+    NSNumber *onSpace = cuWindowOnCurrentSpace(wid);
+    NSMutableArray *tried = [NSMutableArray array];
+    CGImageRef image = NULL;
+    NSString *route = nil;
+    NSArray *order = [onSpace isEqual:@NO] ? @[@"window-backing-store", @"screencapturekit"] : @[@"screencapturekit", @"window-backing-store"];
+    for(NSString *r in order) {
+      NSString *why = nil;
+      CGImageRef candidate = NULL;
+      if([r isEqual:@"screencapturekit"]) {
+        if(@available(macOS 14.0, *)) candidate = cuSCKCaptureWindow(wid, &why);
+        else why = @"needs macOS 14";
+      } else {
+        candidate = cuHWCaptureWindow(wid);
+        if(!candidate) why = @"no backing store image";
+      }
+      if(candidate && cuImageBlank(candidate)) { CGImageRelease(candidate); candidate = NULL; why = @"blank frame"; }
+      [tried addObject:@{ @"route": r, @"ok": @(candidate != NULL), @"reason": why ?: NSNull.null }];
+      if(candidate) { image = candidate; route = r; break; }
+    }
+    if(!image) { reply(@{ @"ok": @NO, @"error": @"capture_failed", @"tried": tried, @"on_current_space": onSpace ?: NSNull.null }); return; }
+    size_t w = CGImageGetWidth(image), h = CGImageGetHeight(image);
+    BOOL written = cuWriteImage(image, file, png);
+    CGImageRelease(image);
+    if(!written) { reply(@{ @"ok": @NO, @"error": @"write_failed", @"tried": tried }); return; }
+    reply(@{ @"ok": @YES, @"route": route, @"pixels": @{ @"w": @(w), @"h": @(h) }, @"on_current_space": onSpace ?: NSNull.null, @"tried": tried });
+  } });
+}
 static void cuAgentWrite(NSDictionary *message) {
   NSData *data = [NSJSONSerialization dataWithJSONObject:message options:0 error:nil];
   if(!data) return;
@@ -2378,7 +2522,7 @@ static void cuAgentHandle(NSDictionary *req) {
   @try {
     if([cmd isEqual:@"hello"]) {
       cuAgentResolve();
-      reply(@{ @"ok": @YES, @"agent": @1, @"pid": @(getpid()), @"key_focus_guard": @(cuStealFocus && cuReleaseFocus && cuMainConn && cuKeyFocus ? 1 : 0),
+      reply(@{ @"ok": @YES, @"agent": @1, @"capture": @1, @"pid": @(getpid()), @"key_focus_guard": @(cuStealFocus && cuReleaseFocus && cuMainConn && cuKeyFocus ? 1 : 0),
                @"display_awake": @(cuPMCreate ? 1 : 0), @"accessibility": @(AXIsProcessTrusted()) });
     } else if([cmd isEqual:@"status"]) {
       NSDictionary *live = @{ @"screen_locked": @(cuScreenLocked()), @"front_pid": @(cuAgentFrontPid()), @"key_focus_pid": @(cuAgentKeyFocusPid()) };
@@ -2391,6 +2535,7 @@ static void cuAgentHandle(NSDictionary *req) {
     } else if([cmd isEqual:@"arm"]) reply(cuAgentArm(req));
     else if([cmd isEqual:@"settle"]) cuAgentSettle(req, reply);
     else if([cmd isEqual:@"wait_window"]) cuAgentWaitWindow(req, reply);
+    else if([cmd isEqual:@"capture"]) cuAgentCapture(req, reply);
     else if([cmd isEqual:@"intent"]) {
       @synchronized(cuAgentLock) { cuEpoch++; cuLate = nil; [cuWatches removeAllObjects]; }
       reply(@{ @"ok": @YES });

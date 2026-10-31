@@ -326,6 +326,17 @@ export function create({ exec }) {
     return agentStarting;
   }
 
+  async function captureWindowFile(windowId, file) {
+    const link = await agent();
+    const format = /\.png$/i.test(file) ? "png" : "jpg";
+    const cap = link ? await link.request("capture", { window_id: windowId, file, format }, 12_000) : null;
+    if (cap?.ok) return { route: cap.route, on_current_space: cap.on_current_space };
+    if (cap?.error === "screen_locked") throw Object.assign(new ExecError("screen_locked: the Mac is locked; apps cannot be read or controlled until the person unlocks it. No input was sent."), { code: "screen_locked" });
+    const r = await runL("screencapture", ["-x", "-t", format, "-o", "-l", String(windowId), file], { timeoutMs: 8000 });
+    if (r.code !== 0) throw Object.assign(new ExecError(`window capture failed: ${(cap?.tried ?? []).map((t) => `${t.route}: ${t.reason}`).join("; ") || r.stderr.trim().slice(0, 300)}`, r), { code: "window_not_capturable" });
+    return { route: "screencapture", ...(cap ? { agent_tried: cap.tried } : {}) };
+  }
+
   async function refuseLocked() {
     const status = await (await agent())?.request("status");
     if (status?.screen_locked) throw Object.assign(new ExecError("screen_locked: the Mac is locked; apps cannot be read or controlled until the person unlocks it. No input was sent."), { code: "screen_locked" });
@@ -440,8 +451,7 @@ export function create({ exec }) {
       try {
         const win = await native("window_info", { app_ref: state.inputApp });
         if (!current()) return { enabled: false };
-        const r = await runL("screencapture", ["-x", "-o", "-l", String(win.window_id), "-t", "png", temp], { timeoutMs: 8000 });
-        if (r.code !== 0) throw new ExecError(`background preview capture failed: ${r.stderr}`);
+        await captureWindowFile(win.window_id, temp);
         if (!current()) return { enabled: false };
         fs.renameSync(temp, file);
         const p = state.pointer;
@@ -478,6 +488,7 @@ export function create({ exec }) {
     const observed = state.lastRaster?.observed_window;
     if (state.lastRaster && !state.lastRaster.app_ref) return {};
     if (!observed || observed.pid !== state.inputApp?.pid) throw new ExecError("raster has no window identity for the bound application — capture its window again");
+    if (state.lastRaster.off_space) throw Object.assign(new ExecError("this raster shows a window on another Space; input to it is not supported. Ask the person to bring it to this desktop, or use an element action."), { code: "window_off_space" });
     return { observed_window: observed };
   }
 
@@ -611,7 +622,7 @@ export function create({ exec }) {
     const disp = display ?? state.activeDisplay;
     // An explicit app reference resolves first and alone: nothing may run
     // before it and redirect the capture to another target.
-    const window = app_ref !== undefined ? await native("window_info", { app_ref, window_id }) : null;
+    const window = app_ref !== undefined ? await native("window_info", { app_ref, window_id, allow_off_space: true }) : null;
     if (window && region) throw new ExecError("choose app_ref or region, not both");
     // On the display path, resolve displays before capturing so an unknown
     // index is a clean error instead of a raster silently labelled with another
@@ -625,8 +636,7 @@ export function create({ exec }) {
         throw new ExecError(`no display ${disp}; have [${displays.map((x) => x.index).join(", ")}] — screenshot takes the display index from list_displays, not its id`);
       }
     }
-    if (window) args.push("-o", "-l", String(window.window_id));
-    else if (disp && disp !== "all") args.push("-D", String(disp));
+    if (disp && disp !== "all" && !window) args.push("-D", String(disp));
     if (region) {
       if (!region.every((n) => Number.isFinite(n) && n >= 0) || region.length !== 4) {
         throw new ExecError("region must be [x, y, w, h] in screen points");
@@ -634,8 +644,12 @@ export function create({ exec }) {
       args.push("-R", region.join(","));
     }
     args.push(file);
-    const r = await runL("screencapture", args, { timeoutMs: 20_000 });
-    if (r.code !== 0) throw new ExecError(`screencapture exited ${r.code}: ${r.stderr.trim().slice(0, 300)}`, r);
+    let capture = null;
+    if (window) capture = await captureWindowFile(window.window_id, file);
+    else {
+      const r = await runL("screencapture", args, { timeoutMs: 20_000 });
+      if (r.code !== 0) throw new ExecError(`screencapture exited ${r.code}: ${r.stderr.trim().slice(0, 300)}`, r);
+    }
     await fitRasterToBudget(file);
     await fitRasterToDimension(file, max_dimension);
     const stat = fs.statSync(file);
@@ -645,6 +659,8 @@ export function create({ exec }) {
     state.lastRaster = {
       file,
       ...(window ? { app_ref, window_index: window_id ?? 0, observed_window: { id: window.window_id, pid: window.pid ?? state.inputApp?.pid, frame: window.points } } : {}),
+      ...(capture ? { capture_route: capture.route } : {}),
+      ...(window?.off_space ? { off_space: true, note: "This window is on another Space; it was captured without switching Spaces. Coordinates on it are refused (window_off_space)." } : {}),
       bytes: stat.size,
       display: disp ?? 1,
       // Region and window rasters describe that rect, not the whole display.

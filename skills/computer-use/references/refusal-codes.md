@@ -34,6 +34,7 @@ stop; never change targets or routes to bypass it.
 | --- | --- | --- |
 | `background_focus_required` | strict approval mode, or a held chord / web value replacement, would need keyboard focus | use element targets; select the app with activate:true when the task needs focus |
 | `app_upgrade_required` | the running helper predates the brief focus lease | update and restart the Codewhale Computer Use app, or use an accessibility action |
+| `window_off_space` | the last raster shows a window on another Space; coordinates on it are not supported | use an element action, or ask the person to bring the window to this desktop |
 | `screen_locked` | the Mac is locked; apps cannot be read or controlled | stop and tell the person; nothing was sent, and only they can unlock |
 | `kill_not_owned` | standard approval quits only apps this session launched | ask the person to quit that app themselves |
 | `app_not_identified` | no app is named, bound or identifiably frontmost | pass `app_ref`, or `open_application` first |
