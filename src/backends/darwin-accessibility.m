@@ -14,9 +14,15 @@
 
 static volatile sig_atomic_t cuCancelled = 0;
 static BOOL cuOwnerPipe = NO;
+static int cuInputLockFd = -1;
+static _Thread_local NSProgress *__unsafe_unretained cuCommandProgress = nil;
 static NSDictionary *cuLeaseKey = nil;
 static pid_t cuLeasePid = 0;
 static NSRunningApplication *cuLeaseApp = nil;
+static NSDictionary *cuPointerLeaseContext = nil;
+static NSDictionary *cuPointerLeaseElements = nil;
+static NSRunningApplication *cuPointerLeaseApp = nil;
+static NSDictionary *cuValidatePointerLease(void);
 #ifdef CU_TEST
 static NSString *cuTestLockDir = nil;
 static NSString *cuTestReleaseFile = nil;
@@ -26,7 +32,7 @@ static NSNumber *cuTestIdleSeconds = nil;
 static void cuCancel(int signum) { cuCancelled = 1; }
 static void cuCheckCancelled(void) {
   if(cuOwnerPipe) { struct pollfd fd={STDIN_FILENO,POLLHUP,0}; if(poll(&fd,1,0)>0 && (fd.revents&POLLHUP)) cuCancelled=1; }
-  if(cuCancelled) @throw [NSException exceptionWithName:@"cancelled" reason:@"computer request cancelled" userInfo:nil];
+  if(cuCancelled || cuCommandProgress.cancelled) @throw [NSException exceptionWithName:@"cancelled" reason:@"computer request cancelled" userInfo:nil];
 }
 static void cuLockInput(void) {
   // One physical desktop, including separately launched direct MCP hosts.
@@ -43,6 +49,7 @@ static void cuLockInput(void) {
     if(fd>=0) close(fd);
     @throw [NSException exceptionWithName:@"input_busy" reason:@"another Computer Use session owns held input; release its key or pointer before sending input" userInfo:nil];
   }
+  cuInputLockFd=fd;
 }
 static BOOL cuFrontmostIsPid(pid_t pid);
 static BOOL cuScreenLocked(void);
@@ -76,17 +83,30 @@ static void cuReleaseLease(void) {
     if([up[@"foreground_input"] boolValue] || !cuLeaseApp.terminated) cuPostKey(up,cuLeasePid);
     cuLeaseKey=nil; cuLeaseApp=nil;
   }
+  cuPointerLeaseContext=nil; cuPointerLeaseElements=nil; cuPointerLeaseApp=nil;
+  if(cuInputLockFd>=0) { close(cuInputLockFd); cuInputLockFd=-1; }
 }
-// A held lease is only ever a key: the pointer is never held on the user's
-// cursor. Any line (or EOF) from the owner releases it.
 static void cuWaitForLease(void) {
+  NSMutableData *buffer=[NSMutableData data];
   @try {
     while(!cuCancelled) {
       struct pollfd fd={STDIN_FILENO,POLLIN|POLLHUP,0};
       int ready=poll(&fd,1,100);
       if(ready<=0) continue;
-      char byte; ssize_t n=read(STDIN_FILENO,&byte,1);
-      if(n<=0 || byte=='\n') break;
+      uint8_t bytes[4096]; ssize_t n=read(STDIN_FILENO,bytes,sizeof(bytes));
+      if(n<=0) break;
+      [buffer appendBytes:bytes length:(NSUInteger)n];
+      if(buffer.length>65536) break;
+      while(YES) {
+        NSRange newline=[buffer rangeOfData:[NSData dataWithBytes:"\n" length:1] options:0 range:NSMakeRange(0,buffer.length)];
+        if(newline.location==NSNotFound) break;
+        NSData *line=[buffer subdataWithRange:NSMakeRange(0,newline.location)];
+        [buffer replaceBytesInRange:NSMakeRange(0,newline.location+1) withBytes:NULL length:0];
+        id request=[NSJSONSerialization JSONObjectWithData:line options:0 error:nil];
+        if(![request isKindOfClass:NSDictionary.class] || [request[@"release"] boolValue] || ![request[@"validate"] boolValue] || !cuPointerLeaseContext) return;
+        @try { cuPrint(cuValidatePointerLease()); }
+        @catch(NSException *error) { cuPrint(@{@"validated":@NO,@"error":error.reason?:error.name}); return; }
+      }
     }
   } @finally { cuReleaseLease(); }
 }
@@ -515,7 +535,7 @@ static NSDictionary *cuPointerToolkit(NSRunningApplication *app) {
   return @{@"chromium":@(chromium)};
 }
 static NSSet *cuDragWindows(pid_t pid);
-static NSDictionary *cuPointerContext(NSRunningApplication *inputApp, NSDictionary *args) {
+static NSDictionary *cuPointerContext(NSRunningApplication *inputApp, NSDictionary *args, NSMutableDictionary *elements) {
   if(cuDragWindows(inputApp.processIdentifier).count)
     @throw [NSException exceptionWithName:@"drag_session_active" reason:@"drag_session_active: the target already has a native drag session; finish it before sending another pointer gesture" userInfo:nil];
   NSArray *steps=args[@"steps"];
@@ -544,6 +564,7 @@ static NSDictionary *cuPointerContext(NSRunningApplication *inputApp, NSDictiona
   @try {
     for(id w in attr(ax,@"AXWindows")) {
       CGRect f; if(!cuFrame((__bridge AXUIElementRef)w,&f) || !CGRectEqualToRect(f,frame)) continue;
+      if(elements) elements[@"window"]=w;
       context[@"title"]=attr((__bridge AXUIElementRef)w,@"AXTitle")?:@"";
       NSArray *sheets=attr((__bridge AXUIElementRef)w,@"AXSheets");
       if(sheets.count && [context[@"chromium"] boolValue])
@@ -554,6 +575,7 @@ static NSDictionary *cuPointerContext(NSRunningApplication *inputApp, NSDictiona
         CGRect b;
         if([attr(node,@"AXRole") isEqual:@"AXWebArea"] && cuFrame(node,&b) && CGRectContainsPoint(b,anchor)) {
           if(context[@"web"]) @throw [NSException exceptionWithName:@"window" reason:@"multiple web surfaces cover this point; the target is ambiguous" userInfo:nil];
+          if(elements) elements[@"web"]=(__bridge id)node;
           id url=attr(node,@"AXURL");
           context[@"web"]=@{@"x":@(b.origin.x),@"y":@(b.origin.y),@"w":@(b.size.width),@"h":@(b.size.height),@"title":attr(node,@"AXTitle")?:@"",@"url":[url isKindOfClass:NSURL.class]?[url absoluteString]:([url isKindOfClass:NSString.class]?url:@"")};
         } else if(queue.count<1600) [queue addObjectsFromArray:attr(node,@"AXChildren")?:@[]];
@@ -562,6 +584,29 @@ static NSDictionary *cuPointerContext(NSRunningApplication *inputApp, NSDictiona
     }
   } @finally { CFRelease(ax); }
   return context;
+}
+static NSDictionary *cuValidatePointerLease(void) {
+  cuCheckCancelled();
+  if(!AXIsProcessTrusted()) @throw [NSException exceptionWithName:@"permission" reason:@"Accessibility permission was revoked; no further input is allowed" userInfo:nil];
+  if(cuScreenLocked()) @throw [NSException exceptionWithName:@"screen_locked" reason:@"screen_locked: the Mac is locked; no further input is allowed" userInfo:nil];
+  if(cuPointerLeaseApp.terminated) @throw [NSException exceptionWithName:@"stale" reason:@"the pointer application exited; observe before retrying" userInfo:nil];
+  pid_t pid=[cuPointerLeaseContext[@"pid"] intValue];
+  NSDictionary *w=cuPointerLeaseContext[@"window"],*web=cuPointerLeaseContext[@"web"];
+  CGRect expected=CGRectMake([w[@"x"] doubleValue],[w[@"y"] doubleValue],[w[@"w"] doubleValue],[w[@"h"] doubleValue]),actual;
+  pid_t owner=0;
+  if(!cuWindowInfoForNumber([w[@"id"] unsignedIntValue],&actual,&owner) || owner!=pid || !CGRectEqualToRect(expected,actual))
+    @throw [NSException exceptionWithName:@"stale" reason:@"the pointer window moved, closed or changed ownership; observe before retrying" userInfo:nil];
+  if(cuDragWindows(pid).count) @throw [NSException exceptionWithName:@"drag_session_active" reason:@"drag_session_active: a native drag session started; no further pointer input is allowed" userInfo:nil];
+  AXUIElementRef window=(__bridge AXUIElementRef)cuPointerLeaseElements[@"window"];
+  AXUIElementRef surface=(__bridge AXUIElementRef)cuPointerLeaseElements[@"web"];
+  if(!window || !surface || [attr(window,@"AXSheets") count] || ![attr(surface,@"AXRole") isEqual:@"AXWebArea"])
+    @throw [NSException exceptionWithName:@"stale" reason:@"the pointer web surface changed or is blocked by a sheet; observe before retrying" userInfo:nil];
+  CGRect b;
+  id url=attr(surface,@"AXURL"),title=attr(surface,@"AXTitle")?:@"";
+  NSString *text=[url isKindOfClass:NSURL.class]?[url absoluteString]:([url isKindOfClass:NSString.class]?url:@"");
+  if(!web || !cuFrame(surface,&b) || !CGRectEqualToRect(b,CGRectMake([web[@"x"] doubleValue],[web[@"y"] doubleValue],[web[@"w"] doubleValue],[web[@"h"] doubleValue])) || ![title isEqual:web[@"title"]] || ![text isEqual:web[@"url"]])
+    @throw [NSException exceptionWithName:@"stale" reason:@"the pointer web surface geometry, title or URL changed; observe before retrying" userInfo:nil];
+  return @{@"validated":@YES};
 }
 static NSSet *cuDragWindows(pid_t pid) {
   NSMutableSet *ids=[NSMutableSet set];
@@ -573,13 +618,15 @@ static NSSet *cuDragWindows(pid_t pid) {
 static NSDictionary *cuBgPointer(NSRunningApplication *inputApp, NSDictionary *args) {
   if(!cuResolveBgPointer())
     @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:@"window-routed background pointer is unavailable: SLPSPostEventRecordTo/CGEventSetWindowLocation not resolvable via SkyLight; no input was sent" userInfo:nil];
-  NSDictionary *context=cuPointerContext(inputApp,args);
+  NSMutableDictionary *elements=[args[@"prepare_only"] boolValue]?[NSMutableDictionary dictionary]:nil;
+  NSDictionary *context=cuPointerContext(inputApp,args,elements);
   NSArray *steps=args[@"steps"];
   CGPoint anchor=CGPointMake([steps[0][@"x"] doubleValue],[steps[0][@"y"] doubleValue]);
   uint32_t winNum=[context[@"window"][@"id"] unsignedIntValue];
   CGRect frame=CGRectMake([context[@"window"][@"x"] doubleValue],[context[@"window"][@"y"] doubleValue],[context[@"window"][@"w"] doubleValue],[context[@"window"][@"h"] doubleValue]);
   if([args[@"prepare_only"] boolValue]) {
     if(![args[@"input_lease"] boolValue] || ![args[@"owner_pipe"] boolValue]) @throw [NSException exceptionWithName:@"args" reason:@"a prepared pointer route needs a live input owner" userInfo:nil];
+    cuPointerLeaseContext=context; cuPointerLeaseElements=elements; cuPointerLeaseApp=inputApp;
     NSMutableDictionary *ready=[context mutableCopy]; ready[@"action_sent"]=@NO; ready[@"input_prepared"]=@YES; return ready;
   }
   BOOL dragging=NO,hover=YES;
@@ -1552,7 +1599,7 @@ static id execute(NSDictionary *p) {
     return cuPostKey(args,[args[@"input_app_ref"][@"pid"] intValue]);
   }
   cuCheckCancelled();
-  if([tool isEqual:@"input_capabilities"]) return @{@"pid_input":@1,@"agent":@1,@"screen_lock_check":@1,@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"focus_lease":@1,@"focused_control":@1,@"window_record":@(cuResolveBgPointer()?1:0),@"observed_window_input":@1,@"targeted_keys":@1,@"literal_text_replace":@1,@"pointer_context":@1,@"menu_path":@1};
+  if([tool isEqual:@"input_capabilities"]) return @{@"pid_input":@1,@"agent":@1,@"screen_lock_check":@1,@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"focus_lease":@1,@"focused_control":@1,@"window_record":@(cuResolveBgPointer()?1:0),@"observed_window_input":@1,@"targeted_keys":@1,@"literal_text_replace":@1,@"pointer_context":@1,@"pointer_owner_validation":@1,@"menu_path":@1};
   if([tool isEqual:@"front_lease_watchdog"]) {
     long long remaining = [args[@"deadline"] longLongValue] - (long long)([NSDate new].timeIntervalSince1970 * 1000);
     if(remaining > 0 && remaining < 30000) usleep((useconds_t)remaining * 1000);
@@ -2058,7 +2105,7 @@ static id execute(NSDictionary *p) {
    * Pointer gestures are window-routed event records addressed to a window of
    * the bound app (cuBgPointer). The cursor the user holds is never moved.
    */
-  if([tool isEqual:@"pointer_context"]) return cuPointerContext(inputApp,args);
+  if([tool isEqual:@"pointer_context"]) return cuPointerContext(inputApp,args,nil);
   if([tool isEqual:@"bg_pointer"]) return cuBgPointer(inputApp, args);
   if([tool isEqual:@"scroll"]) {
     cuCheckCancelled();
@@ -2723,6 +2770,38 @@ static void cuAgentWrite(NSDictionary *message) {
     fflush(stdout);
   });
 }
+static dispatch_queue_t cuCommandQ;
+static NSMutableDictionary<NSNumber *, NSProgress *> *cuCommandJobs;
+static void cuAgentExecute(NSDictionary *req, void (^reply)(NSDictionary *)) {
+  NSNumber *rid=req[@"id"];
+  NSString *tool=req[@"tool"];
+  NSDictionary *args=req[@"args"];
+  if(![rid isKindOfClass:NSNumber.class] || ![tool isKindOfClass:NSString.class] || ![args isKindOfClass:NSDictionary.class] ||
+      [args[@"input_lease"] boolValue] || ([tool isEqual:@"key_event"] && [args[@"down"] boolValue])) {
+    reply(@{@"ok":@NO,@"error":@"args: persistent commands require valid arguments and cannot own held input"}); return;
+  }
+  NSProgress *progress=[NSProgress progressWithTotalUnitCount:1];
+  @synchronized(cuAgentLock) {
+    if(cuCommandJobs.count>=64 || cuCommandJobs[rid]) { reply(@{@"ok":@NO,@"error":@"input_busy: the native command queue is full or this request already exists"}); return; }
+    cuCommandJobs[rid]=progress;
+  }
+  dispatch_async(cuCommandQ, ^{ @autoreleasepool {
+    cuCommandProgress=progress;
+    NSDictionary *body;
+    @try {
+      cuCheckCancelled();
+      NSMutableDictionary *input=[args mutableCopy]; input[@"owner_pipe"]=@NO;
+      id result=execute(@{@"tool":tool,@"args":input});
+      cuCheckCancelled();
+      body=@{@"ok":@YES,@"data":result?:NSNull.null};
+    } @catch(NSException *error) { body=@{@"ok":@NO,@"error":error.reason?:error.name}; }
+    @finally {
+      cuReleaseLease(); cuOwnerPipe=NO; cuCommandProgress=nil;
+      @synchronized(cuAgentLock) { [cuCommandJobs removeObjectForKey:rid]; }
+    }
+    reply(body);
+  } });
+}
 static void cuAgentHandle(NSDictionary *req) {
   id rid = req[@"id"] ?: NSNull.null;
   NSString *cmd = req[@"cmd"];
@@ -2734,7 +2813,7 @@ static void cuAgentHandle(NSDictionary *req) {
   @try {
     if([cmd isEqual:@"hello"]) {
       cuAgentResolve();
-      reply(@{ @"ok": @YES, @"agent": @1, @"capture": @1, @"pid": @(getpid()), @"key_focus_guard": @(cuStealFocus && cuReleaseFocus && cuMainConn && cuKeyFocus ? 1 : 0),
+      reply(@{ @"ok": @YES, @"agent": @1, @"capture": @1, @"native_rpc": @1, @"pid": @(getpid()), @"key_focus_guard": @(cuStealFocus && cuReleaseFocus && cuMainConn && cuKeyFocus ? 1 : 0),
                @"display_awake": @(cuPMCreate ? 1 : 0), @"accessibility": @(AXIsProcessTrusted()) });
     } else if([cmd isEqual:@"status"]) {
       NSDictionary *live = @{ @"screen_locked": @(cuScreenLocked()), @"front_pid": @(cuAgentFrontPid()), @"key_focus_pid": @(cuAgentKeyFocusPid()) };
@@ -2744,6 +2823,10 @@ static void cuAgentHandle(NSDictionary *req) {
         [body addEntriesFromDictionary:@{ @"display_awake": @(cuAwakeId != 0), @"released": @(cuReleased), @"missed": @(cuMissed), @"reverted": @(cuReverted), @"restored": @(cuRestored) }];
       }
       reply(body);
+    } else if([cmd isEqual:@"execute"]) cuAgentExecute(req, reply);
+    else if([cmd isEqual:@"cancel"]) {
+      @synchronized(cuAgentLock) { [cuCommandJobs[req[@"cancel_id"]] cancel]; }
+      reply(@{@"ok":@YES});
     } else if([cmd isEqual:@"arm"]) reply(cuAgentArm(req));
     else if([cmd isEqual:@"settle"]) cuAgentSettle(req, reply);
     else if([cmd isEqual:@"wait_window"]) cuAgentWaitWindow(req, reply);
@@ -2758,6 +2841,8 @@ static int cuAgentMain(void) {
   signal(SIGTERM, SIG_DFL);
   signal(SIGINT, SIG_DFL);
   cuAgentLock = [NSObject new];
+  cuCommandQ=dispatch_queue_create("net.codewhale.computer-use.native",DISPATCH_QUEUE_SERIAL);
+  cuCommandJobs=[NSMutableDictionary dictionary];
   cuWatches = [NSMutableDictionary dictionary];
   cuAgentQ = dispatch_queue_create("net.codewhale.computer-use.agent", DISPATCH_QUEUE_SERIAL);
   cuAgentWriteQ = dispatch_queue_create("net.codewhale.computer-use.agent.write", DISPATCH_QUEUE_SERIAL);
@@ -2768,17 +2853,23 @@ static int cuAgentMain(void) {
   fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL) | O_NONBLOCK);
   NSMutableData *buffer = [NSMutableData data];
   dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, STDIN_FILENO, 0, dispatch_get_main_queue());
+  void (^shutdown)(void)=^{
+      dispatch_source_cancel(source); cuCancelled=1;
+      @synchronized(cuAgentLock) { for(NSProgress *job in cuCommandJobs.allValues) [job cancel]; }
+      dispatch_async(cuCommandQ, ^{ dispatch_async(dispatch_get_main_queue(), ^{
+        @synchronized(cuAgentLock) { if(cuAwakeId && cuPMRelease) cuPMRelease(cuAwakeId); cuAwakeId=0; }
+        cuRemoveTap(cuFrontTap);
+        for(NSValue *v in cuTargetTaps.allValues) cuRemoveTap((CFMachPortRef)v.pointerValue);
+        exit(0);
+      }); });
+  };
   dispatch_source_set_event_handler(source, ^{ @autoreleasepool {
     uint8_t chunk[65536];
     ssize_t n = read(STDIN_FILENO, chunk, sizeof chunk);
-    if(n == 0 || (n < 0 && errno != EAGAIN && errno != EINTR)) {
-      @synchronized(cuAgentLock) { if(cuAwakeId && cuPMRelease) cuPMRelease(cuAwakeId); cuAwakeId = 0; }
-      cuRemoveTap(cuFrontTap);
-      for(NSValue *v in cuTargetTaps.allValues) cuRemoveTap((CFMachPortRef)v.pointerValue);
-      exit(0);
-    }
+    if(n == 0 || (n < 0 && errno != EAGAIN && errno != EINTR)) { shutdown(); return; }
     if(n < 0) return;
     [buffer appendBytes:chunk length:(NSUInteger)n];
+    if(buffer.length>16*1024*1024) { shutdown(); return; }
     while(YES) {
       NSRange nl = [buffer rangeOfData:[NSData dataWithBytes:"\n" length:1] options:0 range:NSMakeRange(0, buffer.length)];
       if(nl.location == NSNotFound) break;

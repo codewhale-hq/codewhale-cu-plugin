@@ -182,8 +182,14 @@ test("since returns a small diff while preserving fresh targetable full records"
   assert.deepEqual(diff.removed_indices, []);
   assert.ok(JSON.stringify(diff).length < JSON.stringify(first).length);
   assert.equal((await tool("left_click", { target: { type: "element", state_id: diff.state_id, index: 1 } })).ok, true);
+  await tool("get_app_state", { detail: "compact", query: "unrelated view" });
   const latest = await tool("get_app_state", { detail: "compact", since: "latest" });
   assert.equal(latest.base_state_id, diff.state_id);
+  const batchBase = await tool("get_app_state", { detail: "compact", limit: 20 });
+  const batch = await tool("run_actions", { steps: [{ tool: "left_click", args: { target: { type: "element", state_id: batchBase.state_id, index: 1 } } }], observe: true });
+  assert.equal(batch.observation.delta, true, JSON.stringify(batch));
+  assert.equal(batch.observation.base_state_id, batchBase.state_id);
+  assert.equal(batch.observation.returned, 0);
 });
 
 test("state diffs report changes/removals and resync on changed scope, expired or incomplete baselines", async () => {
@@ -215,7 +221,7 @@ test("named batches find fresh elements, preserve semantic revalidation and retu
   setControl({ found: true, element: { role: "AXTextField", position: { x: 10, y: 60 }, size: { w: 150, h: 25 } } });
   try {
     const result = await tool("run_actions", { steps: [
-      { tool: "set_value", find: { role: "AXTextField", query: "Fixture" }, args: { value: "updated" } },
+      { tool: "set_value", find: { target: { role: "AXTextField", query: "Fixture" } }, args: { value: "updated" } },
       { tool: "get_value", find: { role: "AXTextField" } },
     ], observe: { query: "Fixture", detail: "compact" } });
     assert.equal(result.ok, true, JSON.stringify(result));
@@ -241,9 +247,14 @@ test("batches prevalidate later steps and refuse ambiguous, missing and stale fi
     { tool: "wait_for", args: {} },
     { tool: "get_app_state", args: { detail: "invalid" } },
     { tool: "left_click", find: { query: "OK", window_id: -1 } },
+    { tool: "left_click", find: { from_target: { role: "AXButton" } } },
+    { tool: "left_click_drag", find: { from_target: { role: "AXButton", window_id: 0 }, to: { role: "AXButton", window_id: 1 } } },
   ]) {
     const result = await tool("run_actions", { steps: [{ tool: "type", args: { text: "must not send" } }, tail] });
     assert.equal(result.ok, false, JSON.stringify(tail));
+    assert.equal(result.completed_steps, 0);
+    assert.equal(result.action_sent, false);
+    assert.equal(result.outcome_unknown, false);
   }
   for (const [find, code] of [[{ query: "AX" }, "element_ambiguous"], [{ query: "not-present" }, "element_not_found"]]) {
     const result = await tool("run_actions", { steps: [{ tool: "left_click", find }] });

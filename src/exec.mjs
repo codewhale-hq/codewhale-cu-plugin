@@ -116,12 +116,22 @@ export function startAgent(cmd, args = []) {
   child.stdout.unref?.();
   return {
     get alive() { return !closed && child.exitCode === null && child.signalCode === null; },
-    request(cmd, body = {}, timeoutMs = 1500) {
+    request(cmd, body = {}, timeoutMs = 1500, { signal } = {}) {
       if (closed) return Promise.resolve(null);
+      if (signal?.aborted) return Promise.resolve({ ok: false, aborted: true, error: "computer request cancelled", request_dispatched: false });
       const id = ++next;
       return new Promise((resolve) => {
-        const timer = setTimeout(() => { pending.delete(id); resolve(null); }, timeoutMs);
-        pending.set(id, { resolve, timer });
+        const finish = (value) => { signal?.removeEventListener("abort", abort); resolve(value); };
+        const cancel = (value) => {
+          if (!pending.delete(id)) return;
+          clearTimeout(timer);
+          if (cmd === "execute" && !closed) child.stdin.write(JSON.stringify({ cmd: "cancel", cancel_id: id }) + "\n");
+          finish(value);
+        };
+        const abort = () => cancel({ ok: false, aborted: true, error: "computer request cancelled", request_dispatched: true });
+        const timer = setTimeout(() => cancel(cmd === "execute" ? { ok: false, timed_out: true, error: "native command timed out", request_dispatched: true } : null), timeoutMs);
+        pending.set(id, { resolve: finish, timer });
+        signal?.addEventListener("abort", abort, { once: true });
         child.stdin.write(JSON.stringify({ ...body, id, cmd }) + "\n");
       });
     },

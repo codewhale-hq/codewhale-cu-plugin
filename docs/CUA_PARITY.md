@@ -161,3 +161,68 @@ requires commercial licensing for hosted or managed offerings built on Spaces.
 This slice imports no Cua implementation. Use MIT components only after normal
 dependency review; Spaces is a workflow reference until adoption is separately
 decided. Keep credential transfer, viewer access and data retention explicit.
+
+## October 31 performance source candidate
+
+The macOS helper now executes ordinary native commands on a bounded serial
+queue in the existing resident process. Its focus/menu monitor remains on its
+own queue. Cancellation, timeout and owner disconnect cancel outstanding work;
+each command releases its kernel input lock before replying. Held gestures
+retain their dedicated owner pipe. Chromium gestures revalidate retained AX
+window/web objects through that owner and check the isolated renderer's live
+geometry, visibility and navigation/context events at every step. Older helpers
+keep their existing per-call behavior.
+
+The batch contract declares exact step names, resolves both named drag ends
+from one fresh observation, reports rejected plans as zero completed steps/no
+input, and returns a diff against the latest compatible view by default. The
+4,093-byte guide recommends existing host composition for loops/branches and
+uses `request_access` for diagnostics rather than requiring a probe per task.
+Every action still passes its normal permission, consent, route and target
+checks; a batch does not retry delivered or unknown input.
+
+This follows the persistent-driver and composed-workflow direction in Cua's
+[workflow guide](https://github.com/trycua/cua/blob/38dad235d3aa1aed0ef080a54de317953d324822/libs/cua-driver/rust/Skills/cua-driver/WORKFLOW.md),
+[batch hint](https://github.com/trycua/cua/blob/38dad235d3aa1aed0ef080a54de317953d324822/libs/cua-driver/rust/crates/cua-driver-core/src/batch_nudge.rs)
+and [state views](https://github.com/trycua/cua/blob/38dad235d3aa1aed0ef080a54de317953d324822/libs/cua-driver/rust/crates/cua-driver-core/src/window_state_view.rs),
+reviewed at that pinned commit. The Engine's existing `execute_tools` VM owns
+branching composition; no second model loop or scripting VM is added here.
+
+On the measured macOS 26.1 / Electron 45.2.1 fixture, three hovers and six drags
+(pointer capture and HTML5) per variant gave these tool-call medians:
+
+| Operation | Prior source | Resident candidate |
+| --- | ---: | ---: |
+| Hover | 695 ms | 538 ms |
+| Drag | 2,800 ms | 1,410 ms |
+
+The resident candidate also confirmed native nested-menu execution and AppKit
+Set Value/Apply. Its full live fixture run retained the cursor and foreground
+across 1,532 independent samples. A later corrected accessibility label let
+hover, drag and verification complete in one 1.90-second batch; that run's
+whole-desktop cursor check was contested. Move/navigation during a drag
+refused, and a cancelled drag released capture after two moves without a drop.
+The cancellation client's original wait for a cancelled RPC response timed
+out; that harness failure is preserved separately from the observed cleanup.
+
+Existing focused checks passed (78 protocol/browser/transport/guide checks;
+57 native checks and one platform skip). The final batch-contract fix passed
+the 44 affected existing checks, and the final guide passed its 11 checks.
+An additional native protocol proof using existing synthetic primitives passed
+11/11, including queued cancellation, timeout, lock release and pipe EOF.
+
+A real installed Codewhale 0.10.2 / DeepSeek `deepseek-flash` controlled workflow
+completed all five steps in one batch call in 10.11 seconds, with two provider
+requests and independent hover/drag oracle confirmation. Provider requests
+accounted for 4.97 seconds and the tool for 2.45 seconds; 2.69 seconds remained
+outside those intervals. A prior variant with a diagnostic probe took 11.05
+seconds and two tool calls. These runs were explicitly instructed to compose
+the known steps. The target never became foreground and no physical key
+events occurred; other pointer activity contested a whole-desktop idle claim.
+This is not an unconstrained-planning speedup or a comparison against identical
+original harness conditions. The original harness omitted batching and host
+composition, and its fixture hid a changed visible label from AX.
+
+These are signed development-source results after published 0.14.0. They do
+not qualify a new release, other macOS versions or the remaining platform,
+locked-screen, off-Space and upgrade/accessibility gates.

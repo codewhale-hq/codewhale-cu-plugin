@@ -42,19 +42,22 @@ async function pages(endpoint) {
   return Array.isArray(list) ? list.filter(p => p.type === "page").slice(0, 32) : [];
 }
 
-async function geometry(channel) {
-  const { frameTree } = await channel.send("Page.getFrameTree", {}, undefined, { timeoutMs: 2000 });
-  const frame = frameTree?.frame;
-  if (!frame?.id || !frame.loaderId) return null;
+async function geometry(channel, live = false) {
   let world = worlds.get(channel);
-  if (!world || world.loader !== frame.loaderId) {
-    const { executionContextId } = await channel.send("Page.createIsolatedWorld", { frameId: frame.id, worldName: `CodewhaleInput-${crypto.randomUUID()}`, grantUniveralAccess: false }, undefined, { timeoutMs: 2000 });
-    world = { contextId: executionContextId, loader: frame.loaderId };
-    worlds.set(channel, world);
+  if (!live) {
+    const { frameTree } = await channel.send("Page.getFrameTree", {}, undefined, { timeoutMs: 2000 });
+    const frame = frameTree?.frame;
+    if (!frame?.id || !frame.loaderId) return null;
+    if (!world || world.loader !== frame.loaderId) {
+      const { executionContextId } = await channel.send("Page.createIsolatedWorld", { frameId: frame.id, worldName: `CodewhaleInput-${crypto.randomUUID()}`, grantUniveralAccess: false }, undefined, { timeoutMs: 2000 });
+      world = { contextId: executionContextId, loader: frame.loaderId, frameId: frame.id };
+      worlds.set(channel, world);
+    }
   }
+  if (!world) return null;
   const reply = await channel.send("Runtime.evaluate", { expression: probe, contextId: world.contextId, returnByValue: true, silent: true }, undefined, { timeoutMs: 2000 });
   if (reply.exceptionDetails || typeof reply.result?.value !== "string") return null;
-  return { ...JSON.parse(reply.result.value), loader: frame.loaderId };
+  return { ...JSON.parse(reply.result.value), loader: world.loader, frameId: world.frameId };
 }
 
 function matches(context, value) {
@@ -68,6 +71,7 @@ export async function chromiumPointer(context, steps, { run, validate }) {
   if (!context.web) throw refused("this point is outside an accessible web surface in the bound window");
   const connections = [];
   let chosen, removeListener, held = false, intercepted = false, dropped = false, completed = false, inputSent = false, last;
+  const navigationListeners = [];
   try {
     for (const endpoint of await endpoints(context.pid, run)) {
       let targets;
@@ -96,12 +100,22 @@ export async function chromiumPointer(context, steps, { run, validate }) {
     }
     if (!chosen) throw refused("no visible renderer matches the bound window geometry, title and URL");
     const { channel, value } = chosen;
+    let invalidated = false;
+    navigationListeners.push(
+      channel.on("Page.frameNavigated", ({ params }) => { if (params?.frame?.id === value.frameId && params.frame.loaderId !== value.loader) invalidated = true; }),
+      channel.on("Page.frameDetached", ({ params }) => { if (params?.frameId === value.frameId) invalidated = true; }),
+      channel.on("Page.frameResized", () => { invalidated = true; }),
+      channel.on("Page.javascriptDialogOpening", () => { invalidated = true; }),
+      channel.on("Runtime.executionContextsCleared", () => { invalidated = true; }),
+      channel.on("Runtime.executionContextDestroyed", ({ params }) => { if (params?.executionContextId === worlds.get(channel)?.contextId) invalidated = true; }),
+    );
+    await Promise.all([channel.send("Page.enable"), channel.send("Runtime.enable")]);
     const scale = context.web.w / value.iw;
     if (!Number.isFinite(scale) || scale < .1 || scale > 8) throw refused("the renderer scale could not be confirmed");
     const points = steps.map(step => ({ x: (step.x - context.web.x) / scale, y: (step.y - context.web.y) / scale }));
     if (points.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y) || p.x < 0 || p.y < 0 || p.x >= value.iw || p.y >= value.ih)) throw refused("the gesture leaves this renderer viewport");
     const fresh = await geometry(channel);
-    if (!matches(context, fresh) || fresh.iw !== value.iw || fresh.ih !== value.ih || fresh.loader !== value.loader) throw refused("the renderer changed before input");
+    if (invalidated || !matches(context, fresh) || fresh.iw !== value.iw || fresh.ih !== value.ih || fresh.loader !== value.loader) throw refused("the renderer changed before input");
     const drag = steps.some(s => [6, 7, 27].includes(s.type));
     let dragData = null;
     if (drag) removeListener = channel.on("Input.dragIntercepted", message => { dragData = message.params.data; });
@@ -109,8 +123,8 @@ export async function chromiumPointer(context, steps, { run, validate }) {
     for (let i = 0; i < steps.length; i++) {
       throwIfAborted();
       await validate();
-      const { frameTree } = await channel.send("Page.getFrameTree", {}, undefined, { timeoutMs: 2000 });
-      if (frameTree?.frame?.loaderId !== value.loader) throw new ExecError("The renderer navigated during the gesture; observe before retrying");
+      const current = invalidated ? null : await geometry(channel, true);
+      if (invalidated || !matches(context, current) || current.iw !== value.iw || current.ih !== value.ih) throw new ExecError("The renderer navigated, resized, became hidden, opened a dialog or lost its isolated context; observe before retrying");
       const step = steps[i], point = points[i];
       const down = [1, 3, 25].includes(step.type), up = [2, 4, 26].includes(step.type);
       const button = step.button === 1 ? "right" : step.button === 2 ? "middle" : "left";
@@ -151,6 +165,7 @@ export async function chromiumPointer(context, steps, { run, validate }) {
       await channel.send("Input.setInterceptDrags", { enabled: false }, undefined, closeOptions).catch(() => {});
     }
     removeListener?.();
+    for (const remove of navigationListeners) remove();
     for (const connection of connections) connection.close();
   }
 }

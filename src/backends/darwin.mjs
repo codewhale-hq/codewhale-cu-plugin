@@ -3,7 +3,7 @@
 //  - stills:      /usr/sbin/screencapture
 //  - video:       ScreenCaptureKit in the signed helper (macOS 13+, no overlay)
 //  - crop:         sips   - clipboard: pbcopy/pbpaste
-// Helper requests travel as one JSON argument without shell interpolation.
+// Helper requests use structured JSON over the resident pipe or one process argument.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -310,6 +310,7 @@ export function create({ exec }) {
       const link = exec.startAgent(await nativeHelper(), [JSON.stringify({ tool: "agent", args: {} })]);
       const hello = link ? await link.request("hello", {}, 3000) : null;
       if (hello?.agent !== 1) { link?.close(); return null; }
+      link.nativeRpc = hello.native_rpc === 1;
       sharedAgent = link;
       agentRetryAt = 0;
       return link;
@@ -349,6 +350,7 @@ export function create({ exec }) {
     }
   }
 
+  let nativeCapabilities;
   async function native(tool, args = {}) {
     assertNotPrompt(args?.app_ref, args?.target?.app_ref, args?.from_target?.app_ref, args?.to?.app_ref, tool === "kill_app" ? args : null, state.inputApp);
     // Window-addressed events take keyboard focus inside the target app. Strict approval mode
@@ -368,15 +370,26 @@ export function create({ exec }) {
     }
     if (args.observed_window && (await native("input_capabilities"))?.observed_window_input !== 1) throw Object.assign(new ExecError("Update Computer Use before acting on a captured window; this helper cannot preserve its identity"), { code: "app_upgrade_required" });
     const helper = await nativeHelper();
+    let capabilityKey;
+    if (tool === "input_capabilities") {
+      const stat = fs.statSync(helper);
+      capabilityKey = `${helper}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+      if (nativeCapabilities?.key === capabilityKey) return { ...nativeCapabilities.value };
+    }
     const inputTool = GUARDED_TOOLS.has(tool) || (tool === "hit_test" && args.perform);
     const guarded = inputTool && state.inputApp && !state.foregroundInput;
     const intentional = (inputTool && state.foregroundInput) || (tool === "app_info" && args.activate);
-    const link = guarded || intentional ? await agent() : null;
+    const link = await agent();
     if (intentional) await link?.request("intent");
     const armed = guarded ? await link?.request("arm", { target_pid: state.inputApp.pid, awake_s: awakeSeconds }) : null;
     let r;
     try {
-      r = await runL(helper, [JSON.stringify({ tool, args: { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, focus_lease: !isStrict(), owner_pipe: true } })], { timeoutMs: 20_000, ownerPipe: true });
+      const input = { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, focus_lease: !isStrict(), owner_pipe: true };
+      if (link?.nativeRpc) {
+        const reply = await link.request("execute", { tool, args: input }, 20_000, { signal: currentSignal() });
+        r = { code: reply?.ok ? 0 : 1, stdout: reply?.ok ? JSON.stringify(reply.data) : "", stderr: reply?.error ?? "native command owner disconnected",
+          aborted: reply?.aborted === true, timedOut: !reply || reply.timed_out === true, spawned: reply?.request_dispatched !== false };
+      } else r = await runL(helper, [JSON.stringify({ tool, args: input })], { timeoutMs: 20_000, ownerPipe: true });
     } finally {
       const changes = callChanges.getStore();
       if (armed?.ok) {
@@ -397,6 +410,7 @@ export function create({ exec }) {
       throw error;
     }
     const result = tryJson(r.stdout, null);
+    if (capabilityKey && result) nativeCapabilities = { key: capabilityKey, value: { ...result } };
     if (tool === "get_app_state" || tool === "window_info") assertNotPrompt(result);
     if (state.previewEnabled && state.inputApp && ["type", "key_event", "bg_pointer", "bg_key", "set_value", "select_text", "perform_action", "hit_test", "click_element", "scroll_element", "focus_element"].includes(tool)) {
       previewActiveAt = Date.now();
@@ -514,6 +528,11 @@ export function create({ exec }) {
           const expected = JSON.stringify({ window: prepared.window, web: prepared.web });
           const observed_window = { pid: prepared.pid, id: prepared.window.id, frame: { x: prepared.window.x, y: prepared.window.y, w: prepared.window.w, h: prepared.window.h } };
           return await chromiumPointer(prepared, steps, { run: runL, validate: async () => {
+            if (caps.pointer_owner_validation === 1) {
+              const checked = await lease.send({ validate: true });
+              if (checked.validated !== true) throw Object.assign(new ExecError(checked.error ?? "The native pointer owner refused further input"), { code: nativeErrorCode(checked.error) ?? "element_stale" });
+              return;
+            }
             const current = await native("pointer_context", { steps, observed_window });
             if (JSON.stringify({ window: current.window, web: current.web }) !== expected) throw new ExecError("The bound web window changed during the gesture; observe before retrying");
           } });

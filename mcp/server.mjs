@@ -663,12 +663,16 @@ function observeState(computer, app_ref, result, args = {}, bindWhen = null) {
     compact: args.detail === "compact" || args.compact === true,
   });
   const ephemeral = args.ephemeral === true || (bindWhen && (result.found === false || !bindWhen({ matched: filtered.matched, tree_truncated: result.truncated === true })));
-  const baseId = args.since === "latest" ? latestStateByComputer.get(computer.id) : args.since;
+  const compact = args.detail === "compact" || args.compact === true;
+  const detail = args.detail === "full" ? "full" : compact ? "compact" : "summary";
+  const options = { detail, window_id: args.window_id ?? null, query: args.query ?? null, role: args.role ?? null,
+    limit: args.limit ?? null, offset: args.offset ?? 0, include_ocr: args.include_ocr === true };
+  const identity = { name: result.name, pid: result.pid, bundle_id: result.bundle_id, found: result.found };
+  const baseId = args.since === "latest" ? [...appStates].reverse().find(([, state]) => state.computerId === computer.id &&
+    isDeepStrictEqual(state.view?.options, options) && isDeepStrictEqual(state.view?.identity, identity))?.[0] : args.since;
   const baseline = baseId ? appStates.get(baseId) : null;
   if (baseline && baseline.computerId !== computer.id) throw new ServerError("state_wrong_computer", "since belongs to another computer — observe this computer first");
   const state_id = ephemeral ? null : rememberState(computer, app_ref, result);
-  const compact = args.detail === "compact" || args.compact === true;
-  const detail = args.detail === "full" ? "full" : compact ? "compact" : "summary";
   const data = {
     ...result,
     state_id,
@@ -687,9 +691,6 @@ function observeState(computer, app_ref, result, args = {}, bindWhen = null) {
   // Diffs compare the same bounded view, never replace the complete records
   // used for target revalidation, and never carry raster/OCR coordinates.
   const view = fitStatePayload(data, STATE_CHAR_BUDGET);
-  const options = { detail, window_id: args.window_id ?? null, query: args.query ?? null, role: args.role ?? null,
-    limit: args.limit ?? null, offset: args.offset ?? 0, include_ocr: args.include_ocr === true };
-  const identity = { name: result.name, pid: result.pid, bundle_id: result.bundle_id, found: result.found };
   if (!ephemeral) Object.assign(appStates.get(state_id), { view: { elements: view.elements, options, identity, truncated: view.truncated, treeTruncated: result.truncated === true } });
   if (!args.since || ephemeral) return view;
   const previous = baseline?.view;
@@ -704,6 +705,27 @@ function observeState(computer, app_ref, result, args = {}, bindWhen = null) {
     removed_indices: previous.elements.filter((el) => !current.has(el.index)).map((el) => el.index),
     unchanged: view.elements.length - changed.length,
     note: "Changed rows for the same view; removed_indices left that view. All element indices target the new state_id. Re-observe after UI changes." };
+}
+
+function batchFinds(find, name, args, computer, index) {
+  if (find === undefined) return {};
+  if (!find || typeof find !== "object" || Array.isArray(find)) throw new ServerError("bad_args", `step ${index} find must be a selector or target-field map`);
+  const fields = Object.hasOwn(find, "query") || Object.hasOwn(find, "role") ? { target: find } : find;
+  if (!Object.keys(fields).length) throw new ServerError("bad_args", `step ${index} find is empty`);
+  let scope;
+  for (const [field, selector] of Object.entries(fields)) {
+    if (!["target", "from_target", "to"].includes(field) || !TOOLS.find(tool => tool.name === name)?.inputSchema.properties[field] || args[field] !== undefined)
+      throw new ServerError("bad_args", `step ${index} find cannot replace or supply ${field}`);
+    if (!selector || typeof selector !== "object" || Array.isArray(selector) || Object.keys(selector).some(key => !["query", "role", "app_ref", "window_id"].includes(key)) ||
+        (selector.query !== undefined && (typeof selector.query !== "string" || !selector.query.trim())) ||
+        (selector.role !== undefined && (typeof selector.role !== "string" || !selector.role.trim())) || (!selector.query && !selector.role))
+      throw new ServerError("bad_args", `step ${index} find needs a nonempty query and/or exact role, with optional app_ref/window_id`);
+    validateToolArgs(computer, "get_app_state", selector);
+    const current = { app_ref: selector.app_ref, window_id: selector.window_id };
+    if (scope && !isDeepStrictEqual(scope, current)) throw new ServerError("bad_args", `step ${index} named targets must share an app/window scope`);
+    scope = current;
+  }
+  return fields;
 }
 
 function batchSteps(args, computer) {
@@ -725,34 +747,31 @@ function batchSteps(args, computer) {
     if (isConsentDecision(step.tool, input)) throw new ServerError("bad_args", "consent decisions cannot be a run_actions step — record each one as its own consent call after the user answers");
     if (needsUserDecision(step.tool, input)) throw new ServerError("consent_needs_user", `${step.tool} needs the user's own approval as its own call, not a run_actions step`);
     if (GRANT && !GRANT.has(step.tool) && !GRANT.has(resolved.name)) throw new ServerError("not_granted", `step ${i} is outside this session's capability grant`);
-    if (step.find !== undefined) {
-      const find = step.find;
-      if (!find || typeof find !== "object" || Array.isArray(find) || Object.keys(find).some((key) => !["query", "role", "app_ref", "window_id"].includes(key)) ||
-          (find.query !== undefined && (typeof find.query !== "string" || !find.query.trim())) ||
-          (find.role !== undefined && (typeof find.role !== "string" || !find.role.trim())) || (!find.query && !find.role)) {
-        throw new ServerError("bad_args", `step ${i} find needs a nonempty query and/or exact role, with optional app_ref/window_id`);
-      }
-      if (resolved.args.target !== undefined || !TOOLS.find((tool) => tool.name === resolved.name)?.inputSchema.properties.target) throw new ServerError("bad_args", `step ${i} find needs a tool accepting target and cannot replace an explicit target`);
-      validateToolArgs(computer, "get_app_state", find);
-    }
+    const finds = batchFinds(step.find, resolved.name, resolved.args, computer, i);
     for (const field of REQUIRED_ARGS.get(resolved.name) ?? []) {
-      if (resolved.args[field] == null && !(field === "target" && step.find)) throw new ServerError("bad_args", `step ${i} ${step.tool} requires "${field}"`);
+      if (resolved.args[field] == null && !Object.hasOwn(finds, field)) throw new ServerError("bad_args", `step ${i} ${step.tool} requires "${field}"`);
     }
-    return { tool: step.tool, arguments: input, find: step.find };
+    return { tool: step.tool, arguments: input, finds };
   });
 }
 
 const batchInputSent = (body) => body?.action_sent === true || body?.steps?.some((step) => batchInputSent(step.receipt ?? step)) === true;
 
 async function runActions(computer, args, switched) {
-  const steps = batchSteps(args, computer);
-  let observe = null;
-  if (args.observe !== undefined && args.observe !== false) {
-    if (args.observe !== true && (!args.observe || typeof args.observe !== "object" || Array.isArray(args.observe))) throw new ServerError("bad_args", "observe must be true, false or get_app_state arguments");
-    if (args.observe.computer !== undefined && args.observe.computer !== computer.id) throw new ServerError("bad_args", "final observation cannot switch computers inside a batch");
-    observe = { detail: "compact", limit: 20, ...(args.observe === true ? {} : args.observe), computer: computer.id };
-    if (Object.keys(observe).some((key) => !Object.hasOwn(TOOLS.find((tool) => tool.name === "get_app_state").inputSchema.properties, key))) throw new ServerError("bad_args", "observe accepts get_app_state arguments only");
-    await prepareArgs(computer, "get_app_state", observe, null, {});
+  let steps, observe = null;
+  try {
+    steps = batchSteps(args, computer);
+    if (args.observe !== undefined && args.observe !== false) {
+      if (args.observe !== true && (!args.observe || typeof args.observe !== "object" || Array.isArray(args.observe))) throw new ServerError("bad_args", "observe must be true, false or get_app_state arguments");
+      if (args.observe.computer !== undefined && args.observe.computer !== computer.id) throw new ServerError("bad_args", "final observation cannot switch computers inside a batch");
+      observe = { detail: "compact", limit: 20, since: "latest", ...(args.observe === true ? {} : args.observe), computer: computer.id };
+      if (Object.keys(observe).some((key) => !Object.hasOwn(TOOLS.find((tool) => tool.name === "get_app_state").inputSchema.properties, key))) throw new ServerError("bad_args", "observe accepts get_app_state arguments only");
+      await prepareArgs(computer, "get_app_state", observe, null, {});
+    }
+  } catch (error) {
+    return { content: [{ type: "text", text: JSON.stringify(fail(computer, error.code ?? "bad_args", error.message, {
+      tool: "run_actions", switched, plan_valid: false, steps: [], completed_steps: 0, attempted_steps: 0, action_sent: false, outcome_unknown: false,
+    })) }], isError: true };
   }
   const results = [];
   const summary = () => ({ tool: "run_actions", switched, steps: results, completed_steps: results.filter((step) => step.ok).length,
@@ -764,13 +783,24 @@ async function runActions(computer, args, switched) {
     let isError = false;
     try {
       throwIfAborted();
-      if (step.find) {
-        const found = await callTool({ name: "get_app_state", arguments: { ...step.find, detail: "compact", limit: 2, computer: computer.id } });
+      const finds = Object.entries(step.finds);
+      if (finds.length) {
+        const selector = finds[0][1];
+        const multiple = finds.length > 1;
+        const lookup = multiple ? { app_ref: selector.app_ref, window_id: selector.window_id } : selector;
+        const found = await callTool({ name: "get_app_state", arguments: { ...lookup, detail: multiple ? "full" : "compact", limit: 2, computer: computer.id } });
         const state = JSON.parse(found.content[0].text);
         if (found.isError || state.ok === false) body = state;
-        else if (state.matched <= 1 && (state.tree_truncated || state.truncated)) body = fail(computer, "observation_incomplete", "Named lookup cannot prove uniqueness in an incomplete observation. Narrow the app/window or observe and select a target explicitly.", { candidates: state.elements, matched: state.matched });
-        else if (state.matched !== 1 || state.returned !== 1) body = fail(computer, state.matched > 1 ? "element_ambiguous" : "element_not_found", "Named batch target must match exactly one element. Narrow query/role or observe the app before acting.", { candidates: state.elements, matched: state.matched });
-        else input.target = { type: "element", state_id: state.state_id, index: state.elements[0].index };
+        else for (const [field, query] of finds) {
+          const cached = appStates.get(state.state_id);
+          const matches = multiple && cached ? filterElements(cached.elements, { ...query, detail: "full", limit: 2 }) : state;
+          if (!cached || cached.computerId !== computer.id || (matches.matched <= 1 && (state.tree_truncated || (!multiple && state.truncated)))) {
+            body = fail(computer, "observation_incomplete", "Named lookup cannot prove uniqueness in an incomplete observation. Narrow the app/window or observe and select a target explicitly.", { target_field: field, candidates: matches.elements, matched: matches.matched });
+          } else if (matches.matched !== 1 || matches.returned !== 1) {
+            body = fail(computer, matches.matched > 1 ? "element_ambiguous" : "element_not_found", "Named batch target must match exactly one element. Narrow query/role or observe the app before acting.", { target_field: field, candidates: matches.elements, matched: matches.matched });
+          } else input[field] = { type: "element", state_id: state.state_id, index: matches.elements[0].index };
+          if (body) break;
+        }
       }
       if (!body) {
         const result = await callTool({ name: step.tool, arguments: input });
@@ -2139,11 +2169,21 @@ const skillEntry = Object.freeze({
  * session makes (refusals included — they are part of what happened); the
  * recorder's own tools and replayed calls are never re-recorded.
  */
+let singleActions = 0, lastSingleActionAt = 0;
 async function callToolRecorded(params, refused = null) {
   const result = refused ?? await callTool(params);
+  const body = tryJson(result?.content?.[0]?.text, null);
+  if (params?.name === "run_actions") singleActions = 0;
+  else if (!result?.isError && body?.ok === true && body.action_sent === true) {
+    const now = Date.now();
+    singleActions = now - lastSingleActionAt < 60_000 ? singleActions + 1 : 1;
+    lastSingleActionAt = now;
+    if (singleActions % 3 === 0) {
+      body.hint = [body.hint, "For remaining known steps, use run_actions with observe:true to act and verify in one call. Stop for new UI decisions or approval; never replay sent input."].filter(Boolean).join(" ");
+      result.content[0].text = JSON.stringify(body);
+    }
+  }
   if (recorder.active && !replaying && !isTrajectoryTool(params?.name)) {
-    let body = null;
-    try { body = JSON.parse(result?.content?.[0]?.text ?? "null"); } catch { /* non-JSON receipts record without an outcome */ }
     recorder.append({ tool: params.name, args: params.arguments ?? {}, ok: body?.ok !== false, code: body?.error?.code ?? null });
   }
   return result;

@@ -42,6 +42,12 @@ const targetSchema = {
   ],
 };
 
+const batchSelector = { type: "object", properties: {
+  query: { type: "string", minLength: 1 }, role: { type: "string", minLength: 1 },
+  app_ref: { type: "object", properties: { pid: { type: "integer" }, name: { type: "string" }, bundle_id: { type: "string" } }, additionalProperties: false },
+  window_id: { type: "integer", minimum: 0 },
+}, additionalProperties: false };
+
 export const TOOLS = [
   { name: "preview", description: "macOS: show or hide the nonactivating app preview with the drawn agent cursor. Off by default; enable only when the user asks to watch. The person can close it directly; it also hides when the session is idle or ends. Set enabled:false to stop watching.", inputSchema: { type: "object", properties: { enabled: { type: "boolean" }, computer: computerParam }, additionalProperties: false } },
   // ---- computers (switching is a default) ----
@@ -450,7 +456,7 @@ export const TOOLS = [
     },
   },
   {
-    name: "run_actions", description: "Run 1..8 tools in order with the same per-call guards. Each step is {tool, arguments}; args is an alias. Optional find:{query,role,app_ref,window_id} observes one unique element immediately before that step. Ambiguous/stale targets and failed wait_for conditions stop the batch. observe:true adds a compact final state, or pass get_app_state arguments. Inspect completed_steps/action_sent before retrying; sent input must not be replayed.",
+    name: "run_actions", description: "Prefer one batch for 1..8 known related actions, with observe:true for verification in the same reply. Each step is {tool, arguments}; args is an alias. find:{query,role,app_ref?,window_id?} resolves target; find:{from_target:{query,role},to:{query,role}} resolves both drag ends from one fresh observation. Every step keeps consent, stop and target guards. Ambiguous/stale targets and failed wait_for conditions stop the batch. observe:true adds a compact final state/diff for the same view, or pass get_app_state arguments. Inspect completed_steps/action_sent before retrying; sent input must not be replayed.",
     inputSchema: {
       type: "object",
       required: ["steps"],
@@ -466,11 +472,7 @@ export const TOOLS = [
               tool: { type: "string" },
               arguments: { type: "object" },
               args: { type: "object", description: "Alias for arguments; use only one." },
-              find: { type: "object", properties: {
-                query: { type: "string", minLength: 1 }, role: { type: "string", minLength: 1 },
-                app_ref: { type: "object", properties: { pid: { type: "integer" }, name: { type: "string" }, bundle_id: { type: "string" } }, additionalProperties: false },
-                window_id: { type: "integer", minimum: 0 },
-              }, additionalProperties: false, description: "Fresh unique element lookup; query and/or exact role required. Cannot combine with arguments.target." },
+              find: { oneOf: [batchSelector, { type: "object", minProperties: 1, properties: { target: batchSelector, from_target: batchSelector, to: batchSelector }, additionalProperties: false }], description: "Fresh unique selectors for target, or {from_target:{query,role},to:{query,role}} for a drag. Fields share app_ref/window_id scope and cannot replace explicit arguments. Both drag targets resolve from one fresh observation; use role to disambiguate labels from their text children." },
             },
             additionalProperties: false,
           },
@@ -580,6 +582,7 @@ export const TOOLS = [
 ];
 
 export const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
+TOOLS.find(tool => tool.name === "run_actions").inputSchema.properties.steps.items.properties.tool.enum = [...TOOL_NAMES].filter(name => !["run_actions", "app_script", "trajectory_replay", "consent_allow", "consent_deny", "consent_revoke"].includes(name));
 
 /** Required argument names per tool, straight from each inputSchema. */
 export const REQUIRED_ARGS = new Map(TOOLS.map((t) => [t.name, t.inputSchema.required ?? []]));

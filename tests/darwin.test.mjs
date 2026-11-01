@@ -300,6 +300,7 @@ test('macOS scroll cannot retry an ambiguous semantic dispatch or downgrade an o
   await assert.rejects(backend.scroll({target:FILES_TARGET}),e=>e.code==='app_upgrade_required');
   assert.equal(calls.filter(r=>r.tool==='scroll_element').length,0);
   supported=true;
+  fs.appendFileSync(path.join(process.env.CODEWHALE_CU_APP_BUNDLE,'Contents','MacOS','accessibility'),'upgraded');
   await assert.rejects(backend.scroll({target:FILES_TARGET}),e=>e.inputMayHaveBeenSent===true);
   assert.equal(calls.filter(r=>r.tool==='scroll_element').length,1);
   assert.ok(!calls.some(r=>r.tool==='pointer_sequence'));

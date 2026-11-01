@@ -7,6 +7,12 @@ Interface order per step: the host's own shell/files/APIs → `app_script`
 → `browser` (CDP) → accessibility elements → pixels. Click only what has
 no better interface.
 
+## Compose the workflow
+
+Use the host's existing composition runtime for loops, branches, repeated rows or values passed between tools. In Codewhale this is `execute_tools`: `await tools.call(name, args)` returns `{content, metadata, truncated}`. Discover schemas inside that program when needed, check `truncated` before parsing, and return only the task result and required receipts. Use the exact discovered names. Keep consent decisions, app-script approval and other interactive approvals as their own direct calls. Stop on denials, cancellation or unknown input delivery; catching an exception never grants a retry or a broader route.
+
+For fixed sequences use `run_actions`, retaining each step's normal guards. Its final observation defaults to `since:"latest"` for the same app/window/view; intervening narrower lookups do not replace that diff baseline. A missing/incomplete baseline returns a full state. Successful repeated direct inputs receive a compact batching hint; reads and steps inside a batch do not add repeated hints.
+
 ## Observe, act, verify (full loop)
 
 1. `list_apps` finds running apps; `installed:true` finds cold-launch targets. Open the intended app once; do not guess identities. Pass `computer` when switching machines and read the receipt's identity.
@@ -15,10 +21,10 @@ no better interface.
 4. Use screenshots/zoom only when the tree cannot answer the task. Whole-screen shots show every app. Coordinates are pixels in the returned raster unless explicitly `space:"screen"`. Pass its `raster_id` in every raster coordinate target and as the parent of `zoom`; use the zoom's new ID for child-image points. OCR targets already carry it. `raster_stale` means observe again; never drop the ID to retry. A pin detects capture replacement, not a changed UI. Never calculate from a file path, omitted image, stale raster or invented state. Text-only models may use macOS OCR, not infer graphical meaning.
 5. Verify with fresh state or field readback; a sent action is not proof of success. When typing says `verified:false`, inspect the requested screenshot before relying on it.
 
-`run_actions` groups 1–8 `{tool,arguments}` steps (`args` is an alias). `find:{query,role,app_ref?,window_id?}` observes a unique target immediately before a step; ambiguity or staleness stops input. `wait_for` timeout stops later steps. `observe:true` adds compact final state; an object supplies its arguments. Inspect `completed_steps`, `action_sent`, `outcome_unknown`: failure never authorizes replaying earlier input.
+Prefer `run_actions` for 1–8 known related `{tool,arguments}` steps (`args` is an alias). `find:{query,role,app_ref?,window_id?}` observes a unique target immediately before a step. For a drag, `find:{from_target:{query,role},to:{query,role}}` resolves both ends from one fresh observation with a shared app/window scope. Use the exact role to disambiguate controls from their text. Ambiguity or staleness stops input. `wait_for` timeout stops later steps. `observe:true` adds fresh compact final state, avoiding another model round trip; an object supplies its arguments. Inspect `completed_steps`, `action_sent`, `outcome_unknown`: failure never authorizes replaying earlier input.
 
 ## Observe
-- `request_access` — permissions + capabilities; call once per session.
+- `request_access` — permissions + capabilities; use for setup diagnostics or unknown readiness.
 - `list_apps {all?, installed?}` — running apps by default; `all:true` includes helpers and `installed:true` lists launchable apps, including those not running.
 - `list_windows {app_ref?}` — windows with indices for `window_id`.
 - `get_app_state {app_ref?, query?, role?, limit?, detail?, since?}` — elements +
