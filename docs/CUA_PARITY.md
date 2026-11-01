@@ -206,7 +206,7 @@ The cancellation client's original wait for a cancelled RPC response timed
 out; that harness failure is preserved separately from the observed cleanup.
 
 Existing focused checks passed (78 protocol/browser/transport/guide checks;
-57 native checks and one platform skip). The final batch-contract fix passed
+57 native checks; one opt-in live-window check skipped). The final batch-contract fix passed
 the 44 affected existing checks, and the final guide passed its 11 checks.
 An additional native protocol proof using existing synthetic primitives passed
 11/11, including queued cancellation, timeout, lock release and pipe EOF.
