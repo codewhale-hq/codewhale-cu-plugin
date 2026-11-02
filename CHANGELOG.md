@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+- Batch arguments expose common field shapes from the existing tool schemas, and app guidance distinguishes input binding from read scope. Background document Save uses an observed element target with `key`; disabled menu commands must not be retried unchanged.
+- Compact observations mark shortened labels and values. Real DeepSeek saved-document outcomes and the remaining Engine composition issues are recorded in [the efficiency observations](docs/AGENT_DESKTOP.md#end-to-end-efficiency-after-installation). Published 0.15.0 artifacts are unchanged.
+
 ## 0.15.0 — 2026-11-01
 
 Published from `ec3bbb6821deb343758437f43312bd67d755157e` with 11 verified assets: notarized universal Mac ZIP/DMG, portable plugin and unsigned Windows preview. Final local checks: 550 pass, 29 platform skips, zero failures; exact-source three-platform CI and CodeQL passed. [Qualification record](docs/RELEASE_CHECKLIST.md#0150--published-2026-11-01).

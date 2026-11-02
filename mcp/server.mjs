@@ -604,7 +604,9 @@ function filterElements(elements, { detail, query, role, limit, offset, compact 
     if (!compact) return rest;
     const label = rest.label != null ? String(rest.label).slice(0, 80) : rest.label;
     const value = rest.value != null && String(rest.value).length > 200 ? String(rest.value).slice(0, 200) : rest.value;
-    return { index: rest.index, role: rest.role, label, value, focused: rest.focused, enabled: rest.enabled, actions: rest.actions };
+    return { index: rest.index, role: rest.role, label, value, focused: rest.focused, enabled: rest.enabled, actions: rest.actions,
+      ...(rest.label != null && String(rest.label).length > 80 ? { label_truncated: true } : {}),
+      ...(rest.value != null && String(rest.value).length > 200 ? { value_truncated: true } : {}) };
   });
   return { elements: view, matched, offset: start, returned: view.length, truncated: start + view.length < matched };
 }

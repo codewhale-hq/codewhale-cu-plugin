@@ -51,7 +51,10 @@ contains 11 assets with matching remote sizes and SHA-256 digests. Anonymous
 DMG, portable archive and release-receipt downloads match. The portable tar
 matches the frozen git archive and the unsigned Windows preview identifies
 the same source. Marketplace catalog `1db8c84` selects 0.15.0. This release
-operation did not replace the installed 0.14.0 development helper/plugin. Earlier invalid
+operation did not replace the installed 0.14.0 development helper/plugin. A later
+founder-requested global 0.15.0 installation and real DeepSeek saved-document
+qualification are recorded in [the post-install observations](AGENT_DESKTOP.md#end-to-end-efficiency-after-installation); local source patches remain separate
+from the published release. Earlier invalid
 argument, stale-oracle, response-budget, stale-snapshot and interrupted trials
 are retained separately from accepted outcomes. No new tests or code comments
 were added. Off-Space capture, live lock, other macOS versions, permission

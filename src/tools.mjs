@@ -203,13 +203,13 @@ export const TOOLS = [
   },
   {
     name: "get_app_state",
-    description: "Read an application's text, controls, actions and layout without requiring vision. The default summary keeps app content and top-level menus; full adds nested menus and tree structure. Act on observed elements with {type:'element', index} and refresh after UI changes. Missing labels or values are unknown, not an invitation to guess; request a screenshot only when useful.",
+    description: "Read an application's text, controls, actions and layout. Bind with open_application before input; app_ref here only scopes this read. Summary keeps controls and top-level menus; full adds nested menus/tree structure. Use observed {type:'element',index,state_id} targets. Refresh after UI changes; missing content is unknown. Request a screenshot only when the tree cannot answer.",
     inputSchema: {
       type: "object",
       properties: {
         app_ref: { type: "object", properties: { pid: { type: "integer" }, name: { type: "string" }, bundle_id: { type: "string" } }, additionalProperties: false, description: "macOS accepts PID, name and bundle identity. Linux accepts only a unique exact AT-SPI app name. Windows accepts only a unique exact window title in name (from list_windows.title). HarmonyOS rejects explicit app selectors." },
         window_id: { type: "integer", description: "macOS only: zero-based window index within the app. Other platforms reject this selector." },
-        detail: { enum: ["summary", "compact", "full"], default: "summary", description: "Summary is the concise default (controls, values, actions, layout). compact is smaller: same indices, shorter labels, no nested menus. full includes nested menus and tree paths." },
+        detail: { enum: ["summary", "compact", "full"], default: "summary", description: "Summary is the concise default (controls, values, actions, layout). compact keeps the same indices and marks shortened fields with label_truncated/value_truncated; get_value reads full text. full includes nested menus and tree paths." },
         since: { type: "string", minLength: 1, maxLength: 128, description: "Return changed element rows since a state_id or latest, keeping a complete fresh target cache. Same app and untruncated query/role/detail view required; otherwise returns a full observation with resync_required:true. removed_indices left that view. Does not pin pixels or prove the UI stayed unchanged." },
         query: { type: "string", description: "Case-insensitive substring over label, value and role. Use this instead of downloading the whole tree." },
         role: { type: "string", description: "Exact accessibility role filter, e.g. AXButton, AXTextField." },
@@ -354,7 +354,7 @@ export const TOOLS = [
   },
   {
     name: "open_application",
-    description: "Launch or activate an application. Copy user-provided names character-for-character; never translate, normalize, or strip suffixes. On macOS prefer bundle_id when known.",
+    description: "Bind an application for subsequent input, launching it if needed. Start app work by binding and observing in one batch. Reading app_ref alone does not bind input. Copy user names exactly; on macOS prefer bundle_id or an exact PID.",
     inputSchema: {
       type: "object",
       properties: {
@@ -421,7 +421,7 @@ export const TOOLS = [
     inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, press_enter: { type: "boolean", description: "After typing, press Return/Enter once. Prefer this to putting a newline in `text` when you want to send." }, target: { ...elementTargetSchema, description: "Element target from get_app_state; it is accessibility-focused first, then the text is typed. Element targets only." }, computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "key", description: "Press a named key or chord. Examples: return, enter, backspace, tab, escape, cmd+c (macOS), ctrl+c (Linux/Windows). This is the key-press tool; type() cannot send modifiers or Return by itself except via newlines/press_enter. macOS posts modified or window-targeted keys to the background app's process after confirming its key window (key_window_unconfirmed otherwise; strict approval mode refuses them); symbols such as * or ? are sent as their shift chords; prefer invoke_menu for menu commands. Repeat with `repeat`. Pass an element `target` to accessibility-focus it first. `duration` holds the key instead of tapping (hold_key semantics) and cannot be combined with repeat or target.",
+    name: "key", description: "Press a named key or chord. Examples: return, enter, backspace, tab, escape, cmd+c (macOS), ctrl+c (Linux/Windows). This is the key-press tool; type() cannot send modifiers or Return by itself except via newlines/press_enter. macOS posts modified or window-targeted keys to the background app's process after confirming its key window (key_window_unconfirmed otherwise; strict approval mode refuses them); symbols such as * or ? use shift chords. For document commands such as Save, pass the observed document element as target so its exact window becomes key inside the app without foreground activation. Repeat with `repeat`. Pass an element `target` to accessibility-focus it first. `duration` holds the key instead of tapping (hold_key semantics) and cannot be combined with repeat or target.",
     inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, repeat: { type: "integer", minimum: 1, maximum: 100 }, duration: { type: "number", minimum: 0.05, maximum: 30, description: "Hold the key for this many seconds instead of tapping." }, target: { ...elementTargetSchema, description: "Element target from get_app_state; it is accessibility-focused first, then the key is sent. Element targets only." }, computer: computerParam }, additionalProperties: false },
   },
   {
@@ -456,7 +456,7 @@ export const TOOLS = [
     },
   },
   {
-    name: "run_actions", description: "Prefer one batch for 1..8 known related actions, with observe:true for verification in the same reply. Each step is {tool, arguments}; args is an alias. find:{query,role,app_ref?,window_id?} resolves target; find:{from_target:{query,role},to:{query,role}} resolves both drag ends from one fresh observation. Every step keeps consent, stop and target guards. Ambiguous/stale targets and failed wait_for conditions stop the batch. observe:true adds a compact final state/diff for the same view, or pass get_app_state arguments. Inspect completed_steps/action_sent before retrying; sent input must not be replayed.",
+    name: "run_actions", description: "Prefer one batch for 1..8 known related actions. Once a target is known, group its edit, document command and verification. Verified setters already include value readback. observe:true supplies the final read; do not add a duplicate final get_app_state step. Each step is {tool,arguments,find?}; args aliases arguments. arguments uses that tool's schema; common fields are typed below. target is an observed {type:'element',index,state_id?}, never a selector. Step-level find:{query,role,app_ref?,window_id?} resolves target; find:{from_target:{query,role},to:{query,role}} resolves both drag ends from one fresh observation. For macOS document Save, use key with text:'cmd+s' and the observed document target. Every step keeps consent, stop and target guards. Ambiguous/stale targets and failed wait_for conditions stop the batch. observe:true adds a compact final state/diff for the same view, or pass get_app_state arguments. Inspect completed_steps/action_sent before retrying; sent input must not be replayed.",
     inputSchema: {
       type: "object",
       required: ["steps"],
@@ -492,7 +492,7 @@ export const TOOLS = [
     inputSchema: { type: "object", required: ["target", "action"], properties: { target: elementTargetSchema, action: { type: "string" }, computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "invoke_menu", description: "macOS: invoke an application menu item by title path (e.g. [\"File\",\"New\"]). Runs through parent-scoped accessibility at any menu depth; failure closes the menu (Escape goes only to the target process if needed). Prefer this over cmd-key chords for app commands (New, Save, Quit and menu-only actions). App-level commands work without a key window; window-targeted items (Close) can validate against the app's key window and may no-op in the background — prefer the window's close-button element for those. Acts on the app bound with open_application. Verify the effect (list_windows / get_app_state) before reporting success.",
+    name: "invoke_menu", description: "macOS: invoke an application menu item by title path (e.g. [\"File\",\"New\"]). Runs through parent-scoped accessibility at any menu depth; failure closes the menu (Escape goes only to the target process if needed). Use for app-level and menu-only commands such as New. Document commands such as Save or Close depend on the app's key window and can be disabled or no-op in the background. Use key with an observed document target for Save, or the observed close button for Close; never retry a disabled menu unchanged. Acts on the app bound with open_application. Verify the effect (list_windows / get_app_state) before reporting success.",
     inputSchema: {
       type: "object", required: ["path"],
       properties: {
@@ -583,6 +583,11 @@ export const TOOLS = [
 
 export const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
 TOOLS.find(tool => tool.name === "run_actions").inputSchema.properties.steps.items.properties.tool.enum = [...TOOL_NAMES].filter(name => !["run_actions", "app_script", "trajectory_replay", "consent_allow", "consent_deny", "consent_revoke"].includes(name));
+const batchArguments = TOOLS.find(tool => tool.name === "run_actions").inputSchema.properties.steps.items.properties.arguments;
+batchArguments.properties = {};
+for (const [name, tool] of Object.entries({ target: "click", from_target: "left_click_drag", to: "left_click_drag", value: "set_value", text: "key", path: "invoke_menu", pid: "open_application", bundle_id: "open_application", name: "open_application", activate: "open_application", app_ref: "get_app_state", window_id: "get_app_state", detail: "get_app_state", query: "get_app_state", role: "get_app_state", limit: "get_app_state", text_range: "select_text" })) {
+  batchArguments.properties[name] = JSON.parse(JSON.stringify(TOOLS.find(entry => entry.name === tool).inputSchema.properties[name], (key, value) => key === "description" || key === "default" ? undefined : value));
+}
 
 /** Required argument names per tool, straight from each inputSchema. */
 export const REQUIRED_ARGS = new Map(TOOLS.map((t) => [t.name, t.inputSchema.required ?? []]));

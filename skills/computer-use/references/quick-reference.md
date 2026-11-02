@@ -57,7 +57,7 @@ a raster ID. Browser viewport points use the browser's separate contract.
   completed steps and delivery uncertainty before continuing.
 - `select_text {target, text_range?}` · `focus {target}` · `perform_action {target, action}`
 - `scroll {target, direction, amount?}` · `left_click_drag {from_target, to}`
-- `invoke_menu {path}` — app menu items through accessibility (exact for app-level commands like New/Save/Quit; see the close recipe for windows).
+- `invoke_menu {path:["File","New"]}` — app-level/menu-only commands. For document Save use `key {text:"cmd+s",target}` with its observed element; use its close button for Close.
 - `pointer {action, target?}` — move/down/up primitives (foreground/shared only).
 - `app_script {script, language?, timeout?}` — macOS local only: AppleScript
   (default) or JXA through osascript. `result` is stdout; refusals are
@@ -143,10 +143,9 @@ Record and re-verify a session:
    actions instead of stripping or remapping saved pins. Other steps re-enter
    the normal gates when replayed without `dry_run`.
 
-> `invoke_menu` is exact for app-level commands (New, Save, Quit).
-> Window-targeted items like Close can validate against a key window that a
-> background app does not have and legitimately no-op — verify the effect
-> before retrying or reporting.
+> Background document commands depend on the app's key window. Use an observed
+> document target with `key` for Save, and its close-button element for Close.
+> Never retry a disabled menu unchanged. Verify the saved result.
 
 Move between apps mid-task: `open_application` retires the previous app's
 indices; always `get_app_state` after switching.

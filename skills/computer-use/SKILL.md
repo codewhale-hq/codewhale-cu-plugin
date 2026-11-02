@@ -5,7 +5,7 @@ description: Operate desktop apps and isolated browsers on registered computers.
 
 # Computer Use
 
-Read packaged details with `resources/read` (Codewhale: `list_mcp_resources`, `read_mcp_resource`), never mutable plugin paths.
+Read packaged details via `resources/read` (Codewhale: `read_mcp_resource`), never mutable plugin paths.
 
 ## Consent and stop rules
 
@@ -19,7 +19,7 @@ Read packaged details with `resources/read` (Codewhale: `list_mcp_resources`, `r
 
 ## Choose the target
 
-- **Apps on this Mac:** default is local. `open_application {activate:false}` binds input. Use `request_access` for setup diagnostics.
+- **Apps on this Mac:** bind input with `open_application {activate:false}` and observe in one batch. Reading `app_ref` alone does not bind input.
 - **My Chrome:** use Chromewhale's `page_*` tools, never desktop clicks on the user's browser.
 - **Isolated browser or desktop:** `browser {action:"start"}`, or `computer {action:"spawn", id, transport:"docker"}` (needs the host's existing authorization).
 
@@ -30,7 +30,7 @@ Prefer files/shell/connectors over UI. Never drive a terminal window. Read opera
 Use the host's tool composition (Codewhale `execute_tools`) for loops, branches and intermediate results. For up to 8 known steps use `run_actions` with `observe:true` for fresh verification/a diff. Every call keeps guards. `find:{query,role}` resolves one target; drags use `find:{from_target:{query,role},to:{query,role}}` from one fresh view. Role separates controls from text children. New UI decisions/approval end the batch. Inspect completed steps and unknown outcomes; never replay sent input.
 
 - `get_app_state` supplies controls and `state_id`; pin element targets with that ID after later observations. Narrow with query/role/limit or `since`. Stale targets refuse. Batch observations are fresh; avoid redundant reads.
-- Use element targets and `wait_for`; re-observe stale targets. Verify effects and saved files; dispatch or AX readback alone does not prove completion.
+- Use element targets and `wait_for`. Save a document with `key {text:"cmd+s",target}` on macOS; menus may be disabled without a key window. Verify saved files; AX readback alone is insufficient.
 - Screenshot/`zoom` only when the tree cannot answer. Carry `raster_id` in every coordinate; `raster_stale` means observe again, never drop the ID to retry. A pin detects capture replacement, not a changed UI.
 
 ## Read details when needed
