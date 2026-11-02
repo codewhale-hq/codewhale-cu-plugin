@@ -429,7 +429,7 @@ export const TOOLS = [
     inputSchema: { type: "object", required: ["text", "duration"], properties: { text: { type: "string" }, duration: { type: "number", minimum: 0.05, maximum: 30 }, computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "set_value", description: "Set an editable element's value with readback verification. On macOS native controls use AXValue; web-area replacement requires foreground control and refuses in background mode. Prefer browser control for web fields. Element targets only.",
+    name: "set_value", description: "Set an editable element's value with readback verification. On macOS native text areas use selected-text replacement when supported; other native controls use AXValue. Readback verifies the control value, not saved files. Web-area replacement requires foreground control and refuses in background mode. Prefer browser control for web fields. Element targets only.",
     inputSchema: { type: "object", required: ["target", "value"], properties: { target: elementTargetSchema, value: { type: "string" }, computer: computerParam }, additionalProperties: false },
   },
   {

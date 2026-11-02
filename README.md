@@ -7,7 +7,7 @@
 
 **By Codewhale · macOS beta (notarized app and source) · Windows experimental unsigned preview · Linux experimental: X11 verified on a virtual desktop (Xvfb + openbox) and in the Docker test image, from source; Wayland input on sway (verified on headless sway), other Wayland desktops observation only**
 
-The [0.14.0 release](https://github.com/codewhale-hq/codewhale-cu-plugin/releases/tag/v0.14.0)
+The [0.15.0 release](https://github.com/codewhale-hq/codewhale-cu-plugin/releases/tag/v0.15.0)
 provides the notarized universal Mac app and an **unsigned Windows x64 preview**.
 The Windows ZIP bundles Node and includes setup instructions; it is intended
 for testing, with physical-device, mixed-DPI and signing acceptance still open.
@@ -124,16 +124,19 @@ This does not establish that the UI stayed unchanged or that the current
 source shipped in the installed helper. [Cua comparison and remaining
 parity](docs/CUA_PARITY.md) records the upstream reference and proof gaps.
 
-**Source after 0.14.0.** Electron/Chromium hover and drag can use an existing,
+**Since 0.15.0.** Electron/Chromium hover and drag can use an existing,
 explicitly enabled renderer endpoint; otherwise they refuse before input.
 Native drag-session detection, runtime Tk refusal, web keyboard-scroll fallback
-and deeper menus are also implemented. These are development-source features;
+and deeper menus are also implemented. Native semantic targets retain the
+observed accessibility object and application launch identity; replacements
+and expired observations refuse before input, even when labels match. See the
+[agent-desktop comparison](docs/AGENT_DESKTOP.md) and
 see [qualification and restrictions](docs/CUA_PARITY.md#october-31-macos-phase-3-source-candidate).
 
 **Status.** Release status is recorded in [CHANGELOG.md](CHANGELOG.md). The
 notarized Mac app is published on this repository's
 [GitHub releases](https://github.com/codewhale-hq/codewhale-cu-plugin/releases)
-(stable release: v0.14.0); remaining
+(stable release: v0.15.0); remaining
 gates are tracked in [the release checklist](docs/RELEASE_CHECKLIST.md). The
 [setup page](https://codewhale.net/computer-use) offers the notarized disk
 image directly.

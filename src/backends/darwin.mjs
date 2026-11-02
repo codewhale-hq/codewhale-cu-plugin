@@ -147,6 +147,7 @@ export function nativeErrorCode(message) {
   if (/^background_focus_required:/.test(m)) return "background_focus_required";
   if (/^user_busy:/.test(m)) return "user_busy";
   if (/^screen_locked:/.test(m)) return "screen_locked";
+  if (/^element_stale:/.test(m)) return "element_stale";
   for (const code of ["pointer_reading_toolkit", "chromium_pointer_unavailable", "drag_session_active", "drag_session_detected", "menu_item_not_found", "menu_item_disabled", "menu_item_ambiguous"]) if (m.startsWith(`${code}:`)) return code;
   if (/ambiguous/i.test(m)) return "window_ambiguous";
   if (/not capturable/i.test(m)) return "window_not_capturable";
@@ -434,6 +435,12 @@ export function create({ exec }) {
     if (!exec.runInputLease) throw new ExecError("This executor cannot safely own held input; update Computer Use");
     if ((await native("input_capabilities"))?.input_lease !== 1) throw new ExecError("The native helper needs an update for disconnect-safe held input");
     const helper = await nativeHelper();
+    if (args.target?.native_ref) {
+      const resolved = await native("resolve_element", { ...args.target });
+      if (!resolved?.found) throw Object.assign(new ExecError("the observed native target no longer resolves; observe again before pointer input"), { code: "element_stale" });
+      const { native_ref, ...target } = args.target;
+      args = { ...args, target };
+    }
     try {
       return await exec.runInputLease(helper, [JSON.stringify({ tool, args: { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, focus_lease: !isStrict(), owner_pipe: true, input_lease: true } })]);
     } catch (error) {
@@ -1123,8 +1130,8 @@ export function create({ exec }) {
       }
       return t;
     },
-    resolve_element: async ({ app_ref, windowIndex, path: pathArr } = {}) => {
-      const r = await native("resolve_element", { app_ref, windowIndex: windowIndex ?? 0, path: pathArr ?? [] });
+    resolve_element: async ({ app_ref, windowIndex, path: pathArr, native_ref, role, label } = {}) => {
+      const r = await native("resolve_element", { app_ref, windowIndex: windowIndex ?? 0, path: pathArr ?? [], native_ref, role, label });
       return { found: !!r?.found, element: r?.element ?? null, reason: r?.reason ?? null };
     },
     preview: async ({ enabled = true } = {}) => {

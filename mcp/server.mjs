@@ -500,7 +500,8 @@ async function normalizeTarget(computer, target, kind, resolve, sink) {
     const where = `state ${stateId} (${state.app_ref?.name ?? state.app_ref?.bundle_id ?? `pid ${state.app_ref?.pid}`})`;
     let fresh = null;
     if (resolve) {
-      const res = await resolve({ app_ref: state.app_ref, windowIndex: element.windowIndex ?? 0, path: element.path });
+      const res = await resolve({ app_ref: state.app_ref, windowIndex: element.windowIndex ?? 0, path: element.path,
+        ...(element.native_ref ? { native_ref: element.native_ref, role: element.role, label: element.label } : {}) });
       if (!res?.found || !res.element) {
         throw new ServerError("element_stale", `element ${target.index} of ${where} no longer resolves (${res?.reason ?? "not_found"}) — the user or the app may have changed it; call get_app_state again`);
       }
@@ -519,6 +520,7 @@ async function normalizeTarget(computer, target, kind, resolve, sink) {
         app_ref: state.app_ref, windowIndex: element.windowIndex ?? 0, path: element.path,
         strategy: "a11y", role: element.role, label: element.label, reacquired: false,
         ...(element.runtime_id ? { runtime_id: element.runtime_id, window_runtime_id: element.window_runtime_id } : {}),
+        native_ref: element.native_ref,
       };
     }
     const moved = !!fresh && (
@@ -532,7 +534,7 @@ async function normalizeTarget(computer, target, kind, resolve, sink) {
     // substitute whichever element happens to occupy an oversized AX center.
     const c = { x: Math.round(pos.x + sz.w / 2), y: Math.round(pos.y + sz.h / 2) };
     return { ...c, strategy: "a11y-center", role: element.role, label: element.label, app_ref: state.app_ref,
-      windowIndex: element.windowIndex ?? 0, path: element.path, reacquired: moved };
+      windowIndex: element.windowIndex ?? 0, path: element.path, native_ref: element.native_ref, reacquired: moved };
   }
   throw new ServerError("bad_target", "target must be {type:'coordinate',x,y} or {type:'element',index} (state_id optional to pin a specific observation)");
 }
@@ -583,7 +585,7 @@ function rememberState(computer, app_ref, result) {
 
 function filterElements(elements, { detail, query, role, limit, offset, compact }) {
   const full = detail === "full";
-  let rows = (elements ?? []).map((el, i) => ({ ...el, index: el.index ?? i }));
+  let rows = (elements ?? []).map(({ native_ref, ...el }, i) => ({ ...el, index: el.index ?? i }));
   if (!full) {
     rows = rows.filter((el) => el.windowIndex !== -1 || !Array.isArray(el.path) || el.path.length <= 1);
   }
@@ -1980,7 +1982,7 @@ async function callTool(params, bindWhen = null) {
       const grant = grantReport();
       if (grant) data.grant = grant;
     }
-    const content = [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, ...(sink.reacquired ? { target_reacquired: true } : {}), ...(sink.focusGate ? { focus_gate: sink.focusGate } : {}), ...data, ...(sink.rasterId ? { target_raster_id: sink.rasterId } : {}) })) }];
+    const content = [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, ...(sink.reacquired ? { target_reacquired: true } : {}), ...(sink.focusGate ? { focus_gate: sink.focusGate } : {}), ...data, ...(sink.rasterId ? { target_raster_id: sink.rasterId } : {}) }), (key, value) => key === "native_ref" ? undefined : value) }];
     if (imageBlock) content.push(imageBlock);
     if ((name === "screenshot" && (data?.file || data?.path) && data?.pixels?.w > 0 && data?.pixels?.h > 0) ||
         (name === "browser_screenshot" && !!data?.file) ||

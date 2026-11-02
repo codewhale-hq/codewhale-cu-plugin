@@ -1,6 +1,12 @@
 # Release notes
 
-## Unreleased — macOS Phase 3
+## 0.15.0 — 2026-11-01
+
+- Native document-window input uses the accessibility-to-WindowServer window ID bridge when available, validating the exact owner and geometry. Same-sized retained windows no longer make a reopened document indistinguishable by bounds alone. Hosted sheets keep their separate ownership checks; unavailable bridges retain the guarded geometry path.
+
+- Native multiline text replacement uses the supported selected-text edit path so document editors update their document model. A real TextEdit save/reopen check exposed an AXValue write that looked correct in immediate readback but reverted on save. Setter receipts now identify `verification_scope:"control-value"`; saved files and application effects still require independent verification.
+
+- macOS observations retain native accessibility objects in the existing resident helper. An element target must still identify the same object and application launch instance, even when its replacement has the same role, label and path. Expired observations, a restarted helper, replacement controls and reordered paths refuse `element_stale` before a semantic action. The cache keeps 24 native observations; internal object tokens stay out of model-facing state. This adopts the retained-identity principle from [vercel-labs/agent-desktop](https://github.com/vercel-labs/agent-desktop); see [the source comparison](docs/AGENT_DESKTOP.md). Raw pointer gestures keep their existing window/renderer ownership checks and receive native identity validation before their dedicated input owner starts.
 
 - MCP stdin refuses JSON lines over 1 MiB before buffering and rejects invalid UTF8 without executing the frame. It discards only through the rejected line's next newline, then continues serving valid messages on the same connection. App-socket, SSH, native-agent and CDP transport bounds remain separate qualification work.
 - Ordinary native commands now reuse the resident helper through a bounded serial work queue. Each command can be cancelled without terminating the focus/menu monitor, releases its kernel input lock before replying, and exits cleanly on owner disconnect. Held-input commands retain a dedicated owner pipe; older helpers retain the per-call path.
@@ -13,7 +19,7 @@
 - Tk's mapped toolkit is detected at runtime and raw pointer input refuses `pointer_reading_toolkit`; the hardware cursor is never substituted, including in foreground mode.
 - `invoke_menu` has no three-title limit. One native operation resolves each exact title under its immediate parent, refuses disabled or duplicate matches, and closes menus on failure. Cleanup uses accessibility cancellation and, if needed, Escape posted only to the target process. The overall operation remains time-bounded.
 - An observation retries an empty AX window list when WindowServer still reports a visible app window, covering asynchronous accessibility initialization.
-- Qualification and remaining restrictions: [Phase 3 source proof](docs/CUA_PARITY.md#october-31-macos-phase-3-source-candidate). These changes are not part of the published 0.14.0 artifacts.
+- Qualification and remaining restrictions: [Phase 3 source proof](docs/CUA_PARITY.md#october-31-macos-phase-3-source-candidate). These changes follow the published 0.14.0 artifacts.
 
 ## 0.14.0 — 2026-10-31
 

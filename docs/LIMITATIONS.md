@@ -1,5 +1,17 @@
 # Limitations
 
+## Value readback and saved results
+
+`set_value` verifies the accessible control value. It does not prove that a
+document was saved or an application committed the edit. A real TextEdit task
+exposed an `AXValue` write that read back correctly but reverted when saved.
+Since 0.15.0, native multiline text areas use full-range `AXSelectedText`
+replacement when both selection attributes are writable, updating the document
+editor through its text-edit path. Other controls retain their existing value
+write. Verify saved files or application outcomes independently, and observe
+new windows or dialogs before continuing. A process may exit after its last
+document closes; reopen it by application identity and observe its new PID.
+
 ## Approval modes (since 0.13.0)
 
 On macOS the default is **standard** approval, in the spirit of cua-driver's
@@ -38,7 +50,7 @@ a persistent pairing key receive approval for the current connection only.
 Deny, closing the panel or no answer refuses access.
 
 The notarized 0.13.0 release shipped this trust flow and compact Codewhale
-controller; v0.14.0 is the current stable release. Installed-helper evidence
+controller; v0.15.0 is the current stable release. Installed-helper evidence
 and remaining human-interaction and platform gates are recorded in
 [the release checklist](RELEASE_CHECKLIST.md). The resident native agent and
 new capture routes shipped in 0.14.0; live acceptance remains scoped to the

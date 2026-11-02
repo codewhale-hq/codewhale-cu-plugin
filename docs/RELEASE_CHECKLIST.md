@@ -12,6 +12,32 @@ Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). Records below
 come from one maintainer Mac (arm64, Retina) and are evidence, not a
 publication verdict.
 
+### 0.15.0 — source candidate, 2026-11-01
+
+Runtime fingerprint `2122f72b798af700`. The candidate adopts retained native
+AX identity and the exact native-window bridge from the principles in
+[the agent-desktop comparison](AGENT_DESKTOP.md), alongside the previously
+landed Phase 3 runtime/input work and bounded MCP stdin framing.
+
+Matched old/new AppKit observations established the stale-reference defect and
+refusal with unchanged action counters. A fresh target remained usable. Native
+object movement, reordering and owner restart had separate controls. TextEdit
+completed a task-owned UTF-8 edit/save/close/reopen/read/close workflow through
+the packaged MCP/helper path; the saved 87 bytes matched independently. This
+found and repaired multiline value persistence and reopened-window routing.
+Electron hover, pointer drag and HTML5 drop used fresh observations and
+independent renderer effects. These are deterministic operator-driven
+workflows, not unconstrained model-planning or broad coexistence qualification.
+
+Final source, hosted platform, Apple, package and publication receipts are
+recorded after the frozen candidate completes those gates. Earlier invalid
+argument, stale-oracle, response-budget, stale-snapshot and interrupted trials
+are retained separately from accepted outcomes. No new tests or code comments
+were added. Off-Space capture, live lock, other macOS versions, permission
+revocation, fresh-machine/non-admin upgrades, VoiceOver and updater-apply
+qualification remain open. Windows is an unsigned experimental preview;
+Linux remains experimental.
+
 ### 0.14.0 — published 2026-10-31
 
 Frozen release source: `8c9ed973fbb215a821b6f19c2410dbd26bb713b6`, runtime

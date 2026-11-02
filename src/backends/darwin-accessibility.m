@@ -22,6 +22,8 @@ static NSRunningApplication *cuLeaseApp = nil;
 static NSDictionary *cuPointerLeaseContext = nil;
 static NSDictionary *cuPointerLeaseElements = nil;
 static NSRunningApplication *cuPointerLeaseApp = nil;
+static NSMutableDictionary *cuElementSnapshots = nil;
+static NSMutableArray *cuElementSnapshotOrder = nil;
 static NSDictionary *cuValidatePointerLease(void);
 #ifdef CU_TEST
 static NSString *cuTestLockDir = nil;
@@ -810,14 +812,29 @@ static NSDictionary *info(AXUIElementRef el, NSInteger index, NSInteger win, NSA
   else d[@"actions"]=@[];
   return d;
 }
+static NSArray *cuProcessInstance(pid_t pid) {
+  struct proc_bsdinfo info={0};
+  if(pid<=0 || proc_pidinfo(pid,PROC_PIDTBSDINFO,0,&info,sizeof(info))!=(int)sizeof(info) || info.pbi_pid!=pid) return nil;
+  return @[@(info.pbi_start_tvsec),@(info.pbi_start_tvusec)];
+}
 static void cuValidateElementIdentity(AXUIElementRef el, NSDictionary *target) {
+  NSString *ref=target[@"native_ref"];
+  if(ref) {
+    NSArray *parts=[ref isKindOfClass:NSString.class]?[ref componentsSeparatedByString:@":"]:@[];
+    NSDictionary *snapshot=parts.count==2?cuElementSnapshots[parts[0]]:nil;
+    id retained=snapshot[@"elements"][ref];
+    NSArray *live=cuProcessInstance([snapshot[@"pid"] intValue]);
+    if(!retained || !live || ![live isEqual:snapshot[@"started"]] ||
+       !CFEqual((__bridge CFTypeRef)retained,el))
+      @throw [NSException exceptionWithName:@"stale" reason:@"element_stale: the observed native control or its owner changed or expired; observe again before acting" userInfo:nil];
+  }
   NSDictionary *current=info(el,0,0,@[]);
   for(NSString *key in @[@"role",@"label"]) {
     id expected=target[key]?:NSNull.null, actual=current[key]?:NSNull.null;
     if(![expected isEqual:actual]) @throw [NSException exceptionWithName:@"stale" reason:[NSString stringWithFormat:@"element changed %@; observe again before acting",key] userInfo:nil];
   }
 }
-static void walk(AXUIElementRef el, NSInteger win, NSArray *path, NSInteger depth, NSInteger limit, NSInteger max, BOOL depthIsTruncation, NSMutableArray *out, BOOL *truncated) {
+static void walk(AXUIElementRef el, NSInteger win, NSArray *path, NSInteger depth, NSInteger limit, NSInteger max, BOOL depthIsTruncation, NSMutableArray *out, BOOL *truncated, NSMutableDictionary *refs, NSString *snapshotId) {
   // Breadth first keeps a long file listing from hiding its dialog buttons.
   NSMutableArray *queue=[NSMutableArray arrayWithObject:@{@"el":(__bridge id)el,@"path":path,@"depth":@(depth)}];
   for(NSUInteger cursor=0;cursor<queue.count;cursor++) {
@@ -826,7 +843,13 @@ static void walk(AXUIElementRef el, NSInteger win, NSArray *path, NSInteger dept
     AXUIElementRef current=(__bridge AXUIElementRef)item[@"el"];
     NSArray *currentPath=item[@"path"];
     NSInteger currentDepth=[item[@"depth"] integerValue];
-    [out addObject:info(current,out.count,win,currentPath)];
+    NSMutableDictionary *row=[info(current,out.count,win,currentPath) mutableCopy];
+    if(refs) {
+      NSString *ref=[NSString stringWithFormat:@"%@:%lu",snapshotId,(unsigned long)out.count];
+      refs[ref]=(__bridge id)current;
+      row[@"native_ref"]=ref;
+    }
+    [out addObject:row];
     NSArray *kids=attr(current,@"AXChildren");
     if(currentDepth>=limit){ if(kids.count && depthIsTruncation) *truncated=YES; continue; }
     for(NSUInteger i=0;i<kids.count;i++) {
@@ -837,6 +860,11 @@ static void walk(AXUIElementRef el, NSInteger win, NSArray *path, NSInteger dept
 }
 static NSArray *observeElements(AXUIElementRef app, NSArray *ws, NSDictionary *args, BOOL listWindows, BOOL *truncated) {
   NSMutableArray *out=[NSMutableArray array];
+  NSMutableDictionary *refs=listWindows?nil:[NSMutableDictionary dictionary];
+#ifdef CU_TEST
+  if([(__bridge id)app isKindOfClass:NSDictionary.class]) refs=nil;
+#endif
+  NSString *snapshotId=refs?NSUUID.UUID.UUIDString:nil;
   BOOL full=[args[@"detail"] isEqual:@"full"];
   // Web content nests deep: a browser form's controls commonly sit 12+ levels
   // under the window, and a real page holds hundreds of controls. Depth and
@@ -853,15 +881,26 @@ static NSArray *observeElements(AXUIElementRef app, NSArray *ws, NSDictionary *a
     NSArray *children=attr(app,@"AXChildren");
     for(NSUInteger i=0;i<children.count;i++) {
       NSString *role=attr((__bridge AXUIElementRef)children[i],@"AXRole");
-      if([role isEqual:@"AXMenu"]) walk((__bridge AXUIElementRef)children[i],-2,@[@(i)],0,limit,menuMax/2,YES,out,truncated);
+      if([role isEqual:@"AXMenu"]) walk((__bridge AXUIElementRef)children[i],-2,@[@(i)],0,limit,menuMax/2,YES,out,truncated,refs,snapshotId);
     }
     id menu=attr(app,@"AXMenuBar");
-    if(menu) walk((__bridge AXUIElementRef)menu,-1,@[],0,full?limit:1,menuMax,full,out,truncated);
+    if(menu) walk((__bridge AXUIElementRef)menu,-1,@[],0,full?limit:1,menuMax,full,out,truncated,refs,snapshotId);
   }
   for(NSUInteger i=0;i<ws.count;i++) {
     if(args[@"window_id"] && i!=[args[@"window_id"] unsignedIntegerValue]) continue;
     if(listWindows){ NSMutableDictionary *d=[info((__bridge AXUIElementRef)ws[i],i,i,@[]) mutableCopy]; d[@"title"]=d[@"label"]?:@""; [out addObject:d]; }
-    else walk((__bridge AXUIElementRef)ws[i],i,@[],0,limit,max,YES,out,truncated);
+    else walk((__bridge AXUIElementRef)ws[i],i,@[],0,limit,max,YES,out,truncated,refs,snapshotId);
+  }
+  if(refs) {
+    pid_t pid=0;
+    AXUIElementGetPid(app,&pid);
+    NSArray *started=cuProcessInstance(pid);
+    if(!started)
+      @throw [NSException exceptionWithName:@"stale" reason:@"element_stale: the observed application's process identity is unavailable; observe again" userInfo:nil];
+    if(!cuElementSnapshots) { cuElementSnapshots=[NSMutableDictionary dictionary]; cuElementSnapshotOrder=[NSMutableArray array]; }
+    cuElementSnapshots[snapshotId]=@{@"elements":refs,@"pid":@(pid),@"started":started};
+    [cuElementSnapshotOrder addObject:snapshotId];
+    while(cuElementSnapshotOrder.count>24) { [cuElementSnapshots removeObjectForKey:cuElementSnapshotOrder[0]]; [cuElementSnapshotOrder removeObjectAtIndex:0]; }
   }
   return out;
 }
@@ -977,6 +1016,25 @@ static BOOL cuElementWindow(id element, pid_t preferPid, uint32_t *outWin, pid_t
     CGRect f;
     if(!cuFrame((__bridge AXUIElementRef)cand, &f)) continue;
     uint32_t w = 0; pid_t o = 0;
+    BOOL nativeWindow=cand==win && !sheet;
+#ifdef CU_TEST
+    if([cand isKindOfClass:NSDictionary.class]) nativeWindow=NO;
+#endif
+    if(nativeWindow) {
+      static AXError (*bridge)(AXUIElementRef,uint32_t *)=NULL;
+      static dispatch_once_t once;
+      dispatch_once(&once,^{ bridge=dlsym(RTLD_DEFAULT,"_AXUIElementGetWindow"); });
+      AXError status=bridge?bridge((__bridge AXUIElementRef)cand,&w):kAXErrorAttributeUnsupported;
+      if(status==kAXErrorSuccess) {
+        CGRect actual;
+        if(!w || !cuWindowInfoForNumber(w,&actual,&o) || o!=preferPid || fabs(actual.origin.x-f.origin.x)>2 || fabs(actual.origin.y-f.origin.y)>2 || fabs(actual.size.width-f.size.width)>2 || fabs(actual.size.height-f.size.height)>2) continue;
+        *outWin=w;
+        if(outOwner) *outOwner=o;
+        if(outRole) *outRole=@"AXWindow";
+        return YES;
+      }
+      if(status!=kAXErrorAttributeUnsupported && status!=kAXErrorNoValue && status!=kAXErrorIllegalArgument) continue;
+    }
     if(cuWindowNumberForFrame(preferPid, f, &w)) {
       o = preferPid;
       uint32_t fw = 0; pid_t fo = 0;
@@ -2172,6 +2230,7 @@ static id execute(NSDictionary *p) {
       id el=wi==-1?attr(app,@"AXMenuBar"):wi==-2?(__bridge id)app:(wi>=0 && wi<ws.count?ws[wi]:nil);
       if(!el) return @{@"found":@NO,@"element":[NSNull null],@"reason":@"window_not_found"};
       for(NSNumber *i in args[@"path"]?:@[]) { NSArray *kids=attr((__bridge AXUIElementRef)el,@"AXChildren"); if(i.unsignedIntegerValue>=kids.count) return @{@"found":@NO,@"element":[NSNull null],@"reason":@"path_not_found"}; el=kids[i.unsignedIntegerValue]; }
+      if(args[@"native_ref"]) cuValidateElementIdentity((__bridge AXUIElementRef)el,args);
       return @{@"found":@YES,@"element":info((__bridge AXUIElementRef)el,0,wi,args[@"path"]?:@[]),@"reason":[NSNull null]};
     }
     NSDictionary *t=args[@"target"]; NSInteger wi=[t[@"windowIndex"] integerValue];
@@ -2217,14 +2276,25 @@ static id execute(NSDictionary *p) {
           value=n;
         }
       }
-      e=AXUIElementSetAttributeValue((__bridge AXUIElementRef)el,kAXValueAttribute,(__bridge CFTypeRef)value);
+      if([role isEqual:@"AXTextArea"] && [value isKindOfClass:NSString.class] && cuSettable((__bridge AXUIElementRef)el,@"AXSelectedText") && cuSettable((__bridge AXUIElementRef)el,@"AXSelectedTextRange")) {
+        id before=attr((__bridge AXUIElementRef)el,@"AXValue");
+        if(![before isKindOfClass:NSString.class]) @throw [NSException exceptionWithName:@"value" reason:@"the text area's current value is unavailable; observe before replacing it" userInfo:nil];
+        AXValueRef range=AXValueCreate(kAXValueCFRangeType,&(CFRange){0,[before length]});
+        e=AXUIElementSetAttributeValue((__bridge AXUIElementRef)el,kAXSelectedTextRangeAttribute,range);
+        CFRelease(range);
+        if(e==kAXErrorSuccess) {
+          cuCheckCancelled();
+          cuValidateElementIdentity((__bridge AXUIElementRef)el,t);
+          e=AXUIElementSetAttributeValue((__bridge AXUIElementRef)el,kAXSelectedTextAttribute,(__bridge CFStringRef)value);
+        }
+      } else e=AXUIElementSetAttributeValue((__bridge AXUIElementRef)el,kAXValueAttribute,(__bridge CFTypeRef)value);
       if(e==kAXErrorSuccess) {
         usleep(60000);
         id after=attr((__bridge AXUIElementRef)el,@"AXValue");
         BOOL verified=NO;
         if(numeric) verified=[after isKindOfClass:NSNumber.class] && fabs([after doubleValue]-[value doubleValue])<1e-6;
         else verified=[after isKindOfClass:NSString.class] && [after isEqual:value];
-        NSMutableDictionary *done=[@{@"action_sent":@YES,@"strategy":@"a11y",@"role":role?:[NSNull null],@"after":after?:[NSNull null],@"verified":@(verified)} mutableCopy];
+        NSMutableDictionary *done=[@{@"action_sent":@YES,@"strategy":@"a11y",@"role":role?:[NSNull null],@"after":after?:[NSNull null],@"verified":@(verified),@"verification_scope":@"control-value"} mutableCopy];
         if(!verified) done[@"note"]=@"AXValue write did not verify: the control kept its own value (Electron/web text elements and numeric steppers commonly ignore background AXValue writes). Focus the element and use type instead, then verify with get_value.";
         return done;
       }
