@@ -135,6 +135,18 @@ tool-prefix drift assertion. The workbook stayed byte-identical to its seed.
 These are failed outcomes and are retained alongside the successful note;
 the short-note result does not qualify spreadsheet editing.
 
+The subsequent native candidate unifies ordinary background keys and event
+text on the existing confirmed-window route. A deterministic operator workflow
+then saved the complete Calc budget correctly: every worksheet value,
+requested formulas, currency styles and a fresh-process UI reopen passed.
+The caller explicitly selected the current address before replacing it and
+waited for a transient AX row instead of repeating input. Earlier failed
+controls are retained. TextEdit also saved and reopened 39 exact UTF-8 bytes
+including Chinese text and emoji through event typing. These prove native
+routes and saved effects; they are not another DeepSeek success or a latency
+comparison. The existing Engine owner is repairing C5 before the next paid
+Calc task. See [the Cua follow-up](CUA_PARITY.md#november-2-background-text-follow-up).
+
 These are local source/development measurements. Published 0.15.0 assets retain
 their original source and signature. The operator's user plugin has unreleased
 frontend/guide changes over the published helper, and the global CLI is a

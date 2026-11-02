@@ -21,7 +21,8 @@ source contracts, not a claim of equivalent platform support or performance.
 | Use code for branching | Engine's existing `execute_tools` remains the only composition runtime. Its separate bare-JSON MCP normalization makes `tools.call(...).content` directly usable while retaining raw receipts, rich results and spill limits. CU adds no script runtime, agent loop, SDK facade, registry or daemon. |
 | Unambiguous text operations | `set_value` replaces the whole control; `type` inserts at its selection; `select_text` requires an explicit range. Readback remains control-value evidence; saving still needs an independent file check. |
 
-The batch description plus schema shrank from 6,614 to 5,780 bytes. The root
+The first ref slice shrank the batch description plus schema from 6,614 to
+5,780 bytes; the later text follow-up adds its delivery and Return fields. The root
 guide fits the host's 4,096-byte limit. Ref decoding uses the same dispatch
 pipeline before consent, consequential-action checks and native delivery;
 it does not introduce a second target authority. Observation-dependent
@@ -49,6 +50,49 @@ unchanged; other providers and platforms remain unqualified by these runs.
 A distinct Calc task failed its saved-workbook oracle and exposed background
 input and Engine error-recovery gaps. The note success is not spreadsheet
 qualification.
+
+## November 2 background text follow-up
+
+The distinct Calc failure led to one shared confirmed-window route for
+background event text and ordinary standard-mode keys, including Return.
+The existing key-window confirmation moved into the shared window-record
+entry point instead of being repeated only by key commands. Strict-mode
+focus refusals and dedicated held-input ownership remain separate. Explicit
+`type {delivery:"events"}` exposes the existing event path, with a helper
+capability check; semantic failures do not trigger an automatic fallback.
+Focused combo children must belong to the observed control. Window refs are
+the documented target for commands such as Save.
+
+An unapplied setter now returns `value_not_verified` and stops the known
+batch. Typing with Return retains `text_verified`, because a final key receipt
+cannot verify preceding text. A cell may commit only on Return; fresh state
+and saved output remain the checkpoint.
+
+A signed isolated development helper completed the full Calc workflow through
+the packaged MCP path: corrected quantity, four formulas, US currency formats,
+status and preserved Unicode note. An independent XLSX reader matched every
+sheet value against the seed plus requested edits, required formula cells and
+checked seven currency formats. A fresh Calc process showed the saved total
+and status; the task documents were closed. The continuation's 627 input
+observer samples recorded no target foreground sample or physical key event.
+This was an operator-composed native workflow, not a model-planning result.
+Earlier controls with a missing address selection and a transient missing AX
+row remain recorded; the latter was resolved by fresh observation without
+repeating input. A separate 39-byte Unicode event-typing/save/reopen check
+passed through TextEdit.
+
+Existing local checks passed: 70 frontend contracts, six focused native/input
+checks, seven affected key-routing checks and eleven guide checks. Artifact-only
+protocol controls proved that an unverified setter prevents Save, unverified
+text survives a following Return receipt and an invalid delivery mode does
+not type. No new repository tests, runtime, provider loop or dependency were
+added. The root guide is 4,094 bytes. Evidence is retained under
+`CW/artifacts/cu-window-text-20261102/`.
+
+The new native route has not yet been qualified by a goal-only model run.
+The earlier Engine C5 prefix-drift failure is owned by the active Engine slice;
+repeating a paid task on that known-crashing binary would not qualify it.
+Published 0.15.0 and its global notarized helper remain unchanged.
 
 ## October 31 macOS Phase 3 source candidate
 

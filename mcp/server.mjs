@@ -646,14 +646,19 @@ async function invokeType(invoke, prepared) {
   delete rest.press_enter;
   if (parts.length === 1 && !pressEnter) return invoke("type", rest);
   const steps = [];
+  let textVerified = true;
   for (let i = 0; i < parts.length; i++) {
-    if (parts[i]) steps.push(await invoke("type", { ...rest, text: parts[i] }));
+    if (parts[i]) {
+      const part = await invoke("type", { ...rest, text: parts[i] });
+      steps.push(part);
+      textVerified &&= part.verified === true;
+    }
     if (i < parts.length - 1 || (pressEnter && i === parts.length - 1)) {
       steps.push(await invoke("key", { text: "return" }));
     }
   }
   const last = steps.at(-1) ?? { action_sent: true };
-  return { ...last, newlines_as_return: true, typed_parts: steps.length };
+  return { ...last, text_verified: textVerified, ...(textVerified ? {} : { verification_required: "observation" }), newlines_as_return: true, typed_parts: steps.length };
 }
 
 function observeState(computer, app_ref, result, args = {}, bindWhen = null) {
@@ -1996,6 +2001,8 @@ async function callTool(params, bindWhen = null) {
       const grant = grantReport();
       if (grant) data.grant = grant;
     }
+    const valueUnverified = name === "set_value" && data?.verified === false;
+    if (valueUnverified) data = { ...data, ok: false, error: { code: "value_not_verified", message: "Value readback did not confirm the requested text. Observe before choosing another action; do not replay sent input." } };
     const content = [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, ...(sink.reacquired ? { target_reacquired: true } : {}), ...(sink.focusGate ? { focus_gate: sink.focusGate } : {}), ...data, ...(sink.rasterId ? { target_raster_id: sink.rasterId } : {}) }), (key, value) => key === "native_ref" ? undefined : value) }];
     if (imageBlock) content.push(imageBlock);
     if ((name === "screenshot" && (data?.file || data?.path) && data?.pixels?.w > 0 && data?.pixels?.h > 0) ||
@@ -2003,7 +2010,7 @@ async function callTool(params, bindWhen = null) {
         (name === "get_app_state" && data?.found !== false && Array.isArray(data?.elements))) {
       binding.needsObservation = false;
     }
-    return { content };
+    return { content, ...(valueUnverified ? { isError: true } : {}) };
   } catch (err) {
     // A failed open_application cleared the backend's input binding before it
     // attempted anything — the tracked bound app must not claim otherwise.
@@ -2052,6 +2059,7 @@ function validateToolArgs(computer, name, out) {
     if (out.role != null && typeof out.role !== "string") throw new ServerError("bad_args", "role must be a string");
     if (out.ocr_region != null && (!Array.isArray(out.ocr_region) || out.ocr_region.length !== 4)) throw new ServerError("bad_args", "ocr_region must be [x, y, w, h] in screen points");
   }
+  if (name === "type" && out.delivery !== undefined && !["auto", "events"].includes(out.delivery)) throw new ServerError("bad_args", "delivery must be auto or events");
   if (name === "select_text" && (!Array.isArray(out.text_range) || out.text_range.length !== 2 || !out.text_range.every(value => Number.isSafeInteger(value) && value >= 0))) {
     throw new ServerError("bad_args", "text_range must be [start, length], both non-negative integers; set_value replaces the whole value");
   }

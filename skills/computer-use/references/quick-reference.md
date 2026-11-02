@@ -39,6 +39,14 @@ Prefer `run_actions` for 1–8 known related `{tool,arguments}` steps (`args` is
 - `list_sessions` — who is driving this machine: live sessions with bound targets, modes, and held pointers.
 - `clipboard {action:"read"}` — user clipboard text (ask before reading if unsure).
 
+Unverified `set_value` returns `value_not_verified` and stops known batches.
+Typing with Return preserves `text_verified`; a key receipt alone cannot
+verify the text. Observe the resulting field or saved effect. On macOS,
+`type {target, text, delivery:"events"}` explicitly uses the target window's
+confirmed key-event route when an app ignores or refuses accessibility text.
+It needs a current helper and retains all focus, input-owner and stop guards.
+Never use a different delivery mode to replay uncertain input.
+
 ## Act
 
 For raster points use `target:{type:"coordinate",x,y,raster_id}` from the image
@@ -57,7 +65,7 @@ a raster ID. Browser viewport points use the browser's separate contract.
   completed steps and delivery uncertainty before continuing.
 - `select_text {target, text_range}` · `focus {target}` · `perform_action {target, action}`
 - `scroll {target, direction, amount?}` · `drag {from_target, to}`
-- `invoke_menu {path:["File","New"]}` — app-level/menu-only commands. For document Save use `key {text:"cmd+s",target}` with its observed element; use its close button for Close.
+- `invoke_menu {path:["File","New"]}` — app-level/menu-only commands. For document Save use `key {text:"cmd+s",target}` with its observed window ref; use its close button for Close.
 - `pointer {action, target?}` — move/down/up primitives (foreground/shared only).
 - `app_script {script, language?, timeout?}` — macOS local only: AppleScript
   (default) or JXA through osascript. `result` is stdout; refusals are
@@ -116,7 +124,7 @@ never carries `action_sent`.
 
 Type into the document body:
 1. `open_application {name:"TextEdit", activate:false}`
-2. `get_app_state {role:"AXTextArea"}` → index
+2. `get_app_state {role:"AXTextArea"}` → ref
 3. `type {target:"<returned-ref>", text:"…"}`
 4. `get_value {target:"<returned-ref>"}` → confirm
 

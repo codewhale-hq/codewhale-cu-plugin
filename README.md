@@ -541,7 +541,7 @@ receipts keep working; `tools/list` advertises the merged set only.
   until a query/role appears or disappears, then act on the fresh
   `state_id`).
 - **Pointer** — `click` (left/double/triple/right/middle through
-  `button`/`clicks`), `pointer` (move/down/up), `left_click_drag`, `scroll`
+  `button`/`clicks`), `pointer` (move/down/up), `drag`, `scroll`
   (4 directions).
 - **Keyboard & text** — `type` (unicode), `key` (chords, `repeat`, or
   `duration` to hold), `set_value` (semantic, background-safe), `select_text`,

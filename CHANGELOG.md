@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Unverified `set_value` readback returns `value_not_verified` and stops a known batch. Typing with Return preserves `text_verified` rather than hiding it behind the last key receipt; final app/file state still needs verification. macOS event typing reuses the same confirmed exact-window key route as document commands; explicit `delivery:"events"` exposes the existing event path without an automatic semantic fallback.
+
 - Element targets are copied opaque refs from a specific observation and computer. They use the existing target resolver and native identity checks; old object targets remain callable. Refs cannot cross sessions or replay from a saved trajectory.
 - The advertised surface uses `drag` and observation filters instead of exposing `left_click_drag` and cached `find_elements` separately. Compatibility names still dispatch through the same guards. The batch schema lists 34 canonical members instead of 67 names and aliases.
 - Text operations distinguish full replacement (`set_value`) from insertion (`type`). `select_text` requires an explicit range instead of silently placing the caret at zero.

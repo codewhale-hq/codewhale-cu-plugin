@@ -148,7 +148,7 @@ export function nativeErrorCode(message) {
   if (/^user_busy:/.test(m)) return "user_busy";
   if (/^screen_locked:/.test(m)) return "screen_locked";
   if (/^element_stale:/.test(m)) return "element_stale";
-  for (const code of ["pointer_reading_toolkit", "chromium_pointer_unavailable", "drag_session_active", "drag_session_detected", "menu_item_not_found", "menu_item_disabled", "menu_item_ambiguous"]) if (m.startsWith(`${code}:`)) return code;
+  for (const code of ["pointer_reading_toolkit", "chromium_pointer_unavailable", "drag_session_active", "drag_session_detected", "menu_item_not_found", "menu_item_disabled", "menu_item_ambiguous", "key_window_unconfirmed"]) if (m.startsWith(`${code}:`)) return code;
   if (/ambiguous/i.test(m)) return "window_ambiguous";
   if (/not capturable/i.test(m)) return "window_not_capturable";
   if (/several running applications match/i.test(m)) return "ambiguous_application";
@@ -1259,13 +1259,18 @@ export function create({ exec }) {
       for (let i = 0; i < notches; i++) steps.push({ scroll: [Math.sign(dx), Math.sign(dy)], x: target.x, y: target.y, delayMs: 15 });
       return { ...(await windowPointer(steps, {}, pointerBinding(target))), direction, amount, verified: false, verification_required: "observation" };
     },
-    type: (args = {}) => native("type", args),
+    type: async (args = {}) => {
+      if (args.delivery === "events" && !state.foregroundInput && (await native("input_capabilities"))?.window_text_input !== 1) {
+        throw Object.assign(new ExecError("Update Computer Use before requesting confirmed window-routed text events."), { code: "app_upgrade_required" });
+      }
+      return native("type", args);
+    },
     key: async ({ text, repeat = 1, target } = {}) => {
       const { flags, code, key } = parseChord(text);
       const n = Math.max(1, Math.min(100, repeat));
-      // Modified and window-targeted keys go to the app's key window, made
-      // key inside the app without activating it (strict approval refuses).
-      const routed = target != null || (flags !== 0 && !state.foregroundInput);
+      // Background standard-mode and window-targeted keys use the app's key
+      // window without activating it; strict mode retains its focus refusal.
+      const routed = target != null || (!state.foregroundInput && (flags !== 0 || !isStrict()));
       if (routed) requireFocusControl();
       if (routed && !state.foregroundInput && (await native("input_capabilities"))?.pid_input !== 1) {
         throw Object.assign(new ExecError("Update the Codewhale Computer Use app before sending a modified key to a background app."), { code: "app_upgrade_required" });

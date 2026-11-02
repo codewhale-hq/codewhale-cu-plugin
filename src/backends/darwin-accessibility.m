@@ -290,6 +290,7 @@ static double cuYieldToUser(NSDictionary *args) {
     usleep((useconds_t)(fmin(40.0,wait-elapsed)*1000.0));
   }
 }
+static BOOL cuAppKeyWindowIs(pid_t pid, uint32_t wid);
 static BOOL cuBgLeaseBegin(NSRunningApplication *inputApp, uint32_t winNum, BOOL makeKey, NSDictionary *args, cuBgLease *lease, NSString **why) {
   cuRequireLease(args);
   lease->targetPid = inputApp.processIdentifier;
@@ -326,6 +327,15 @@ static BOOL cuBgLeaseBegin(NSRunningApplication *inputApp, uint32_t winNum, BOOL
     cuPostWindowRecord(&lease->postPSN, lease->postWin, 0x01);
     cuPostWindowRecord(&lease->postPSN, lease->postWin, 0x02);
     usleep(120000);
+    if(lease->postPid == lease->targetPid && !cuAppKeyWindowIs(lease->targetPid, lease->postWin)) {
+      cuPostWindowRecord(&lease->postPSN, lease->postWin, 0x01);
+      cuPostWindowRecord(&lease->postPSN, lease->postWin, 0x02);
+      usleep(200000);
+      if(!cuAppKeyWindowIs(lease->targetPid, lease->postWin)) {
+        *why = @"key_window_unconfirmed: the exact target window could not be confirmed as the app's key window; no text or key was sent";
+        return NO;
+      }
+    }
   }
   return YES;
 }
@@ -1424,10 +1434,22 @@ static id cuResolvePathTarget(pid_t pid, NSDictionary *t) {
 }
 static BOOL cuFocusTextTarget(id element) {
   if(AXUIElementSetAttributeValue((__bridge AXUIElementRef)element,kAXFocusedAttribute,kCFBooleanTrue) != kAXErrorSuccess) return NO;
+  pid_t pid = 0;
+  AXUIElementGetPid((__bridge AXUIElementRef)element, &pid);
+  BOOL combo = [attr((__bridge AXUIElementRef)element,@"AXRole") isEqual:@"AXComboBox"];
   for(int attempt = 0; attempt < 12; attempt++) {
     usleep(50000);
     cuCheckCancelled();
     if([attr((__bridge AXUIElementRef)element,@"AXFocused") boolValue]) return YES;
+    id focused = pid > 0 ? cuFocusedElement(pid) : nil;
+    if(focused && CFEqual((__bridge CFTypeRef)focused,(__bridge CFTypeRef)element)) return YES;
+    if(combo && focused && cuTextRole(attr((__bridge AXUIElementRef)focused,@"AXRole"))) {
+      id parent = focused;
+      for(int depth = 0; parent && depth < 32; depth++) {
+        if(CFEqual((__bridge CFTypeRef)parent,(__bridge CFTypeRef)element)) return YES;
+        parent = attr((__bridge AXUIElementRef)parent,@"AXParent");
+      }
+    }
   }
   return NO;
 }
@@ -1475,40 +1497,20 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
   // apps coalesce the pending payload and keep only the final batch, so a
   // typed string silently arrives truncated to its tail.
   //
-  // Astral graphemes (surrogate pairs, emoji, flags, ZWJ sequences) are
-  // dropped by the WindowServer's key translation whenever the target window
-  // is not front-and-visible — measured: occluded Chrome keeps every BMP
-  // grapheme and loses 🐳. The window-record channel delivers the real event
-  // instead. The trigger is the text, not an occlusion guess: if the string
-  // carries any multi-unit grapheme, the whole stream rides the record
-  // channel under one lease. Background mode refuses that lease before input;
-  // it cannot promise reliable astral text delivery through a focus swap.
-  uint32_t typeWin = 0;
-  CGRect typeFrame = CGRectZero;
-  pid_t typeOwner = 0;
-  BOOL needsRecord = NO;
-  if(!simulated && !semantic && focused && ![args[@"foreground_input"] boolValue]) {
-    for(NSUInteger i = 0; i < text.length && !needsRecord && cuResolveBgPointer();) {
-      NSRange r = [text rangeOfComposedCharacterSequencesForRange:NSMakeRange(i, 1)];
-      if(r.length > 1) needsRecord = YES;
-      i = NSMaxRange(r);
-    }
-    // The focused element may live in a hosted panel whose window belongs to
-    // a service, not the app — resolve its real window and owner either way,
-    // so process-posted text also reaches the right queue.
-    if(cuElementWindow(focused, inputApp.processIdentifier, &typeWin, &typeOwner, nil)
-       && cuWindowInfoForNumber(typeWin, &typeFrame, nil)) {
-      // A service-owned window's queue is where the panel's field lives;
-      // process posting to the app would drop the text. The window route
-      // posts to the window's owner and makes the window key there.
-      if(typeOwner && typeOwner != inputApp.processIdentifier) needsRecord = YES;
-    }
-  }
   cuBgLease lease = {0};
   BOOL leasing = NO;
-  if(needsRecord && typeWin && cuResolveBgPointer()) {
+  if(!simulated && !semantic && focused && ![args[@"foreground_input"] boolValue]) {
+    uint32_t typeWin = 0;
+    CGRect typeFrame = CGRectZero;
+    if(!cuResolveBgPointer() || !cuElementWindow(focused, inputApp.processIdentifier, &typeWin, nil, nil)
+       || !cuWindowInfoForNumber(typeWin, &typeFrame, nil))
+      @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:@"window-routed text requires the target's exact input window; observe again; no text was sent" userInfo:nil];
     NSString *why = nil;
     leasing = cuBgLeaseBegin(inputApp, typeWin, YES, args, &lease, &why);
+    if(!leasing) @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:why userInfo:nil];
+    if(args[@"target"] && !cuFocusTextTarget(focused))
+      @throw [NSException exceptionWithName:@"focus" reason:@"explicit text target could not be focused in its window; no text was sent" userInfo:nil];
+    if(args[@"target"]) cuValidateElementIdentity((__bridge AXUIElementRef)focused,args[@"target"]);
   }
   // Foreground keystrokes share the user's keyboard: wait for a hardware-
   // input gap once before the stream, not per grapheme — the stream itself
@@ -1524,7 +1526,7 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
         CGEventRef event=textEvent(chunk,down);
         if([args[@"foreground_input"] boolValue]) CGEventPost(kCGHIDEventTap,event);
         else if(leasing) cuPostEventRecord(&lease, event, 3);
-        else CGEventPostToPid(typeOwner ? typeOwner : inputApp.processIdentifier,event);
+        else CGEventPostToPid(inputApp.processIdentifier,event);
         CFRelease(event);
       }
       i=NSMaxRange(range); usleep(10000);
@@ -1657,7 +1659,7 @@ static id execute(NSDictionary *p) {
     return cuPostKey(args,[args[@"input_app_ref"][@"pid"] intValue]);
   }
   cuCheckCancelled();
-  if([tool isEqual:@"input_capabilities"]) return @{@"pid_input":@1,@"agent":@1,@"screen_lock_check":@1,@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"focus_lease":@1,@"focused_control":@1,@"window_record":@(cuResolveBgPointer()?1:0),@"observed_window_input":@1,@"targeted_keys":@1,@"literal_text_replace":@1,@"pointer_context":@1,@"pointer_owner_validation":@1,@"menu_path":@1};
+  if([tool isEqual:@"input_capabilities"]) return @{@"pid_input":@1,@"agent":@1,@"screen_lock_check":@1,@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"focus_lease":@1,@"focused_control":@1,@"window_record":@(cuResolveBgPointer()?1:0),@"observed_window_input":@1,@"targeted_keys":@1,@"window_text_input":@1,@"literal_text_replace":@1,@"pointer_context":@1,@"pointer_owner_validation":@1,@"menu_path":@1};
   if([tool isEqual:@"front_lease_watchdog"]) {
     long long remaining = [args[@"deadline"] longLongValue] - (long long)([NSDate new].timeIntervalSince1970 * 1000);
     if(remaining > 0 && remaining < 30000) usleep((useconds_t)remaining * 1000);
@@ -2020,16 +2022,6 @@ static id execute(NSDictionary *p) {
     NSString *why = nil;
     if(!cuBgLeaseBegin(inputApp, keyWin, YES, args, &lease, &why))
       @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:why userInfo:nil];
-    // Keys go to the app's key window; a key meant for this window must not
-    // land in a sibling (a Find panel, another document), so the switch is
-    // read back and the chord refused when it did not hold.
-    if(lease.postPid == lease.targetPid && !cuAppKeyWindowIs(lease.targetPid, lease.postWin)) {
-      cuPostWindowRecord(&lease.postPSN, lease.postWin, 0x01);
-      cuPostWindowRecord(&lease.postPSN, lease.postWin, 0x02);
-      usleep(200000);
-      if(!cuAppKeyWindowIs(lease.targetPid, lease.postWin))
-        @throw [NSException exceptionWithName:@"key_window_unconfirmed" reason:@"key_window_unconfirmed: the target window could not be confirmed as the app's key window, so no key was sent (it could have reached another window of the same app). Close the other window, or use activate:true." userInfo:nil];
-    }
     @try {
       NSString *role = anchor ? attr((__bridge AXUIElementRef)anchor,@"AXRole") : nil;
       if(t && cuTextRole(role) && ![role isEqual:@"AXWebArea"]) {
