@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Batch capture receipts explicitly flag omitted inline images; the guide directs visual decisions to direct capture calls. Codewhale composition remains available for text, data and known actions.
+
+- Capability grants also narrow the batch step enum to advertised operations. Discovery no longer teaches a scoped model unavailable batch choices.
+
 - Unverified `set_value` readback returns `value_not_verified` and stops a known batch. Typing with Return preserves `text_verified` rather than hiding it behind the last key receipt; final app/file state still needs verification. macOS event typing reuses the same confirmed exact-window key route as document commands; explicit `delivery:"events"` exposes the existing event path without an automatic semantic fallback.
 
 - Element targets are copied opaque refs from a specific observation and computer. They use the existing target resolver and native identity checks; old object targets remain callable. Refs cannot cross sessions or replay from a saved trajectory.

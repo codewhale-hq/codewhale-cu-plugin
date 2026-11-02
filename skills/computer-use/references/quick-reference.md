@@ -13,6 +13,11 @@ Use the host's existing composition runtime for loops, branches, repeated rows o
 
 For fixed sequences use `run_actions`, retaining each step's normal guards. Its final observation defaults to `since:"latest"` for the same app/window/view; intervening narrower lookups do not replace that diff baseline. A missing/incomplete baseline returns a full state. Successful repeated direct inputs receive a compact batching hint; reads and steps inside a batch do not add repeated hints.
 
+`run_actions` preserves capture file/raster receipts and flags omitted inline
+images. For a visual decision, call `screenshot` or `zoom` directly. In
+Codewhale, use direct `tool_search` to load that schema first; `execute_tools`
+keeps nested text/JSON and does not expose nested image blocks as images.
+
 ## Observe, act, verify (full loop)
 
 1. `list_apps` finds running apps; `installed:true` finds cold-launch targets. Open the intended app once; do not guess identities. Pass `computer` when switching machines and read the receipt's identity.

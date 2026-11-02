@@ -27,11 +27,11 @@ Prefer files/shell/connectors over UI. Never drive a terminal window. Read opera
 
 ## Observe, act, verify
 
-Codewhale `execute_tools`: `tools.call(name,args)` returns `{content,metadata,truncated}`; check `truncated`, then read `content`. Compose loops/branches there. For up to 8 known steps use `run_actions` with `observe:true` for fresh verification/a diff. Every call keeps guards. `find:{query,role}` resolves one target; drags use `find:{from_target:{query,role},to:{query,role}}` from one fresh view. Role separates controls from text children. New UI decisions/approval end the batch. Inspect completed steps and unknown outcomes; never replay sent input.
+Codewhale `execute_tools`: `const r=await tools.call(name,args); return r.truncated ?? r.content;`. Keep loops/branches inside the program. For up to 8 known steps use `run_actions` with `observe:true` for fresh verification/a diff. Every call keeps guards. `find:{query,role}` resolves one target; drags use `find:{from_target:{query,role},to:{query,role}}` from one fresh view. Role separates controls from text children. New UI decisions/approval end the batch. Inspect completed steps and unknown outcomes; never replay sent input.
 
 - `get_app_state` supplies controls with opaque `ref` strings; pass a returned ref as `target`. Narrow with query/role/limit or `since`. Stale targets refuse.
 - `set_value` replaces the full value; `type` inserts. `select_text` needs a range. Save via window-targeted `key` (`cmd+s` on Mac), then verify saved bytes. Check at meaningful checkpoints, not after every action.
-- Screenshot/`zoom` only when the tree cannot answer. Carry `raster_id` in every coordinate; `raster_stale` means observe again, never drop the ID to retry. A pin detects capture replacement, not a changed UI.
+- Call `screenshot`/`zoom` directly when the tree cannot answer. Carry `raster_id` in every coordinate; `raster_stale` means observe again, never drop the ID to retry. A pin detects capture replacement, not a changed UI.
 
 ## Read details when needed
 

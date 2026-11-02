@@ -815,6 +815,7 @@ async function runActions(computer, args, switched) {
       if (!body) {
         const result = await callTool({ name: step.tool, arguments: input });
         body = JSON.parse(result.content[0].text);
+        if (result.content.some((block) => block.type === "image")) body.image_omitted ??= { reason: "batch_receipt_only", note: "The capture file and raster receipt are available. Call the capture tool directly when the model needs the image." };
         isError = result.isError;
       }
     } catch (err) {
@@ -2240,7 +2241,15 @@ const HANDLERS = {
     // narrows the listing further, never widens it.
     const advertised = TOOLS.filter((t) => t.hidden !== true);
     if (!GRANT) return { tools: advertised };
-    return { tools: advertised.filter((t) => t.name === "stop_computer_control" || GRANT.has(t.name) || (MERGED_EXPANSION[t.name] ?? []).some((wire) => GRANT.has(wire))) };
+    const tools = advertised.filter((t) => t.name === "stop_computer_control" || GRANT.has(t.name) || (MERGED_EXPANSION[t.name] ?? []).some((wire) => GRANT.has(wire)));
+    const batchIndex = tools.findIndex((tool) => tool.name === "run_actions");
+    if (batchIndex !== -1) {
+      const batch = structuredClone(tools[batchIndex]);
+      const member = batch.inputSchema.properties.steps.items.properties.tool;
+      member.enum = member.enum.filter((name) => tools.some((tool) => tool.name === name));
+      tools[batchIndex] = batch;
+    }
+    return { tools };
   },
   "resources/list"() {
     return { resources: skillPack.map(({ uri, rel, mime, size }) => ({ uri, name: rel, mimeType: mime, size })) };

@@ -28,6 +28,12 @@ pipeline before consent, consequential-action checks and native delivery;
 it does not introduce a second target authority. Observation-dependent
 trajectory steps cannot replay, including legacy explicit state pins.
 No Cua implementation is imported or installed.
+A launch-time capability grant also narrows the batch member enum to the
+operations that remain advertised; the full canonical schema is not mutated.
+Capture steps keep their file/raster receipts and explicitly flag omitted
+inline images. Visual decisions use direct capture tools. The guide also
+identifies Codewhale VM image limits instead of teaching a vision model to
+rely on images that only exist in nested text/JSON.
 
 131 existing focused checks passed for schemas, target/wire routing, grants,
 confirmation, native prompts, bounded payloads and trajectory handling. A real
@@ -86,7 +92,7 @@ checks, seven affected key-routing checks and eleven guide checks. Artifact-only
 protocol controls proved that an unverified setter prevents Save, unverified
 text survives a following Return receipt and an invalid delivery mode does
 not type. No new repository tests, runtime, provider loop or dependency were
-added. The root guide is 4,094 bytes. Evidence is retained under
+added. The root guide is 4,084 bytes. Evidence is retained under
 `CW/artifacts/cu-window-text-20261102/`.
 
 The new native route has not yet been qualified by a goal-only model run.
