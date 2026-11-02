@@ -14,7 +14,7 @@ import url from "node:url";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { stateDir } from "./registry.mjs";
-import { parseGrant, BACKEND_METHOD } from "./tools.mjs";
+import { parseGrant, BACKEND_METHOD, TOOLS } from "./tools.mjs";
 import { ExecError, currentSignal, throwIfAborted, wait } from "./exec.mjs";
 
 export const PLUGIN_ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
@@ -193,10 +193,15 @@ export function openAppSession(sessionId) {
     // The daemon sees transport method names (probe, recordingStart, …), so
     // the grant is normalized through BACKEND_METHOD before it travels.
     const grant = parseGrant(process.env.CODEWHALE_CU_GRANT);
-    const transportGrant = grant ? [...new Set([...grant].map((name) => BACKEND_METHOD[name] ?? name))] : null;
+    const transportGrant = grant ? new Set([...grant].map((name) => BACKEND_METHOD[name] ?? name)) : null;
+    if (transportGrant) {
+      if (TOOLS.some(tool => grant.has(tool.name) && ["target", "from_target", "to"].some(field => tool.inputSchema.properties[field]))) transportGrant.add("resolve_element");
+      if (["type", "key", "hold_key"].some(tool => grant.has(tool))) transportGrant.add("focused_control");
+      if (["type", "key", "hold_key", "left_click", "double_click", "triple_click", "right_click", "middle_click", "left_click_drag", "mouse_move", "scroll"].some(tool => grant.has(tool))) transportGrant.add("input_owner");
+    }
     const identity = hostIdentity();
     const host = { publicKey: identity.publicKey, label: appHostLabel, persistent: identity.persistent };
-    const pending = requestConnection({ tool: "open_session", sessionId, host, owner: { pid: process.pid, host_pid: process.ppid }, ...(transportGrant ? { grant: transportGrant } : {}) }, { timeoutMs: 3_000, signal: null, keepOpen: true }).then(async ({ reply, socket }) => {
+    const pending = requestConnection({ tool: "open_session", sessionId, host, owner: { pid: process.pid, host_pid: process.ppid }, ...(transportGrant ? { grant: [...transportGrant] } : {}) }, { timeoutMs: 3_000, signal: null, keepOpen: true }).then(async ({ reply, socket }) => {
       if (!reply?.ok || typeof reply.leaseToken !== "string") {
         socket.destroy();
         throw Object.assign(new ExecError(reply?.error?.message ?? "Computer session lease was refused"), { code: reply?.error?.code ?? "app_session_closed" });

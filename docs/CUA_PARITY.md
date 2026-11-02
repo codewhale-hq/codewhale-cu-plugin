@@ -64,10 +64,26 @@ background event text and ordinary standard-mode keys, including Return.
 The existing key-window confirmation moved into the shared window-record
 entry point instead of being repeated only by key commands. Strict-mode
 focus refusals and dedicated held-input ownership remain separate. Explicit
-`type {delivery:"events"}` exposes the existing event path, with a helper
-capability check; semantic failures do not trigger an automatic fallback.
+Standard-mode `type` now chooses that window event path by default, so models
+do not need a Calc-specific delivery override. Strict mode retains its
+accessibility insertion path. `type {delivery:"events"}` explicitly requires
+the event path with a helper capability check; semantic failures do not
+trigger an automatic fallback.
 Focused combo children must belong to the observed control. Window refs are
 the documented target for commands such as Save.
+
+The first C5-corrected goal-only Calc diagnostic was stopped after 92.793
+seconds and 23 provider requests. Its saved workbook remained unchanged.
+The narrow task grant blocked private target-validation queries, and a
+separate frame-only capture lookup refused overlapping window frames. The
+client now carries only the guard-query dependencies of granted operations;
+public operations remain narrowed at both boundaries. Capture reuses the
+existing exact AX-to-CG window resolver and retains owner/geometry checks.
+Eighteen existing grant/session checks and five focused native/capture checks
+passed. A real Calc control under the same grant revalidated a window ref,
+navigated with default typing and Return, captured the exact workbook, and
+refused an ungranted script. These are local controls, not a successful model
+completion.
 
 An unapplied setter now returns `value_not_verified` and stops the known
 batch. Typing with Return retains `text_verified`, because a final key receipt

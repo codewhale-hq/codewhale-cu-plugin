@@ -1481,11 +1481,7 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
        && selected.location>=0 && selected.length>=0 && selected.location<=before.length && selected.length<=before.length-selected.location)
       expected=[before stringByReplacingCharactersInRange:NSMakeRange(selected.location,selected.length) withString:text];
   }
-  // delivery:"events" forces the real keystroke stream. Service-backed
-  // fields (a hosted panel's path box) accept an AXSelectedText write and
-  // then overwrite it from their own model — the write verifies at read
-  // time and reverts on commit. Real key events reach the field's editor.
-  BOOL semantic=!simulated && focused && ![args[@"foreground_input"] boolValue] && ![args[@"delivery"] isEqual:@"events"] && cuSettable((__bridge AXUIElementRef)focused,@"AXSelectedText")
+  BOOL semantic=!simulated && focused && ![args[@"focus_lease"] boolValue] && ![args[@"foreground_input"] boolValue] && ![args[@"delivery"] isEqual:@"events"] && cuSettable((__bridge AXUIElementRef)focused,@"AXSelectedText")
     && !axHasWebAncestor((__bridge AXUIElementRef)focused);
   if(semantic) {
     cuCheckCancelled();
@@ -1777,6 +1773,12 @@ static id execute(NSDictionary *p) {
       }
     }
     if(!valid) @throw [NSException exceptionWithName:@"window" reason:@"the selected app window has no accessibility geometry; call list_windows for a valid window index" userInfo:nil];
+    uint32_t exactWindow=0; pid_t owner=0;
+    if(cuElementWindow(axWindows[index],a.processIdentifier,&exactWindow,&owner,NULL) && owner==a.processIdentifier) {
+      windows=[windows filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *window, NSDictionary *bindings) {
+        return [window[(__bridge NSString *)kCGWindowNumber] unsignedIntValue]==exactWindow;
+      }]];
+    }
     NSMutableDictionary *result = [capturableWindow(windows,a.processIdentifier,a.localizedName,preferred) mutableCopy];
     result[@"pid"] = @(a.processIdentifier);
     return result;
