@@ -2,7 +2,7 @@
 // run_actions steps and the merged clipboard tool, is replaced before writing.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { redactCall, containsRasterPin, REDACTED } from "../src/trajectory.mjs";
+import { redactCall, containsObservationPin, REDACTED } from "../src/trajectory.mjs";
 
 test("redactCall removes entered text from every text-entry tool", () => {
   for (const [tool, args, field] of [
@@ -28,5 +28,5 @@ test("redactCall removes entered text from every text-entry tool", () => {
   const aliased = redactCall("run_actions", { steps: [{ tool: "type", args: { text: "private" } }] });
   assert.equal(aliased.redacted, true);
   assert.equal(aliased.args.steps[0].args.text, REDACTED);
-  assert.equal(containsRasterPin({ steps: [{ tool: "left_click", args: { target: { raster_id: "saved-capture" } } }] }), true);
+  assert.equal(containsObservationPin({ steps: [{ tool: "left_click", args: { target: { raster_id: "saved-capture" } } }] }), true);
 });

@@ -103,12 +103,12 @@ test("browser actions expand to their wire tools; misuse fails as bad_args namin
 test("the advertised list is the merged surface; aliases are not listed", () => {
   const advertised = TOOLS.filter((t) => t.hidden !== true).map((t) => t.name);
   const hidden = TOOLS.filter((t) => t.hidden === true).map((t) => t.name);
-  assert.equal(advertised.length, 38, `advertised surface is ${advertised.length}`);
-  assert.equal(hidden.length, 35, `hidden aliases are ${hidden.length}`);
-  for (const merged of ["click", "pointer", "clipboard", "recording", "computer", "browser", "trajectory", "consent"]) assert.ok(advertised.includes(merged), merged);
+  assert.equal(advertised.length, 37, `advertised surface is ${advertised.length}`);
+  assert.equal(hidden.length, 37, `hidden aliases are ${hidden.length}`);
+  for (const merged of ["click", "pointer", "drag", "clipboard", "recording", "computer", "browser", "trajectory", "consent"]) assert.ok(advertised.includes(merged), merged);
   for (const straight of ["list_sessions", "kill_app", "set_window_frame"]) assert.ok(advertised.includes(straight), straight);
   for (const gone of ["left_click", "double_click", "triple_click", "right_click", "middle_click", "mouse_move",
-    "left_mouse_down", "left_mouse_up", "read_clipboard", "write_clipboard",
+    "left_click_drag", "find_elements", "left_mouse_down", "left_mouse_up", "read_clipboard", "write_clipboard",
     "recording_start", "recording_stop", "recording_status", "recording_list",
     "computer_list", "computer_switch", "computer_register", "computer_spawn", "computer_remove", "hold_key",
     "consent_status", "consent_allow", "consent_deny", "consent_revoke",
@@ -166,7 +166,7 @@ after(() => { try { server.stdin.end(); } catch {} server?.kill("SIGTERM"); fs.r
 test("tools/list serves exactly the advertised union, validated shapes included", async () => {
   const res = await rpc("tools/list", {});
   const names = res.result.tools.map((t) => t.name);
-  assert.equal(names.length, 38);
+  assert.equal(names.length, 37);
   assert.ok(names.includes("click") && names.includes("pointer") && names.includes("clipboard") && names.includes("recording") && names.includes("computer") && names.includes("consent"));
   assert.ok(names.includes("list_sessions") && names.includes("kill_app") && names.includes("browser") && names.includes("set_window_frame") && names.includes("trajectory"));
   assert.ok(!names.includes("left_click") && !names.includes("hold_key") && !names.includes("read_clipboard") && !names.includes("consent_allow"));
