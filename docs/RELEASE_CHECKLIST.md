@@ -12,6 +12,35 @@ Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). Records below
 come from one maintainer Mac (arm64, Retina) and are evidence, not a
 publication verdict.
 
+### 0.16.0 — candidate, 2026-11-02
+
+Product work follows [Cua Driver’s interface principles](CUA_PARITY.md): copied
+observation refs, narrow discovery/views, explicit text semantics, one existing
+host composition runtime and independently verified saved results. No upstream
+code, runtime or dependency was imported. The full target cache and native
+identity, consent, cancellation and unknown-delivery guards remain.
+
+Two goal-only DeepSeek Calc runs on the final native source passed all saved
+values, formula relationships, seven currency formats and fresh-process reopen.
+The first took 510.857 seconds / 119 requests and revealed an invalid repeated-key
+restriction in the task hook. After removing duplicate native argument validation,
+the next passed in 452.323 seconds / 72 requests. These are functional passes;
+efficiency parity is unproven. The frozen C5-corrected development Engine and
+published Engine are separate evidence. Failed journeys remain recorded.
+
+A same-workbook observation check replaced 21 empty rows with useful controls
+at an 80-row limit, retaining identical full and explicit-role views and saved
+bytes. Its JSON grew from 12,829 to 13,613 bytes. Fifty-one affected existing
+checks passed. Current native controls also cover a safe unconfirmed-focus
+refusal, successful keyboard/field-focus editing, saved formulas, fresh Calc
+reopen and exact Unicode TextEdit save/reopen.
+
+Final exact-source suite, hosted three-platform CI, signed/notarized release
+assets and global installation are pending. The original 0.15.0 full gates do
+not qualify this candidate. Existing open platform, fresh-machine, permission,
+accessibility and updater gates remain open; this candidate does not claim
+universal-model or other-platform parity.
+
 ### 0.15.0 — published 2026-11-01
 
 Runtime fingerprint `2122f72b798af700`. The candidate adopts retained native

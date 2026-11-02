@@ -586,8 +586,16 @@ function rememberState(computer, app_ref, result) {
 function filterElements(elements, { detail, query, role, limit, offset, compact }) {
   const full = detail === "full";
   let rows = (elements ?? []).map(({ native_ref, ...el }, i) => ({ ...el, index: el.index ?? i }));
+  let omittedContainers = 0;
   if (!full) {
     rows = rows.filter((el) => el.windowIndex !== -1 || !Array.isArray(el.path) || el.path.length <= 1);
+    if (!query && !role) {
+      const before = rows.length;
+      rows = rows.filter(el => !(["AXGroup", "AXSplitGroup"].includes(el.role) &&
+        ![el.label, el.title, el.description].some(value => String(value ?? "").trim()) &&
+        (el.value == null || el.value === "") && !el.focused && !el.actions?.length));
+      omittedContainers = before - rows.length;
+    }
   }
   if (role) rows = rows.filter((el) => el.role === role);
   if (query) {
@@ -608,7 +616,8 @@ function filterElements(elements, { detail, query, role, limit, offset, compact 
       ...(rest.label != null && String(rest.label).length > 80 ? { label_truncated: true } : {}),
       ...(rest.value != null && String(rest.value).length > 200 ? { value_truncated: true } : {}) };
   });
-  return { elements: view, matched, offset: start, returned: view.length, truncated: start + view.length < matched };
+  return { elements: view, matched, offset: start, returned: view.length, truncated: start + view.length < matched,
+    ...(omittedContainers ? { omitted_containers: omittedContainers } : {}) };
 }
 
 function fitStatePayload(data, budget) {
@@ -685,13 +694,10 @@ function observeState(computer, app_ref, result, args = {}, bindWhen = null) {
   const state_id = ephemeral ? null : rememberState(computer, app_ref, result);
   const data = {
     ...result,
+    ...filtered,
     state_id,
     elements: filtered.elements.map(element => ({ ...element, ...(state_id ? { ref: `${state_id}:${element.index}` } : {}) })),
     detail,
-    matched: filtered.matched,
-    offset: filtered.offset,
-    returned: filtered.returned,
-    truncated: filtered.truncated,
     tree_truncated: result.truncated === true,
     note: ephemeral
       ? "Ephemeral poll: elements are not bound to a state_id."

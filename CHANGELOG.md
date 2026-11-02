@@ -1,6 +1,11 @@
 # Release notes
 
-## Unreleased
+## 0.16.0 — release candidate
+
+- Default observations omit empty layout groups, report their count and retain every control in full views and explicit searches. Original target identities and indices remain intact.
+- Text clicks, focus, typing, keys and literal replacement share one confirmed native text receiver. Unconfirmed focus refuses before later input. Standard typing uses window events by default; strict mode keeps its guarded semantic path.
+- Narrow grants retain only the private queries required to validate their allowed operations. Capture reuses the exact accessibility-to-native-window bridge. Known unreliable VCL coordinate delivery refuses before input; keyboard and element targets remain available.
+- Two goal-only DeepSeek Calc tasks passed saved values, formulas, currency formats and fresh-process reopen. The corrected harness run took 452.323 seconds / 72 requests: functionality is verified on the measured Mac; efficiency parity remains unproven.
 
 - Batch capture receipts explicitly flag omitted inline images; the guide directs visual decisions to direct capture calls. Codewhale composition remains available for text, data and known actions.
 
@@ -12,7 +17,7 @@
 - The advertised surface uses `drag` and observation filters instead of exposing `left_click_drag` and cached `find_elements` separately. Compatibility names still dispatch through the same guards. The batch schema lists 34 canonical members instead of 67 names and aliases.
 - Text operations distinguish full replacement (`set_value`) from insertion (`type`). `select_text` requires an explicit range instead of silently placing the caret at zero.
 - Batch arguments expose common field shapes from the existing tool schemas, and app guidance distinguishes input binding from read scope. Background document Save uses an observed element target with `key`; disabled menu commands must not be retried unchanged.
-- Compact observations mark shortened labels and values. Real DeepSeek saved-document outcomes and the remaining Engine composition issues are recorded in [the efficiency observations](docs/AGENT_DESKTOP.md#end-to-end-efficiency-after-installation). Published 0.15.0 artifacts are unchanged.
+- Compact observations mark shortened labels and values. Real DeepSeek saved-document outcomes and the remaining Engine composition issues are recorded in [the efficiency observations](docs/AGENT_DESKTOP.md#end-to-end-efficiency-after-installation). Published 0.15.0 artifacts are unchanged while this candidate is qualified.
 
 ## 0.15.0 — 2026-11-01
 

@@ -1,8 +1,7 @@
 # Plugin and native helper distribution
 
-Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). The published
-0.13.0 release includes the notarized macOS helper and the portable plugin
-asset.
+Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). Each stable
+release includes the notarized macOS helper and the portable plugin asset.
 
 Computer Use is an ordinary plugin, installed and updated through Codewhale's
 **Connectors** from a stable published release using the existing plugin
@@ -81,8 +80,8 @@ website offers the disk image as the download when `release.json`'s `dmg`
 entry and GitHub's SHA-256 asset digest agree, and the archive otherwise; the
 updater always downloads the archive, verifies it against GitHub's digest and
 does not read `release.json`; `SHA256SUMS.txt` is a human-readable receipt
-that no code consumes. Keep the release draft until these four assets and,
-for 0.13.0, the portable plugin asset have uploaded and their applicable
+that no code consumes. Keep the release draft until these four assets and
+the portable plugin asset have uploaded and their applicable
 checks have passed. The website refreshes
 availability within five minutes of publication; no hard-coded website version
 needs to change. Packaging does not tag, publish, or change

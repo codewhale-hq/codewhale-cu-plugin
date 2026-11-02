@@ -36,6 +36,7 @@ Prefer `run_actions` for 1–8 known related `{tool,arguments}` steps (`args` is
   `state_id` and a `ref` per element. `since` takes an earlier state ID or `"latest"`; same complete
   view returns changed rows and `removed_indices`, otherwise a full baseline.
 - Filter an already returned `elements` array in host code; use `get_app_state {query,role}` for a fresh narrow view.
+- Default summary/compact views omit empty layout groups and report `omitted_containers`. Full views and explicit query/role searches retain them. Original indices and target identities stay in the cache.
 - `wait_for {query|role, state, timeout?}` — poll until UI appears/disappears.
 - `screenshot {app_ref?|region?|display?}` — raster geometry and `raster_id` for visual work.
 - `zoom {region, raster_id}` — crop that parent; returns a new child `raster_id`.

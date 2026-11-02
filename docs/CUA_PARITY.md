@@ -63,7 +63,7 @@ The distinct Calc failure led to one shared confirmed-window route for
 background event text and ordinary standard-mode keys, including Return.
 The existing key-window confirmation moved into the shared window-record
 entry point instead of being repeated only by key commands. Strict-mode
-focus refusals and dedicated held-input ownership remain separate. Explicit
+focus refusals and dedicated held-input ownership remain separate.
 Standard-mode `type` now chooses that window event path by default, so models
 do not need a Calc-specific delivery override. Strict mode retains its
 accessibility insertion path. `type {delivery:"events"}` explicitly requires
@@ -117,7 +117,14 @@ Calc process. TextEdit also saved and reopened 39 exact Unicode bytes.
 Seventeen affected native checks and eleven guide checks passed. An immediate
 window-zero read missed a transient app window; a fresh app-scoped read
 confirmed the edits without replay. These controls qualify the changed input
-paths, rather than another successful or faster model journey.
+paths separately from model planning. Two later goal-only Calc runs on that
+source passed every saved value, formula, currency format and fresh-process
+reopen. The 510.857-second / 119-request run exposed a harness that rejected
+supported repeated arrows. With that duplicate validation removed, the next
+run passed in 452.323 seconds / 72 requests. Functionality passed; efficiency
+remains unfinished. The product, goal and seed were unchanged between those
+two runs, but the hook correction and stochastic plans prevent a causal
+speedup claim.
 
 An unapplied setter now returns `value_not_verified` and stops the known
 batch. Typing with Return retains `text_verified`, because a final key receipt
@@ -145,10 +152,18 @@ not type. No new repository tests, runtime, provider loop or dependency were
 added. The root guide is 4,084 bytes. Evidence is retained under
 `CW/artifacts/cu-window-text-20261102/`.
 
-The new native route has not yet been qualified by a goal-only model run.
-The earlier Engine C5 prefix-drift failure is owned by the active Engine slice;
-repeating a paid task on that known-crashing binary would not qualify it.
+The goal-only Calc results above use the immutable C5-corrected development
+Engine, not the older global binary that demonstrated the prefix-drift failure.
 Published 0.15.0 and its global notarized helper remain unchanged.
+
+Default summary and compact observations now omit empty layout groups while
+retaining the complete target cache, original indices and explicit query/role
+results. A passive before/after check on the same saved workbook returned 80
+useful rows instead of 59 useful rows and 21 empty groups; full and explicit
+role views were identical, and saved bytes were unchanged. The denser view
+was 13,613 JSON bytes versus 12,829 before, so this is useful control density,
+not a smaller-payload or end-to-end speed claim. Fifty-one affected existing
+checks passed. The count of omitted groups is explicit in the receipt.
 
 ## October 31 macOS Phase 3 source candidate
 

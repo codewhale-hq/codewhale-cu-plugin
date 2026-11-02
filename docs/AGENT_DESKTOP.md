@@ -164,9 +164,20 @@ its saved file stayed unchanged. The current native follow-up reuses one
 confirmed text-focus routine across click, focus, typing, keys and literal
 replacement, preserving selection and stopping unconfirmed focus before later
 input. Native saved/reopen controls and 28 affected existing checks pass;
-that follow-up is not yet another accepted model result. The harness also
+two later runs on that source also passed every saved value, formula,
+format and fresh-process reopen. They took 510.857 seconds / 119 requests
+and 452.323 seconds / 72 requests. The first exposed a hook that rejected
+supported repeated arrow keys; the second removed that duplicate validation.
+Both are functional passes, not efficiency parity. The harness also
 corrected the canonical resource-reader name and removed a forced window-zero
 observation default. Those method changes prevent a matched speedup claim.
+
+The default view now skips empty layout groups without removing them from
+the native target cache or explicit searches. A passive same-workbook
+comparison replaced 21 empty rows with useful controls at the same 80-row
+limit. Full and explicit-role views and saved workbook bytes stayed identical.
+The denser payload grew from 12,829 to 13,613 bytes; no token or latency
+reduction is inferred from that observation.
 
 These are local source/development measurements. Published 0.15.0 assets retain
 their original source and signature. The operator's user plugin has unreleased
