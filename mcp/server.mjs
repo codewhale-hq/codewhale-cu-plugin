@@ -23,6 +23,7 @@ import { isStrict, strictFor, approvalMode, unnamedAppCode } from "../src/approv
 import { createRecorder, readTrajectory, listTrajectories, resolveTrajectory, isTrajectoryTool, containsRasterPin } from "../src/trajectory.mjs";
 
 const SERVER_NAME = "codewhale-cu";
+const MAX_STDIN_LINE_BYTES = 1024 * 1024;
 
 // ---------- per-session runtime state ----------
 let controlStopped = false;
@@ -2268,17 +2269,42 @@ const HANDLERS = {
   },
 };
 
-let buffer = "";
-process.stdin.setEncoding("utf8");
+const stdinBuffer = Buffer.allocUnsafe(MAX_STDIN_LINE_BYTES);
+let stdinBytes = 0;
+let discardingStdinLine = false;
 process.stdin.on("data", (chunk) => {
-  buffer += chunk;
-  let idx;
-  while ((idx = buffer.indexOf("\n")) !== -1) {
-    const line = buffer.slice(0, idx).trim();
-    buffer = buffer.slice(idx + 1);
-    if (!line) continue;
-    handleLine(line);
+  let start = 0;
+  while (start < chunk.length) {
+    const newline = chunk.indexOf(10, start);
+    const end = newline === -1 ? chunk.length : newline;
+    if (!discardingStdinLine) {
+      if (end - start > MAX_STDIN_LINE_BYTES - stdinBytes) {
+        stdinBytes = 0;
+        discardingStdinLine = true;
+        respondError(null, -32600, "MCP stdin frame exceeds 1048576 bytes; send a smaller JSON line");
+      } else {
+        chunk.copy(stdinBuffer, stdinBytes, start, end);
+        stdinBytes += end - start;
+      }
+    }
+    if (newline === -1) break;
+    if (!discardingStdinLine && stdinBytes > 0) {
+      try {
+        const line = new TextDecoder("utf-8", { fatal: true }).decode(stdinBuffer.subarray(0, stdinBytes)).trim();
+        if (line) handleLine(line);
+      } catch {
+        respondError(null, -32700, "MCP stdin frame is not valid UTF8");
+      }
+    }
+    stdinBytes = 0;
+    discardingStdinLine = false;
+    start = newline + 1;
   }
+});
+process.stdin.on("end", () => {
+  if (stdinBytes > 0 && !discardingStdinLine) respondError(null, -32700, "MCP stdin ended before a JSON-line boundary");
+  stdinBytes = 0;
+  discardingStdinLine = false;
 });
 async function releaseControl({ releaseOnly = false } = {}) {
   let timer;
