@@ -244,9 +244,9 @@ Once the GUI is the right interface: observe once, act once, then verify.
 An unverified `set_value` returns `value_not_verified` and stops a known batch.
 Typing with Return preserves `text_verified`; the final key receipt cannot
 stand in for text verification. Check the meaningful final state: some controls
-commit only after Return. macOS `type` defaults to semantic
-insertion when supported; `delivery:"events"` requests the existing exact-window
-key-event route explicitly. Current helpers confirm the target window is key
+commit only after Return. macOS standard-mode `type` defaults to window-routed
+events; strict mode may use semantic insertion. `delivery:"events"` explicitly
+requires the exact-window event route. Current helpers confirm the target window is key
 inside its own app before background events and fail closed if that cannot be
 proved. This does not activate the app or authorize foreground input. An app
 can ignore a semantic value write; readback alone still does not prove saving.
@@ -255,8 +255,9 @@ Calc may expose a cell as an editable text field while ignoring its AX value
 or focus writes. Its Name Box has an editable `AXTextArea` child; the combo
 wrapper is not the text receiver. A window-targeted `cmd+shift+t` focuses the
 Name Box on macOS. Entering a cell/range and Return navigates; typing data and
-Return commits it. Use explicit event delivery if semantic insertion is not
-supported, and verify the resulting cells and saved workbook. These app
+Return commits it. VCL background coordinate input refuses before dispatch;
+use refs or keyboard navigation. Text focus must be confirmed before a batch
+continues. Verify the resulting cells and saved workbook. These app
 semantics do not make an unverified input safe to replay.
 
 ## Choosing targets

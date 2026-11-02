@@ -156,6 +156,18 @@ keyboard operations available. The matching refusal/keyboard control and 28
 affected existing checks pass; this is still not a successful model workbook
 journey. See [the Cua follow-up](CUA_PARITY.md#november-2-background-text-follow-up).
 
+A later goal-only Calc run passed the complete independent saved-file oracle
+and fresh-process reopen in 408.076 seconds / 79 provider requests. It is a
+functional pass and an efficiency failure. A subsequent repeat failed at
+69.900 seconds / 19 requests after an unconfirmed combo focus and select-all;
+its saved file stayed unchanged. The current native follow-up reuses one
+confirmed text-focus routine across click, focus, typing, keys and literal
+replacement, preserving selection and stopping unconfirmed focus before later
+input. Native saved/reopen controls and 28 affected existing checks pass;
+that follow-up is not yet another accepted model result. The harness also
+corrected the canonical resource-reader name and removed a forced window-zero
+observation default. Those method changes prevent a matched speedup claim.
+
 These are local source/development measurements. Published 0.15.0 assets retain
 their original source and signature. The operator's user plugin has unreleased
 frontend/guide changes over the published helper, and the global CLI is a

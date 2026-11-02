@@ -27,6 +27,8 @@ stop; never change targets or routes to bypass it.
 | `window_blocked_by_modal_sheet` | an accessibility press would cross a sheet | deal with the sheet first |
 | `window_ambiguous` | two windows share the resolved window's frame (stacked or identical geometry) | `list_windows`, pick one, pass `window_id` (or re-target the press) |
 | `window_target_not_found` | PID has no eligible window | `list_windows`; open or pick the right app |
+| `text_focus_unconfirmed` | the requested text receiver did not acquire confirmed focus | observe its editable child or use the app's keyboard navigation; read `skill://codewhale-cu/references/operating-details.md` for field and selection details |
+| `pointer_reading_toolkit` | the toolkit cannot reliably deliver background pointer input at the requested point | no pointer action was sent; use observed element refs, keyboard navigation or a separate computer |
 
 ## Route and policy
 

@@ -99,6 +99,26 @@ window-targeted keys and default typing. Eighteen existing grant/session and
 ten affected pointer checks passed. Element refs and keyboard navigation stay
 available; the failed model journey remains a failure.
 
+A subsequent goal-only DeepSeek Calc task passed every saved worksheet value,
+the four formula relationships, seven currency formats and a fresh-process
+reopen. It took 408.076 seconds and 79 provider requests: functionality passed,
+efficiency did not. The trace also caught a harness defect that denied the
+host's canonical resource reader. A repeat with that alias admitted failed
+after 69.900 seconds and 19 requests when an unconfirmed combo-box focus was
+followed by select-all. Both outcomes and their usage remain separate.
+
+The shared text-focus routine now handles text clicks, explicit focus, typing,
+keys and literal replacement. It resolves a unique editable combo child when
+available, confirms its exact window and focus, and preserves an already
+focused selection. Unconfirmed focus stops the batch before text or keys.
+A native control verified that refusal, then completed keyboard/field-focus
+editing, saved the exact values and formula and reopened them in another
+Calc process. TextEdit also saved and reopened 39 exact Unicode bytes.
+Seventeen affected native checks and eleven guide checks passed. An immediate
+window-zero read missed a transient app window; a fresh app-scoped read
+confirmed the edits without replay. These controls qualify the changed input
+paths, rather than another successful or faster model journey.
+
 An unapplied setter now returns `value_not_verified` and stops the known
 batch. Typing with Return retains `text_verified`, because a final key receipt
 cannot verify preceding text. A cell may commit only on Return; fresh state

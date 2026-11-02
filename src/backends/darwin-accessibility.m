@@ -1084,6 +1084,7 @@ static BOOL cuSettable(AXUIElementRef el, NSString *name) {
   return AXUIElementIsAttributeSettable(el,(__bridge CFStringRef)name,&settable)==kAXErrorSuccess && settable;
 }
 static BOOL axHasWebAncestor(AXUIElementRef el);
+static id cuFocusTextTarget(id element, NSDictionary *args);
 static NSString *cuClickAction(AXUIElementRef el, BOOL context) {
   id enabled=attr(el,@"AXEnabled");
   if([enabled isKindOfClass:NSNumber.class] && ![enabled boolValue]) return nil;
@@ -1126,10 +1127,12 @@ static NSDictionary *cuClick(AXUIElementRef el, BOOL context, NSDictionary *args
   double yieldMs=opensMenu && args ? cuYieldToUser(args) : 0;
   cuCheckCancelled();
   BOOL attribute=[action isEqual:@"AXFocused"] || [action isEqual:@"AXSelected"];
-  AXError error=attribute?AXUIElementSetAttributeValue(el,(__bridge CFStringRef)action,kCFBooleanTrue):AXUIElementPerformAction(el,(__bridge CFStringRef)action);
+  BOOL focus=[action isEqual:@"AXFocused"];
+  AXError error=focus?(cuFocusTextTarget((__bridge id)el,args)?kAXErrorSuccess:kAXErrorCannotComplete):attribute?AXUIElementSetAttributeValue(el,(__bridge CFStringRef)action,kCFBooleanTrue):AXUIElementPerformAction(el,(__bridge CFStringRef)action);
+  if(focus && error!=kAXErrorSuccess) @throw [NSException exceptionWithName:@"focus" reason:@"text_focus_unconfirmed: the control did not acquire text focus; observe its editable child or use keyboard navigation. No text or key was sent." userInfo:nil];
   if(error!=kAXErrorSuccess) @throw [NSException exceptionWithName:@"action" reason:[NSString stringWithFormat:@"accessibility %@ failed: %d; no pointer fallback was sent",action,error] userInfo:nil];
   NSMutableDictionary *receipt=[@{@"action_sent":@YES,@"strategy":@"a11y",@"action":action,@"pointer_moved":@NO,
-           @"verified":@(attribute && [attr(el,action) boolValue])} mutableCopy];
+           @"verified":@(focus || (attribute && [attr(el,action) boolValue]))} mutableCopy];
   if(yieldMs>0) receipt[@"yield_ms"]=@(round(yieldMs));
   pid_t pid=0;
   if(opensMenu && AXUIElementGetPid(el,&pid)==kAXErrorSuccess && pid>0) {
@@ -1432,26 +1435,47 @@ static id cuResolvePathTarget(pid_t pid, NSDictionary *t) {
   CFRelease(appEl);
   return el;
 }
-static BOOL cuFocusTextTarget(id element) {
-  if(AXUIElementSetAttributeValue((__bridge AXUIElementRef)element,kAXFocusedAttribute,kCFBooleanTrue) != kAXErrorSuccess) return NO;
-  pid_t pid = 0;
-  AXUIElementGetPid((__bridge AXUIElementRef)element, &pid);
+static id cuFocusTextTarget(id element, NSDictionary *args) {
+  id recipient=element;
   BOOL combo = [attr((__bridge AXUIElementRef)element,@"AXRole") isEqual:@"AXComboBox"];
+  if(combo) {
+    NSMutableArray *fields=[NSMutableArray array];
+    for(id child in attr((__bridge AXUIElementRef)element,@"AXChildren")) {
+      NSString *role=attr((__bridge AXUIElementRef)child,@"AXRole");
+      if([@[@"AXTextField",@"AXTextArea",@"AXSearchField",@"AXSecureTextField"] containsObject:role]) [fields addObject:child];
+    }
+    if(fields.count==1) recipient=fields[0];
+  }
+  if([args[@"focus_lease"] boolValue]) {
+    NSRunningApplication *app=resolve(args[@"input_app_ref"]);
+    uint32_t window=0;
+    if(!app || !cuElementWindow(recipient,app.processIdentifier,&window,nil,nil))
+      @throw [NSException exceptionWithName:@"focus" reason:@"text_focus_unconfirmed: the editable control's exact window did not resolve; observe again. No text or key was sent." userInfo:nil];
+    if(!cuAppKeyWindowIs(app.processIdentifier,window)) {
+      cuBgLease lease={0}; NSString *why=nil;
+      if(!cuResolveBgPointer() || !cuBgLeaseBegin(app,window,YES,args,&lease,&why))
+        @throw [NSException exceptionWithName:@"focus" reason:why?:@"text_focus_unconfirmed: the editable control's window could not acquire keyboard focus; no text or key was sent" userInfo:nil];
+    }
+  }
+  if([attr((__bridge AXUIElementRef)recipient,@"AXFocused") boolValue]) return recipient;
+  if(AXUIElementSetAttributeValue((__bridge AXUIElementRef)recipient,kAXFocusedAttribute,kCFBooleanTrue) != kAXErrorSuccess) return nil;
+  pid_t pid = 0;
+  AXUIElementGetPid((__bridge AXUIElementRef)recipient, &pid);
   for(int attempt = 0; attempt < 12; attempt++) {
     usleep(50000);
     cuCheckCancelled();
-    if([attr((__bridge AXUIElementRef)element,@"AXFocused") boolValue]) return YES;
+    if([attr((__bridge AXUIElementRef)recipient,@"AXFocused") boolValue]) return recipient;
     id focused = pid > 0 ? cuFocusedElement(pid) : nil;
-    if(focused && CFEqual((__bridge CFTypeRef)focused,(__bridge CFTypeRef)element)) return YES;
+    if(focused && CFEqual((__bridge CFTypeRef)focused,(__bridge CFTypeRef)recipient)) return recipient;
     if(combo && focused && cuTextRole(attr((__bridge AXUIElementRef)focused,@"AXRole"))) {
       id parent = focused;
       for(int depth = 0; parent && depth < 32; depth++) {
-        if(CFEqual((__bridge CFTypeRef)parent,(__bridge CFTypeRef)element)) return YES;
+        if(CFEqual((__bridge CFTypeRef)parent,(__bridge CFTypeRef)element)) return focused;
         parent = attr((__bridge AXUIElementRef)parent,@"AXParent");
       }
     }
   }
-  return NO;
+  return nil;
 }
 /**
  * Type into whatever holds focus in the bound app, then prove it landed.
@@ -1504,8 +1528,8 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
     NSString *why = nil;
     leasing = cuBgLeaseBegin(inputApp, typeWin, YES, args, &lease, &why);
     if(!leasing) @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:why userInfo:nil];
-    if(args[@"target"] && !cuFocusTextTarget(focused))
-      @throw [NSException exceptionWithName:@"focus" reason:@"explicit text target could not be focused in its window; no text was sent" userInfo:nil];
+    if((args[@"target"] || cuTextRole(role)) && !cuFocusTextTarget(focused,args))
+      @throw [NSException exceptionWithName:@"focus" reason:@"text_focus_unconfirmed: text target could not be focused in its window; no text was sent" userInfo:nil];
     if(args[@"target"]) cuValidateElementIdentity((__bridge AXUIElementRef)focused,args[@"target"]);
   }
   // Foreground keystrokes share the user's keyboard: wait for a hardware-
@@ -1582,7 +1606,8 @@ static NSDictionary *cuReplaceWebText(NSDictionary *args, NSRunningApplication *
     cuValidateElementIdentity((__bridge AXUIElementRef)element,args[@"target"]);
     if(board.changeCount != originalCount) @throw [NSException exceptionWithName:@"clipboard" reason:@"clipboard changed before replacement; no text was sent" userInfo:nil];
     sent = YES;
-    if(!cuFocusTextTarget(element)) @throw [NSException exceptionWithName:@"focus" reason:@"explicit text target did not acquire focus; no text was sent" userInfo:nil];
+    id textRecipient=cuFocusTextTarget(element,args);
+    if(!textRecipient) @throw [NSException exceptionWithName:@"focus" reason:@"text_focus_unconfirmed: explicit text target did not acquire focus; no text was sent" userInfo:nil];
     if(board.changeCount != originalCount) @throw [NSException exceptionWithName:@"clipboard" reason:@"clipboard changed before replacement; no text was sent" userInfo:nil];
     ownedCount = [board clearContents];
     BOOL prepared = [board setString:value forType:NSPasteboardTypeString];
@@ -1591,7 +1616,7 @@ static NSDictionary *cuReplaceWebText(NSDictionary *args, NSRunningApplication *
     cuWindowChord(&lease,0,kCGEventFlagMaskCommand);
     cuCheckCancelled();
     cuValidateElementIdentity((__bridge AXUIElementRef)element,args[@"target"]);
-    if(![attr((__bridge AXUIElementRef)element,@"AXFocused") boolValue]) @throw [NSException exceptionWithName:@"focus" reason:@"text target lost focus before paste" userInfo:nil];
+    if(![attr((__bridge AXUIElementRef)textRecipient,@"AXFocused") boolValue]) @throw [NSException exceptionWithName:@"focus" reason:@"text target lost focus before paste" userInfo:nil];
     if(board.changeCount != ownedCount) @throw [NSException exceptionWithName:@"clipboard" reason:@"clipboard changed before paste; no paste was sent" userInfo:nil];
     cuWindowChord(&lease,9,kCGEventFlagMaskCommand);
     NSUInteger stable = 0;
@@ -2026,8 +2051,8 @@ static id execute(NSDictionary *p) {
       @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:why userInfo:nil];
     @try {
       NSString *role = anchor ? attr((__bridge AXUIElementRef)anchor,@"AXRole") : nil;
-      if(t && cuTextRole(role) && ![role isEqual:@"AXWebArea"]) {
-        if(!cuFocusTextTarget(anchor)) @throw [NSException exceptionWithName:@"focus" reason:@"explicit key target could not be focused; no key was sent" userInfo:nil];
+      if(cuTextRole(role) && ![role isEqual:@"AXWebArea"]) {
+        if(!cuFocusTextTarget(anchor,args)) @throw [NSException exceptionWithName:@"focus" reason:@"text_focus_unconfirmed: key target could not be focused; no key was sent" userInfo:nil];
       }
       if(t) cuValidateElementIdentity((__bridge AXUIElementRef)anchor,t);
       cuWindowChord(&lease,[args[@"code"] unsignedShortValue],[args[@"flags"] unsignedLongLongValue]);
@@ -2294,7 +2319,13 @@ static id execute(NSDictionary *p) {
         return done;
       }
     }
-    else if([tool isEqual:@"focus_element"]) e=AXUIElementSetAttributeValue((__bridge AXUIElementRef)el,kAXFocusedAttribute,kCFBooleanTrue);
+    else if([tool isEqual:@"focus_element"]) {
+      NSString *role=attr((__bridge AXUIElementRef)el,@"AXRole");
+      if(cuTextRole(role) && ![role isEqual:@"AXWebArea"]) {
+        if(!cuFocusTextTarget(el,args)) @throw [NSException exceptionWithName:@"focus" reason:@"text_focus_unconfirmed: the control did not acquire text focus; observe its editable child or use keyboard navigation" userInfo:nil];
+        e=kAXErrorSuccess;
+      } else e=AXUIElementSetAttributeValue((__bridge AXUIElementRef)el,kAXFocusedAttribute,kCFBooleanTrue);
+    }
     else if([tool isEqual:@"select_text"]){ NSArray *r=args[@"text_range"]?:@[@0,@0]; if(r.count!=2 || [r[0] longValue]<0 || [r[1] longValue]<0) @throw [NSException exceptionWithName:@"range" reason:@"text_range must be [start, length], both nonnegative" userInfo:nil]; CFRange range=CFRangeMake([r[0] longValue],[r[1] longValue]); AXValueRef v=AXValueCreate(kAXValueCFRangeType,&range); e=AXUIElementSetAttributeValue((__bridge AXUIElementRef)el,kAXSelectedTextRangeAttribute,v); CFRelease(v); }
     else if([tool isEqual:@"perform_action"]){ CFArrayRef actions=NULL; AXUIElementCopyActionNames((__bridge AXUIElementRef)el,&actions); NSArray *names=CFBridgingRelease(actions); if(![names containsObject:args[@"action"]]) @throw [NSException exceptionWithName:@"action" reason:@"action is not advertised by this element" userInfo:nil]; cuCheckCancelled(); e=AXUIElementPerformAction((__bridge AXUIElementRef)el,(__bridge CFStringRef)args[@"action"]); }
     if(e!=kAXErrorSuccess) @throw [NSException exceptionWithName:@"action" reason:[NSString stringWithFormat:@"accessibility action failed: %d",e] userInfo:nil];

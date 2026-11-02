@@ -148,7 +148,7 @@ export function nativeErrorCode(message) {
   if (/^user_busy:/.test(m)) return "user_busy";
   if (/^screen_locked:/.test(m)) return "screen_locked";
   if (/^element_stale:/.test(m)) return "element_stale";
-  for (const code of ["pointer_reading_toolkit", "chromium_pointer_unavailable", "drag_session_active", "drag_session_detected", "menu_item_not_found", "menu_item_disabled", "menu_item_ambiguous", "key_window_unconfirmed"]) if (m.startsWith(`${code}:`)) return code;
+  for (const code of ["pointer_reading_toolkit", "chromium_pointer_unavailable", "drag_session_active", "drag_session_detected", "menu_item_not_found", "menu_item_disabled", "menu_item_ambiguous", "key_window_unconfirmed", "text_focus_unconfirmed"]) if (m.startsWith(`${code}:`)) return code;
   if (/ambiguous/i.test(m)) return "window_ambiguous";
   if (/not capturable/i.test(m)) return "window_not_capturable";
   if (/several running applications match/i.test(m)) return "ambiguous_application";
