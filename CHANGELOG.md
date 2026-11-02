@@ -2,6 +2,8 @@
 
 ## 0.15.0 — 2026-11-01
 
+Published from `ec3bbb6821deb343758437f43312bd67d755157e` with 11 verified assets: notarized universal Mac ZIP/DMG, portable plugin and unsigned Windows preview. Final local checks: 550 pass, 29 platform skips, zero failures; exact-source three-platform CI and CodeQL passed. [Qualification record](docs/RELEASE_CHECKLIST.md#0150--published-2026-11-01).
+
 - Native document-window input uses the accessibility-to-WindowServer window ID bridge when available, validating the exact owner and geometry. Same-sized retained windows no longer make a reopened document indistinguishable by bounds alone. Hosted sheets keep their separate ownership checks; unavailable bridges retain the guarded geometry path.
 
 - Native multiline text replacement uses the supported selected-text edit path so document editors update their document model. A real TextEdit save/reopen check exposed an AXValue write that looked correct in immediate readback but reverted on save. Setter receipts now identify `verification_scope:"control-value"`; saved files and application effects still require independent verification.

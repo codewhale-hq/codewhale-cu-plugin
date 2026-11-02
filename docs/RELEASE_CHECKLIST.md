@@ -12,7 +12,7 @@ Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). Records below
 come from one maintainer Mac (arm64, Retina) and are evidence, not a
 publication verdict.
 
-### 0.15.0 — source candidate, 2026-11-01
+### 0.15.0 — published 2026-11-01
 
 Runtime fingerprint `2122f72b798af700`. The candidate adopts retained native
 AX identity and the exact native-window bridge from the principles in
@@ -29,8 +29,29 @@ Electron hover, pointer drag and HTML5 drop used fresh observations and
 independent renderer effects. These are deterministic operator-driven
 workflows, not unconstrained model-planning or broad coexistence qualification.
 
-Final source, hosted platform, Apple, package and publication receipts are
-recorded after the frozen candidate completes those gates. Earlier invalid
+Published as latest at 2026-11-02 05:52:57 UTC (November 1 locally) from
+`ec3bbb6821deb343758437f43312bd67d755157e`. Final local validation: 579 tests,
+550 pass, zero failures, 29 platform skips; dependency audit and receipt
+hygiene were clean. [Three-platform CI](https://github.com/codewhale-hq/codewhale-cu-plugin/actions/runs/41395752035)
+and [CodeQL](https://github.com/codewhale-hq/codewhale-cu-plugin/actions/runs/41395751080)
+passed on that exact source. All 66 packaged runtime files match it; the
+universal bundled Node 24.21.0 served 38 tools and a 4,056-byte guide.
+
+Native and workflow receipts were collected on `edd5900a33dd0085`. The final
+runtime retains the same native source; its later change adds refusal of a
+missing pointer target before the dedicated input owner starts. The unchanged
+TextEdit and native-identity paths reuse those receipts. Final source/package
+checks above cover `2122f72b798af700`; they are separate proof levels.
+
+Apple accepted app submission `e37de165-ed08-4dc5-84e2-403a6e7d11bc` and
+DMG submission `0e61c5d1-878c-4193-a9ec-2d00ca81616d`; both are signed,
+stapled and Gatekeeper accepted. The DMG passed its mounted-content check.
+[Release 0.15.0](https://github.com/codewhale-hq/codewhale-cu-plugin/releases/tag/v0.15.0)
+contains 11 assets with matching remote sizes and SHA-256 digests. Anonymous
+DMG, portable archive and release-receipt downloads match. The portable tar
+matches the frozen git archive and the unsigned Windows preview identifies
+the same source. Marketplace catalog `1db8c84` selects 0.15.0. This release
+operation did not replace the installed 0.14.0 development helper/plugin. Earlier invalid
 argument, stale-oracle, response-budget, stale-snapshot and interrupted trials
 are retained separately from accepted outcomes. No new tests or code comments
 were added. Off-Space capture, live lock, other macOS versions, permission
