@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Element targets are copied opaque refs from a specific observation and computer. They use the existing target resolver and native identity checks; old object targets remain callable. Refs cannot cross sessions or replay from a saved trajectory.
+- The advertised surface uses `drag` and observation filters instead of exposing `left_click_drag` and cached `find_elements` separately. Compatibility names still dispatch through the same guards. The batch schema lists 34 canonical members instead of 67 names and aliases.
+- Text operations distinguish full replacement (`set_value`) from insertion (`type`). `select_text` requires an explicit range instead of silently placing the caret at zero.
 - Batch arguments expose common field shapes from the existing tool schemas, and app guidance distinguishes input binding from read scope. Background document Save uses an observed element target with `key`; disabled menu commands must not be retried unchanged.
 - Compact observations mark shortened labels and values. Real DeepSeek saved-document outcomes and the remaining Engine composition issues are recorded in [the efficiency observations](docs/AGENT_DESKTOP.md#end-to-end-efficiency-after-installation). Published 0.15.0 artifacts are unchanged.
 

@@ -50,7 +50,7 @@ function fixtureWindow(s){
   assert.ok(w,'The unique fixture window is present');return w;
 }
 function editor(s){const w=fixtureWindow(s);return s.elements.find(e=>e.role==='AXTextArea'&&e.windowIndex===w.windowIndex);}
-function target(s){const e=editor(s);assert.ok(e,'The fixture editor is present');return {type:'element',state_id:s.state_id,index:e.index};}
+function target(s){const e=editor(s);assert.ok(e,'The fixture editor is present');return e.ref;}
 function value(s){return editor(s)?.value;}
 const dir=path.join(root,'receipts',`macos-${Date.now()}`);fs.mkdirSync(dir,{recursive:true});
 const fixture=path.join(dir,`cu-verification-${Date.now()}.txt`);

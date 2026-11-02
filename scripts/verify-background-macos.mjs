@@ -164,7 +164,7 @@ try {
   const target = (state, predicate) => {
     const element = state.elements.find(predicate);
     assert.ok(element, "expected accessible control");
-    return { type: "element", state_id: state.state_id, index: element.index };
+    return element.ref;
   };
   let quietSince = Date.now();
   let lastSample = receipt.samples.at(-1);

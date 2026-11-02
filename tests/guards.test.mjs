@@ -201,7 +201,7 @@ test("E6: an app reached through System Events goes through the ledger, and a de
 
 test("E3: a Place order click needs a per-call confirmation that no app grant covers", async () => {
   const state = await tool("get_app_state", {});
-  const target = { type: "element", state_id: state.state_id, index: 9 };
+  const target = state.elements.find(element => element.index === 9).ref;
   answerResolve({ role: "AXButton", label: "Place order", position: { x: 200, y: 20 }, size: { w: 80, h: 30 } });
   const clicksBefore = calls("left_click").length;
   const refused = await tool("click", { target });
@@ -232,9 +232,9 @@ test("E3: a Place order click needs a per-call confirmation that no app grant co
 test("E5: delete through perform_action, a coordinate click or a menu is gated; a Send-to text field is not", async () => {
   const state = await tool("get_app_state", {});
   answerResolve({ role: "AXButton", label: "Delete", position: { x: 300, y: 20 }, size: { w: 60, h: 30 } });
-  const pressed = await tool("perform_action", { target: { type: "element", state_id: state.state_id, index: 10 }, action: "AXPress" });
+  const pressed = await tool("perform_action", { target: state.elements.find(element => element.index === 10).ref, action: "AXPress" });
   assert.equal(pressed.error?.code, "confirmation_required", JSON.stringify(pressed));
-  const keyed = await tool("key", { text: "space", target: { type: "element", state_id: state.state_id, index: 10 } });
+  const keyed = await tool("key", { text: "space", target: state.elements.find(element => element.index === 10).ref });
   assert.equal(keyed.error?.code, "confirmation_required", JSON.stringify(keyed));
   const coord = await tool("click", { target: { type: "coordinate", space: "screen", x: 320, y: 30 } });
   assert.equal(coord.error?.code, "confirmation_required", JSON.stringify(coord));

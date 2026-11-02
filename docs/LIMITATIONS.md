@@ -284,10 +284,11 @@ was still populating — the observe retries once after 200 ms before
 returning. A re-observation remains the right answer when a control you can
 see is absent from the tree.
 
-Element targets no longer require `state_id`: `{type:"element", index}`
-binds the computer's latest observation, and an explicit `state_id` pins a
-specific earlier snapshot. Revalidation against the live tree is unchanged —
-stale or replaced elements still fail `element_stale` before any dispatch.
+Element targets use the returned opaque `ref` string. It binds the original
+snapshot and computer through the existing state cache and native resolver.
+Legacy index objects still decode through that same path for older clients;
+new callers should copy refs instead of reconstructing index/state objects.
+See the packaged quick reference for current targeting.
 
 Two honesty fixes on the action path:
 

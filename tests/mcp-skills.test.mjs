@@ -47,7 +47,7 @@ test("invoke_menu and list_apps advertise their new surfaces", () => {
 test("pixel tools advertise capture pins and the packaged guide teaches refusal recovery", () => {
   for (const name of ["click", "left_click", "scroll"]) {
     const tool = TOOLS.find(t => t.name === name);
-    const coordinate = tool.inputSchema.properties.target.oneOf.find(t => t.properties.type.const === "coordinate");
+    const coordinate = tool.inputSchema.properties.target.oneOf.find(t => t.properties?.type?.const === "coordinate");
     assert.equal(coordinate.properties.raster_id.type, "string", name);
     assert.equal(coordinate.properties.raster_id.maxLength, 128, name);
   }

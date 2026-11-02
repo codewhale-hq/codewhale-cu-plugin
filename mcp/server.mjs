@@ -12,7 +12,7 @@ import * as registry from "../src/registry.mjs";
 import * as consent from "../src/consent.mjs";
 import { backendFor, installRemoteAgent, executorFor, appExec, closeAppSession, routeFingerprint, closeSshChannel, SESSION_ID } from "../src/transport.mjs";
 import { spawnDockerComputer, destroyDockerComputer, destroySessionSpawns } from "../src/spawn.mjs";
-import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD, resolveTool, parseGrant, MERGED_EXPANSION, LEASE_GATED_TOOLS } from "../src/tools.mjs";
+import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD, resolveTool, elementRefTarget, ELEMENT_REF_PATTERN, parseGrant, MERGED_EXPANSION, LEASE_GATED_TOOLS } from "../src/tools.mjs";
 import { tryJson, withSignal, throwIfAborted, wait, currentSignal } from "../src/exec.mjs";
 import { inputRefusal, watchLease, HUMAN_DRIVING } from "../src/lease.mjs";
 import { APP_VERSION, helperStaleness, helperBuildDrift, hello, setAppHostIdentity } from "../src/app-socket.mjs";
@@ -20,7 +20,7 @@ import { launchRefusal } from "../src/launch-policy.mjs";
 import { checkAppScript } from "../src/app-script-policy.mjs";
 import { createNativePrompt, DECLINED_MESSAGE } from "../src/native-prompt.mjs";
 import { isStrict, strictFor, approvalMode, unnamedAppCode } from "../src/approval-mode.mjs";
-import { createRecorder, readTrajectory, listTrajectories, resolveTrajectory, isTrajectoryTool, containsRasterPin } from "../src/trajectory.mjs";
+import { createRecorder, readTrajectory, listTrajectories, resolveTrajectory, isTrajectoryTool, containsObservationPin } from "../src/trajectory.mjs";
 
 const SERVER_NAME = "codewhale-cu";
 const MAX_STDIN_LINE_BYTES = 1024 * 1024;
@@ -434,6 +434,9 @@ function resolveElement(target, computer) {
   if (!st) throw new ServerError("unknown_state", target.state_id
     ? `state_id "${target.state_id}" is unknown or expired — call get_app_state again`
     : "no observation on this computer yet — call get_app_state first");
+  if (st.computerId && st.computerId !== computer.id) {
+    throw new ServerError("state_wrong_computer", `state_id "${stateId}" belongs to computer "${st.computerId}", not "${computer.id}" — call get_app_state on that computer again`);
+  }
   const el = st.elements[target.index];
   if (!el) throw new ServerError("unknown_element", `element index ${target.index} is outside state ${stateId} (0..${st.elements.length - 1})`);
   return { state: st, element: el, stateId };
@@ -491,9 +494,6 @@ async function normalizeTarget(computer, target, kind, resolve, sink) {
   }
   if (target?.type === "element") {
     const { state, element, stateId } = resolveElement(target, computer);
-    if (state.computerId && state.computerId !== computer.id) {
-      throw new ServerError("state_wrong_computer", `state_id "${stateId}" belongs to computer "${state.computerId}", not "${computer.id}" — call get_app_state on that computer again`);
-    }
     // The receipt must name the observation actually resolved — a bare index
     // binds the computer's latest state, so reporting `target.state_id` would
     // say "undefined" for the common case.
@@ -569,7 +569,7 @@ function bindZoomRaster(computer, parent, region, file, sourceFile = file) {
 }
 
 function rememberState(computer, app_ref, result) {
-  const id = `s-${++stateCounter}`;
+  const id = `s-${SESSION_ID.replace(/-/g, "").slice(0, 16)}-${++stateCounter}`;
   // The observed identity wins over the caller's hint: "chrome" may have
   // resolved to "Google Chrome", and later re-resolution has to name the same
   // process, not re-run a loose match that could pick a different one.
@@ -681,7 +681,7 @@ function observeState(computer, app_ref, result, args = {}, bindWhen = null) {
   const data = {
     ...result,
     state_id,
-    elements: filtered.elements,
+    elements: filtered.elements.map(element => ({ ...element, ...(state_id ? { ref: `${state_id}:${element.index}` } : {}) })),
     detail,
     matched: filtered.matched,
     offset: filtered.offset,
@@ -690,13 +690,13 @@ function observeState(computer, app_ref, result, args = {}, bindWhen = null) {
     tree_truncated: result.truncated === true,
     note: ephemeral
       ? "Ephemeral poll: elements are not bound to a state_id."
-      : "Indices target this observation's cached tree (including rows not shown); pin it with state_id, or re-observe after the app changes.",
+      : "Pass an element ref as target. Refs pin this observation and computer; re-observe after UI changes.",
   };
   if (compact && data.ocr && args.include_ocr !== true) delete data.ocr;
   // Diffs compare the same bounded view, never replace the complete records
   // used for target revalidation, and never carry raster/OCR coordinates.
   const view = fitStatePayload(data, STATE_CHAR_BUDGET);
-  if (!ephemeral) Object.assign(appStates.get(state_id), { view: { elements: view.elements, options, identity, truncated: view.truncated, treeTruncated: result.truncated === true } });
+  if (!ephemeral) Object.assign(appStates.get(state_id), { view: { elements: view.elements.map(({ ref, ...element }) => element), options, identity, truncated: view.truncated, treeTruncated: result.truncated === true } });
   if (!args.since || ephemeral) return view;
   const previous = baseline?.view;
   if (!previous || !isDeepStrictEqual(previous.options, options) || !isDeepStrictEqual(previous.identity, identity) ||
@@ -705,11 +705,11 @@ function observeState(computer, app_ref, result, args = {}, bindWhen = null) {
   }
   const old = new Map(previous.elements.map((el) => [el.index, el]));
   const current = new Set(view.elements.map((el) => el.index));
-  const changed = view.elements.filter((el) => !isDeepStrictEqual(old.get(el.index), el));
+  const changed = view.elements.filter(({ ref, ...element }) => !isDeepStrictEqual(old.get(element.index), element));
   return { ...view, elements: changed, returned: changed.length, delta: true, base_state_id: baseId,
     removed_indices: previous.elements.filter((el) => !current.has(el.index)).map((el) => el.index),
     unchanged: view.elements.length - changed.length,
-    note: "Changed rows for the same view; removed_indices left that view. All element indices target the new state_id. Re-observe after UI changes." };
+    note: "Changed rows for the same view; removed_indices left that view. Returned refs pin the new observation. Re-observe after UI changes." };
 }
 
 function batchFinds(find, name, args, computer, index) {
@@ -894,7 +894,7 @@ async function waitFor(computer, args, switched) {
         return { content: [{ type: "text", text: JSON.stringify(fail(computer, b.error?.code ?? "observe_failed", b.error?.message ?? "Follow-up observation failed", { tool: "wait_for", switched, matched: false, state, polls, elapsed_ms: Date.now() - started })) }], isError: true };
       }
       if (satisfies(b)) {
-        return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: "wait_for", switched, matched: true, state, polls, elapsed_ms: Date.now() - started, state_id: b.state_id, matched_count: b.matched ?? 0, elements: b.elements, app: { name: b.name ?? null, pid: b.pid ?? null, bundle_id: b.bundle_id ?? null }, note: "Elements are bound to this observation — target them with {type:'element', index}; add state_id only to pin this snapshot after later observes. Re-observe if the UI changes again." })) }] };
+        return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: "wait_for", switched, matched: true, state, polls, elapsed_ms: Date.now() - started, state_id: b.state_id, matched_count: b.matched ?? 0, elements: b.elements, app: { name: b.name ?? null, pid: b.pid ?? null, bundle_id: b.bundle_id ?? null }, note: "Use returned element refs as targets. Re-observe if the UI changes again." })) }] };
       }
     }
     if (Date.now() >= deadline) break;
@@ -1383,6 +1383,18 @@ async function callTool(params, bindWhen = null) {
   if (GRANT && requested !== "stop_computer_control" && !GRANT.has(requested) && !GRANT.has(name)) {
     return { content: [{ type: "text", text: JSON.stringify(fail(null, "not_granted", `"${requested}" is outside this session's capability grant (${GRANT.size} tools). The host narrowed this session deliberately; do not look for a workaround.`)) }], isError: true };
   }
+  try {
+    args = { ...args };
+    for (const field of ["target", "from_target", "to"]) {
+      const schema = TOOLS.find(tool => tool.name === name)?.inputSchema.properties[field];
+      if (typeof args[field] !== "string" || !(schema?.pattern === ELEMENT_REF_PATTERN || schema?.oneOf?.some(option => option.pattern === ELEMENT_REF_PATTERN))) continue;
+      const target = elementRefTarget(args[field]);
+      if (!target) throw new ServerError("bad_target", `${field} must be a returned element ref or a raster coordinate target`);
+      args[field] = target;
+    }
+  } catch (error) {
+    return { content: [{ type: "text", text: JSON.stringify(fail(null, error.code ?? "bad_target", error.message)) }], isError: true };
+  }
   // Hosts are not required to enforce inputSchema. Check declared `required`
   // fields here so a missing argument becomes bad_args instead of a backend
   // crash or an opaque native error. The message names the tool the caller
@@ -1453,7 +1465,7 @@ async function callTool(params, bindWhen = null) {
     const dryRun = args.dry_run === true;
     // Old files may lack replayable:false; never strip or remap a saved pin.
     const cannotReplay = call => call.replayable === false || call.redacted === true
-      || isConsentDecision(call.tool, call.args) || needsUserDecision(call.tool, call.args) || containsRasterPin(call.args);
+      || isConsentDecision(call.tool, call.args) || needsUserDecision(call.tool, call.args) || containsObservationPin(call.args);
     const results = [];
     if (!dryRun) {
       replaying = true;
@@ -1722,7 +1734,7 @@ async function callTool(params, bindWhen = null) {
           detail: "summary", query: args.query, role: args.role,
           limit: args.limit ?? 20, offset: args.offset ?? 0, compact: true,
         });
-        return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: "find_elements", switched, state_id: args.state_id, ...filtered, note: "Indices address the cached tree from this state_id." })) }] };
+        return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: "find_elements", switched, state_id: args.state_id, ...filtered, elements: filtered.elements.map(element => ({ ...element, ref: `${args.state_id}:${element.index}` })), note: "Use returned refs as targets." })) }] };
       }
       return callTool({ name: "get_app_state", arguments: { ...args, detail: "compact", limit: args.limit ?? 20, computer: computer.id } });
     }
@@ -2040,6 +2052,9 @@ function validateToolArgs(computer, name, out) {
     if (out.role != null && typeof out.role !== "string") throw new ServerError("bad_args", "role must be a string");
     if (out.ocr_region != null && (!Array.isArray(out.ocr_region) || out.ocr_region.length !== 4)) throw new ServerError("bad_args", "ocr_region must be [x, y, w, h] in screen points");
   }
+  if (name === "select_text" && (!Array.isArray(out.text_range) || out.text_range.length !== 2 || !out.text_range.every(value => Number.isSafeInteger(value) && value >= 0))) {
+    throw new ServerError("bad_args", "text_range must be [start, length], both non-negative integers; set_value replaces the whole value");
+  }
   if (name === "open_application") {
     const refusal = launchRefusal(out, computer.platform ?? computer.platformHint ?? (computer.transport === "local" ? process.platform : computer.transport === "hdc" ? "harmonyos" : "linux"), { remote: computer.transport !== "local" });
     if (refusal) throw new ServerError(refusal.code, refusal.message);
@@ -2084,10 +2099,10 @@ async function prepareArgs(computer, name, args, resolve, sink) {
     // Hosts that don't enforce inputSchema can hand us any shape. Refuse
     // before it reaches a backend as an opaque native error or a TypeError.
     if (typeof given !== "object" || Array.isArray(given) || (given.type !== "coordinate" && given.type !== "element")) {
-      throw new ServerError("bad_target", `${key} must be {type:'coordinate',x,y[,space]} or {type:'element',index[,state_id]} — got ${JSON.stringify(given)?.slice(0, 120)}`);
+      throw new ServerError("bad_target", `${key} must be a returned element ref or {type:'coordinate',x,y[,raster_id]} — got ${JSON.stringify(given)?.slice(0, 120)}`);
     }
     if (key === "target" && ELEMENT_ONLY_TARGET.has(name) && given.type !== "element") {
-      throw new ServerError("bad_target", `${name} accepts element targets only — observe the control with get_app_state and pass {type:'element',index}`);
+      throw new ServerError("bad_target", `${name} accepts element refs only — observe the control with get_app_state and pass its ref`);
     }
     const kind = key === "target" && semantic.has(name) ? "semantic" : "pointer";
     out[key] = { ...given, ...(await normalizeTarget(computer, given, kind, resolve, sink)) };

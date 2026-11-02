@@ -159,7 +159,7 @@ function chromiumFamily({ id, label, family, binary }) {
         // Keyboard: focus the unicode input through accessibility, then type.
         const input = findElement(state, (e) => e.label === "unicode" || e.role === "AXTextField");
         if (!input) return record.untested("no text field in the accessibility tree");
-        await tool("left_click", { target: { type: "element", state_id: state.state_id, index: input.index }, strategy: "a11y" });
+        await tool("left_click", { target: input.ref, strategy: "a11y" });
         await sleep(300);
         await tool("type", { text: MARKER });
         await sleep(500);
@@ -169,7 +169,7 @@ function chromiumFamily({ id, label, family, binary }) {
         const fresh = await tool("get_app_state", { app_ref: { pid: proc.pid } });
         const tab = findElement(fresh, (e) => e.label === "Tab B");
         if (tab) {
-          const click = await tool("left_click", { target: { type: "element", state_id: fresh.state_id, index: tab.index }, strategy: "a11y" });
+          const click = await tool("left_click", { target: tab.ref, strategy: "a11y" });
           await sleep(400);
           record.a11yClick(page.state?.tab === "B", `strategy=${click.strategy} tab=${page.state?.tab}`);
         } else {
@@ -201,7 +201,7 @@ const appkitFamily = {
 
       const field = findElement(state, (e) => e.role === "AXTextField" && (e.value ?? "") === "");
       if (!field) return record.untested("no empty text field in the accessibility tree");
-      await tool("left_click", { target: { type: "element", state_id: state.state_id, index: field.index }, strategy: "a11y" });
+      await tool("left_click", { target: field.ref, strategy: "a11y" });
       await sleep(300);
       await tool("type", { text: MARKER });
       await sleep(500);
@@ -209,7 +209,7 @@ const appkitFamily = {
 
       const fresh = await tool("get_app_state", { app_ref: { pid: proc.pid } });
       const apply = findElement(fresh, (e) => e.label === "Apply");
-      const click = await tool("left_click", { target: { type: "element", state_id: fresh.state_id, index: apply.index }, strategy: "a11y" });
+      const click = await tool("left_click", { target: apply.ref, strategy: "a11y" });
       await sleep(400);
       record.a11yClick(read()?.applied === MARKER, `strategy=${click.strategy} applied=${JSON.stringify(read()?.applied)}`);
       record.foreground(before, frontmost());
@@ -287,7 +287,7 @@ const electronFamily = {
       // type, save, and let the file on disk say whether the keys landed.
       const editor = findElement(state, (e) => e.role === "AXTextArea") ?? findElement(state, (e) => e.role === "AXTextField");
       if (editor) {
-        await tool("left_click", { target: { type: "element", state_id: state.state_id, index: editor.index }, strategy: "a11y" });
+        await tool("left_click", { target: editor.ref, strategy: "a11y" });
         await sleep(400);
       }
       await sleep(6000);   // the editor takes the caret several seconds after first paint

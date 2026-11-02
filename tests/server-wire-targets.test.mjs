@@ -105,7 +105,7 @@ test("out-of-process coordinate actions keep the raster refusals", async () => {
   assert.equal(outside.ok, false);
   assert.equal(outside.error.code, "target_outside_raster");
 
-  const stale = await tool("left_click", { target: { type: "element", state_id: "s-999", index: 0 } });
+  const stale = await tool("left_click", { target: "s-0000000000000000-999:0" });
   assert.equal(stale.ok, false);
   assert.equal(stale.error.code, "unknown_state");
 
@@ -122,7 +122,7 @@ test("element targets retain their identity and AX path on the out-of-process po
   assert.ok(state.elements.every(e => !("path" in e) && !("windowIndex" in e)));
   assert.ok(!state.elements.some(e => e.label === "Save"));
   assert.equal(state.elements.find(e => e.index === 8).value, "Fixture text");
-  const target = { type: "element", state_id: state.state_id, index: 1 };
+  const target = state.elements.find(element => element.index === 1).ref;
 
   const click = await tool("left_click", { target });
   assert.equal(click.ok, true, JSON.stringify(click));

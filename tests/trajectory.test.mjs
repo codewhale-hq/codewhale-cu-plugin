@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import url from "node:url";
 import { spawn } from "node:child_process";
-import { containsRasterPin } from "../src/trajectory.mjs";
+import { containsObservationPin } from "../src/trajectory.mjs";
 
 const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "cu-traj-state-"));
@@ -144,14 +144,14 @@ test("trajectory_replay skips app_script", async () => {
   assert.deepEqual(replay.results, [{ tool: "app_script", ok: false, code: "not_replayable" }]);
 });
 
-test("saved capture pins cannot replay, including legacy files and nested actions", async () => {
-  assert.equal(containsRasterPin({ target: { type: "coordinate", raster_id: "saved" } }), true);
-  assert.equal(containsRasterPin({ action: "zoom", raster_id: "saved" }), true);
-  assert.equal(containsRasterPin({ from_target: { type: "coordinate", raster_id: "saved" } }), true);
-  assert.equal(containsRasterPin({ to: { type: "coordinate", raster_id: "saved" } }), true);
-  assert.equal(containsRasterPin({ steps: [{ tool: "click", arguments: { target: { raster_id: "saved" } } }] }), true);
-  assert.equal(containsRasterPin({ target: { type: "coordinate", x: 1, y: 1 } }), false);
-  assert.equal(containsRasterPin({ target: { type: "element", state_id: "s-1" } }), false);
+test("saved observation pins cannot replay, including legacy files and nested actions", async () => {
+  assert.equal(containsObservationPin({ target: { type: "coordinate", raster_id: "saved" } }), true);
+  assert.equal(containsObservationPin({ action: "zoom", raster_id: "saved" }), true);
+  assert.equal(containsObservationPin({ from_target: { type: "coordinate", raster_id: "saved" } }), true);
+  assert.equal(containsObservationPin({ to: { type: "coordinate", raster_id: "saved" } }), true);
+  assert.equal(containsObservationPin({ steps: [{ tool: "click", arguments: { target: "s-0123456789abcdef-1:4" } }] }), true);
+  assert.equal(containsObservationPin({ target: { type: "coordinate", x: 1, y: 1 } }), false);
+  assert.equal(containsObservationPin({ target: { type: "element", state_id: "s-1" } }), true);
 
   await tool("consent", { action: "allow", app: "FakeApp" });
   const started = await tool("trajectory", { action: "start" });

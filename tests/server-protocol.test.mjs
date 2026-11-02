@@ -108,13 +108,13 @@ test("tools/list advertises the merged surface with valid schemas; wire names st
     assert.ok(t.name && t.description && t.inputSchema, `schema incomplete for ${t.name}`);
   }
   const names = new Set(tools.map((t) => t.name));
-  for (const required of ["screenshot", "zoom", "click", "pointer", "left_click_drag", "scroll", "type", "key",
-    "set_value", "focus", "get_value", "find_elements", "run_actions", "select_text", "perform_action", "get_app_state", "list_apps", "list_windows", "list_displays",
+  for (const required of ["screenshot", "zoom", "click", "pointer", "drag", "scroll", "type", "key",
+    "set_value", "focus", "get_value", "run_actions", "select_text", "perform_action", "get_app_state", "list_apps", "list_windows", "list_displays",
     "switch_display", "open_application", "clipboard", "cursor_position", "wait",
     "recording", "computer", "request_access", "stop_computer_control", "invoke_menu", "preview", "wait_for"]) {
     assert.ok(names.has(required), `missing tool ${required}`);
   }
-  for (const hidden of ["left_click", "double_click", "right_click", "hold_key", "mouse_move", "read_clipboard",
+  for (const hidden of ["left_click_drag", "find_elements", "left_click", "double_click", "right_click", "hold_key", "mouse_move", "read_clipboard",
     "recording_start", "computer_list", "computer_switch"]) {
     assert.ok(!names.has(hidden), `${hidden} is an alias, not advertised`);
   }

@@ -118,8 +118,8 @@ test("summary preserves readable UI and original target indices while full retai
     assert.deepEqual(state.elements.map(e => e.index), [0, 1, 2, 3, 6, 7, 8]);
     assert.ok(state.elements.every(e => !("path" in e) && !("windowIndex" in e)));
     const field = state.elements.find(e => e.index === 8);
-    assert.deepEqual(field, { index: 8, role: "AXTextField", value: "Fixture text", focused: true, enabled: true, actions: ["AXConfirm"], position: { x: 10, y: 60 }, size: { w: 150, h: 25 } });
-    const action = await tool("perform_action", { target: { type: "element", state_id: state.state_id, index: 1 }, action: "AXPress" });
+    assert.deepEqual(field, { index: 8, ref: `${state.state_id}:8`, role: "AXTextField", value: "Fixture text", focused: true, enabled: true, actions: ["AXConfirm"], position: { x: 10, y: 60 }, size: { w: 150, h: 25 } });
+    const action = await tool("perform_action", { target: state.elements.find(e => e.index === 1).ref, action: "AXPress" });
     assert.equal(action.ok, true, JSON.stringify(action));
     assert.deepEqual(calls("perform_action").at(-1).args.target.path, [0, 1]);
     assert.equal(calls("perform_action").at(-1).args.target.windowIndex, 0);
@@ -248,7 +248,7 @@ test("batches prevalidate later steps and refuse ambiguous, missing and stale fi
     { tool: "get_app_state", args: { detail: "invalid" } },
     { tool: "left_click", find: { query: "OK", window_id: -1 } },
     { tool: "left_click", find: { from_target: { role: "AXButton" } } },
-    { tool: "left_click_drag", find: { from_target: { role: "AXButton", window_id: 0 }, to: { role: "AXButton", window_id: 1 } } },
+    { tool: "drag", find: { from_target: { role: "AXButton", window_id: 0 }, to: { role: "AXButton", window_id: 1 } } },
   ]) {
     const result = await tool("run_actions", { steps: [{ tool: "type", args: { text: "must not send" } }, tail] });
     assert.equal(result.ok, false, JSON.stringify(tail));
@@ -432,7 +432,7 @@ test("element targets are revalidated; moved geometry re-aims and marks the rece
   const st = await freshState();
   setControl({ found: true, element: { role: "AXButton", label: "OK", position: { x: 100, y: 200 }, size: { w: 60, h: 30 } }, reason: null });
   try {
-    const r = await tool("left_click", { target: { type: "element", state_id: st.state_id, index: 1 } });
+    const r = await tool("left_click", { target: st.elements.find(element => element.index === 1).ref });
     assert.equal(r.ok, true, JSON.stringify(r.error));
     assert.equal(r.target_reacquired, true);
     const last = calls("left_click").at(-1);
@@ -448,7 +448,7 @@ test("element targets are revalidated; moved geometry re-aims and marks the rece
 test("unmoved element geometry does not mark the receipt reacquired", async () => {
   const st = await freshState();
   setControl(null); // fake returns the cached geometry for element 1
-  const r = await tool("left_click", { target: { type: "element", state_id: st.state_id, index: 1 } });
+  const r = await tool("left_click", { target: st.elements.find(element => element.index === 1).ref });
   assert.equal(r.ok, true, JSON.stringify(r.error));
   assert.notEqual(r.target_reacquired, true);
   const last = calls("left_click").at(-1);
@@ -473,7 +473,7 @@ test("a bare element index follows the newest observation; an explicit state_id 
   // index 1 in the fresh state is the same fixture button in both states.
   const latest = await tool("left_click", { target: { type: "element", index: 1 } });
   assert.equal(latest.ok, true, JSON.stringify(latest.error));
-  const pinned = await tool("left_click", { target: { type: "element", state_id: first.state_id, index: 1 } });
+  const pinned = await tool("left_click", { target: first.elements.find(element => element.index === 1).ref });
   assert.equal(pinned.ok, true, JSON.stringify(pinned.error));
 });
 
@@ -482,7 +482,7 @@ test("stale element fails element_stale without touching the pointer", async () 
   setControl({ found: false, element: null, reason: "element_gone" });
   const before = calls("left_click").length;
   try {
-    const r = await tool("left_click", { target: { type: "element", state_id: st.state_id, index: 1 } });
+    const r = await tool("left_click", { target: st.elements.find(element => element.index === 1).ref });
     assert.equal(r.ok, false);
     assert.equal(r.error.code, "element_stale");
     assert.match(r.error.message, /element 1/);
@@ -497,7 +497,7 @@ test("in-place replacement (same geometry, different label) fails element_stale"
   setControl({ found: true, element: { role: "AXButton", label: "Confirm", position: { x: 10, y: 20 }, size: { w: 60, h: 30 } }, reason: null });
   const before = calls("left_click").length;
   try {
-    const r = await tool("left_click", { target: { type: "element", state_id: st.state_id, index: 1 } });
+    const r = await tool("left_click", { target: st.elements.find(element => element.index === 1).ref });
     assert.equal(r.ok, false);
     assert.equal(r.error.code, "element_stale");
     assert.match(r.error.message, /changed label \(OK → Confirm\)/);
@@ -513,7 +513,7 @@ test("an element losing its label or role is stale even if the geometry matches"
   try {
     for (const identity of [{ role: "AXButton", label: "" }, { role: "AXButton" }, { label: "OK" }]) {
       setControl({ found: true, element: { ...identity, position: { x: 10, y: 20 }, size: { w: 60, h: 30 } } });
-      const r = await tool("left_click", { target: { type: "element", state_id: st.state_id, index: 1 } });
+      const r = await tool("left_click", { target: st.elements.find(element => element.index === 1).ref });
       assert.equal(r.ok, false);
       assert.equal(r.error.code, "element_stale");
     }
@@ -526,7 +526,7 @@ test("a state_id issued on another computer fails state_wrong_computer", async (
   const reg = await tool("computer_register", { computer: "other-pad", transport: "hdc" });
   assert.equal(reg.ok, true);
   try {
-    const r = await tool("left_click", { computer: "other-pad", target: { type: "element", state_id: st.state_id, index: 1 } });
+    const r = await tool("left_click", { computer: "other-pad", target: st.elements.find(element => element.index === 1).ref });
     assert.equal(r.ok, false);
     assert.equal(r.error.code, "state_wrong_computer");
     const diff = await tool("get_app_state", { computer: "other-pad", since: st.state_id });
@@ -561,7 +561,7 @@ test("element-only tools refuse coordinate or malformed targets with bad_target"
   for (const [name, args] of [
     ["set_value", { target: { x: 10, y: 10 }, value: "x" }],
     ["set_value", { target: { type: "coordinate", space: "screen", x: 1, y: 2 }, value: "x" }],
-    ["select_text", { target: { type: "coordinate", space: "screen", x: 1, y: 2 } }],
+    ["select_text", { target: { type: "coordinate", space: "screen", x: 1, y: 2 }, text_range: [0, 1] }],
     ["perform_action", { target: { type: "coordinate", space: "screen", x: 1, y: 2 }, action: "AXPress" }],
     ["left_click", { target: "5,5" }],
     ["left_click", { target: { type: "nonsense" } }],
@@ -598,7 +598,7 @@ test("binding a different app retires bare element indices but keeps pinned stat
   assert.equal(bare.ok, false);
   assert.equal(bare.error.code, "unknown_state");
   // An explicit state_id still resolves through its own pinned observation.
-  const pinned = await tool("left_click", { target: { type: "element", state_id: st.state_id, index: 1 } });
+  const pinned = await tool("left_click", { target: st.elements.find(element => element.index === 1).ref });
   assert.equal(pinned.ok, true, JSON.stringify(pinned.error));
 });
 

@@ -1,10 +1,59 @@
 # Cua reference and Codewhale parity
 
-Original comparison reviewed October 8, 2026; the dated Phase 3 section below records later macOS work. This is a source comparison and implementation plan.
+Original comparison reviewed October 8, 2026; dated sections record later work. This is a source comparison and implementation plan.
 Upstream documentation, local protocol fixtures, native application receipts,
 installed builds and real cloud tasks are separate evidence.
 
+## November 2 interface simplification
+
+The latest source review is pinned to Cua
+[`758da89fda958bb40cdc2c34919676a53f73e4f9`](https://github.com/trycua/cua/tree/758da89fda958bb40cdc2c34919676a53f73e4f9/libs/cua-driver).
+Its Driver skill identifies version 0.38.0. The useful model is one exact app,
+narrow observations, snapshot-bound element tokens, batches for known actions
+and the host's composition runtime for decisions. This is a comparison of
+source contracts, not a claim of equivalent platform support or performance.
+
+| Driver principle | Codewhale integration |
+| --- | --- |
+| Copy an element token from the observed snapshot | Every targetable row returns an opaque `ref`. The existing resolver extracts its session-unique state and index, checks the computer, and retains the native process/window/object checks. Legacy object targets remain callable. A ref from a closed MCP connection refuses in a new connection. |
+| One selected app and bounded reads | Existing `open_application` binds input; `get_app_state` follows the selected app or explicitly scopes a read. Query/role/limit and same-view diffs use the existing full target cache. Compact text explicitly reports truncation. |
+| Batch known actions and inspect the checkpoint | Existing `run_actions` accepts refs, fresh unique selectors and a final observation. Its advertised enum now contains 34 canonical members rather than 67 names and aliases. The whole advertised surface is 37 tools rather than 38; `drag` replaces its wire name and observation filters replace cached search in discovery. Old names remain compatibility routes. |
+| Use code for branching | Engine's existing `execute_tools` remains the only composition runtime. Its separate bare-JSON MCP normalization makes `tools.call(...).content` directly usable while retaining raw receipts, rich results and spill limits. CU adds no script runtime, agent loop, SDK facade, registry or daemon. |
+| Unambiguous text operations | `set_value` replaces the whole control; `type` inserts at its selection; `select_text` requires an explicit range. Readback remains control-value evidence; saving still needs an independent file check. |
+
+The batch description plus schema shrank from 6,614 to 5,780 bytes. The root
+guide fits the host's 4,096-byte limit. Ref decoding uses the same dispatch
+pipeline before consent, consequential-action checks and native delivery;
+it does not introduce a second target authority. Observation-dependent
+trajectory steps cannot replay, including legacy explicit state pins.
+No Cua implementation is imported or installed.
+
+131 existing focused checks passed for schemas, target/wire routing, grants,
+confirmation, native prompts, bounded payloads and trajectory handling. A real
+native document check also proved edit/save/read and fresh-process reopen,
+then rejected the previous connection's ref without changing the document.
+After a final remote allow-list cleanup, 34 existing protocol/grant/route
+checks passed; the existing trajectory checks passed 7/7 after their nested
+case was migrated to refs. These are scoped local checks, not final release
+validation.
+
+A goal-only real DeepSeek note task completed in 21.637 seconds and four
+provider requests through the global development Engine and locally patched
+user plugin, using the published signed 0.15.0 helper. Independent saved bytes
+and a fresh-process accessibility reopen both matched. The earlier 147.025
+second / 26-request attempt also saved correctly but failed the efficiency
+check. Both are retained in [the full observations](AGENT_DESKTOP.md#end-to-end-efficiency-after-installation).
+Task guards and discovery settings changed between experiments, so these are
+raw workflow outcomes rather than a matched speedup. Published assets are
+unchanged; other providers and platforms remain unqualified by these runs.
+A distinct Calc task failed its saved-workbook oracle and exposed background
+input and Engine error-recovery gaps. The note success is not spreadsheet
+qualification.
+
 ## October 31 macOS Phase 3 source candidate
+
+This section preserves the pre-release evidence boundary. The subsequent
+0.15.0 publication is recorded in [the release checklist](RELEASE_CHECKLIST.md#0150--published-2026-11-01).
 
 The source after published 0.14.0 implements Electron/Chromium renderer hover,
 pointer-capture drags and intercepted HTML5 drops without opening a Node

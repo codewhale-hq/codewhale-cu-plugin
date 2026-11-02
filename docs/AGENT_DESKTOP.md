@@ -85,19 +85,59 @@ its exact app key window; an app menu can be disabled without one. Compact
 observations now flag shortened labels and values instead of presenting them
 as complete text. No second runtime or permission path is introduced.
 
-A frozen optimized Engine with these schema/guidance changes completed one
-ordinary task in 27.854 seconds / seven provider requests; a run through the
-global CLI took 35.039 seconds / eight requests. Both independently passed
-saved bytes and fresh-process reopen/read. Neither used a supplied batch
-recipe. Pinning only the native batch was worse: 52.943 seconds / 15 requests,
-also functionally successful; that configuration was reverted. A separate
-91.472-second diagnostic with the original CU API was stopped after 23
-requests and is not an accepted completion. The initial 188-second profile,
-corrected guard feedback and changed discovery settings prevent attributing a
-matched speedup to one change or claiming general planner parity.
+The later Cua Driver review simplified the same interface: rows now carry
+opaque observation refs, discovery advertises canonical batch names, and text
+replacement/insertion/selection have distinct contracts. Engine's existing
+composition runtime also normalizes bare JSON MCP results into `.content`;
+rich results and original receipt/spill accounting remain intact. No additional
+agent loop or script runtime was added.
+
+| Installed/development experiment | Seconds | Provider requests | Saved bytes and fresh-process reopen |
+| --- | ---: | ---: | --- |
+| Original installed Engine and published CU | 188.352 | 32 | Passed |
+| Optimized Engine, original CU API, stopped diagnostic | 91.472 | 23 | Not an accepted completion |
+| Exposed batch shapes and guidance | 27.854 | 7 | Passed |
+| Global optimized CLI, patched user plugin | 35.039 | 8 | Passed |
+| Pin only native batch; configuration rejected and reverted | 52.943 | 15 | Passed |
+| JSON normalization and refs before text-contract correction | 147.025 | 26 | Passed; efficiency failure |
+| Explicit text semantics and revised scoped dispatcher | 21.637 | 4 | Passed |
+
+The 147-second attempt exposed an ambiguous omitted selection range, overly
+restrictive focused-input test dispatch and confusion between the Engine's
+outer return and `tools.call(...).content`. It is retained, not discarded as
+noise. After correction, DeepSeek chose its own plan: read the existing note,
+bind and observe in one batch, replace/save/observe in a second batch, and read
+the saved file. It copied the returned ref directly, without speculative input
+or a provided batch recipe. An independent operator then checked all 246 UTF-8
+bytes and reopened the exact document in a fresh TextEdit process. The app
+remained in the background during model execution; that does not establish
+whole-desktop cursor invariance.
+
+Task guards admitted only a dedicated app PID/window and task file. Later
+experiments allowed reading that exact saved file, filled safe observation
+scope defaults, admitted arbitrary task-field drafts instead of enforcing the
+answer, and accepted focused input where normal dispatch supports it. The
+latest note run supplied its own explicit action targets; its guard only filled
+observation scope. These changes, different discovery settings and distinct
+Engine builds prevent attributing a matched speedup to one change or claiming
+general planner parity. All attempts remain in the qualification packet.
+
+A distinct LibreOffice Calc task required correcting a quantity, adding
+subtotal/total formulas, applying currency formatting, preserving a Unicode
+note and saving XLSX. Its acceptance oracle read saved values, formulas and
+number formats independently; the final workbook was not supplied in the
+prompt. The first diagnostic was stopped after 151.842 seconds / 25 requests
+because its test hook rejected valid focused input after a named click. The
+corrected hook removed synthetic focus tracking. That trial failed after
+128.103 seconds / 19 requests: reported cell input produced no saved changes,
+a later semantic insertion failed, and Engine then stopped with an undeclared
+tool-prefix drift assertion. The workbook stayed byte-identical to its seed.
+These are failed outcomes and are retained alongside the successful note;
+the short-note result does not qualify spreadsheet editing.
 
 These are local source/development measurements. Published 0.15.0 assets retain
-their original source and signature. The operator's later user-plugin schema
-patch and optimized Engine installation are separate from that release. The
-raw receipts, failed controls and configuration transitions remain in the
-local `cu-global-0150-20261101` and `cu-efficiency-20261101` artifact packets.
+their original source and signature. The operator's user plugin has unreleased
+frontend/guide changes over the published helper, and the global CLI is a
+local development Engine, not a published 0.10.3 release. The raw receipts,
+failed controls and configuration transitions remain in the local
+`cu-global-0150-20261101` and `cu-efficiency-20261101` artifact packets.

@@ -11,16 +11,20 @@ const strategyParam = {
   description: "macOS auto (default): element targets press that exact revalidated element and fail closed, with no coordinate fallback; coordinate targets hit-test the point for an accessibility press, including focus of a field that is not AXPressable. a11y: require an accessibility press or focus and fail closed otherwise. app: if accessibility cannot act, send the click as a window-routed event to the bound app's window. event: skip the accessibility hit-test and send the window-routed click directly. On macOS the user's cursor is never moved; raw pointer input needs activate:true because the window route briefly makes the app key. Other platforms use raw events. action_sent confirms dispatch, not the effect; observe again before deciding another action.",
 };
 
+export const ELEMENT_REF_PATTERN = "^(s-[0-9a-f]{16}-[1-9][0-9]*):(0|[1-9][0-9]*)$";
+const elementRefPattern = new RegExp(ELEMENT_REF_PATTERN);
+
+export function elementRefTarget(value) {
+  const match = typeof value === "string" && value.length <= 128 ? elementRefPattern.exec(value) : null;
+  if (!match || !Number.isSafeInteger(Number(match[2]))) return null;
+  return { type: "element", state_id: match[1], index: Number(match[2]) };
+}
+
 const elementTargetSchema = {
-  type: "object",
-  description: "Element target: the flat index from the latest get_app_state on this computer. state_id is optional — supply it only to pin a specific earlier observation.",
-  required: ["type", "index"],
-  properties: {
-    type: { const: "element" },
-    state_id: { type: "string" },
-    index: { type: "integer", minimum: 0 },
-  },
-  additionalProperties: false,
+  type: "string",
+  pattern: ELEMENT_REF_PATTERN,
+  maxLength: 128,
+  description: "Copy an element's ref from get_app_state or wait_for. It pins that exact observation and computer; do not construct refs or reuse them after a stale refusal.",
 };
 
 const targetSchema = {
@@ -203,7 +207,7 @@ export const TOOLS = [
   },
   {
     name: "get_app_state",
-    description: "Read an application's text, controls, actions and layout. Bind with open_application before input; app_ref here only scopes this read. Summary keeps controls and top-level menus; full adds nested menus/tree structure. Use observed {type:'element',index,state_id} targets. Refresh after UI changes; missing content is unknown. Request a screenshot only when the tree cannot answer.",
+    description: "Read an application's text, controls, actions and layout. Bind with open_application before input; app_ref here only scopes this read. Summary keeps controls and top-level menus; full adds nested menus/tree structure. Pass the observed element's ref as target. Refresh after UI changes; missing content is unknown. Request a screenshot only when the tree cannot answer.",
     inputSchema: {
       type: "object",
       properties: {
@@ -324,7 +328,7 @@ export const TOOLS = [
   },
   {
     name: "trajectory",
-    description: "Record this session's tool calls to a local JSONL. Actions: start | stop | status (file, turns, recent files) | replay {id?, dry_run?} — replay re-enters the normal tool pipeline and stops at the first refusal. Review dry_run's not_replayable indices: saved capture pins, redacted text and consent decisions cannot replay. Permissions, grants and the kill switch still apply. Off unless started; entered text (typed text, set values, clipboard writes) is redacted. Files are owner-only and stay in this machine's recordings dir.",
+    description: "Record this session's tool calls to a local JSONL. Actions: start | stop | status (file, turns, recent files) | replay {id?, dry_run?} — replay re-enters the normal tool pipeline and stops at the first refusal. Review dry_run's not_replayable indices: saved observation pins, redacted text and consent decisions cannot replay. Permissions, grants and the kill switch still apply. Off unless started; entered text (typed text, set values, clipboard writes) is redacted. Files are owner-only and stay in this machine's recordings dir.",
     inputSchema: { type: "object", required: ["action"], properties: { action: { enum: ["start", "stop", "status", "replay"] }, id: { type: "string", description: "traj-*.jsonl name from status; defaults to the most recent" }, dry_run: { type: "boolean", description: "list what replay would do without executing anything" }, computer: computerParam }, additionalProperties: false },
   },
   {
@@ -417,19 +421,19 @@ export const TOOLS = [
   },
   // ---- text & keyboard ----
   {
-    name: "type", description: "Type unicode text into the focused control. On Linux, keystrokes are refused while a menu item is open (send key escape first) and when an element target's window is not the active one. Newlines in `text` are Return/Enter key presses, not literal characters — never put \\n in a composer by hoping it will send. Focus the field first (click, focus, or set_value), or pass an element `target` to focus it in the same call. On macOS the receipt carries `verified:true` only when the focused control's value actually reflects the typed text; on `verified:false` the text may have gone nowhere — observe again before relying on it.",
-    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, press_enter: { type: "boolean", description: "After typing, press Return/Enter once. Prefer this to putting a newline in `text` when you want to send." }, target: { ...elementTargetSchema, description: "Element target from get_app_state; it is accessibility-focused first, then the text is typed. Element targets only." }, computer: computerParam }, additionalProperties: false },
+    name: "type", description: "Insert Unicode text at the current selection; this does not replace the whole value. On Linux, keystrokes are refused while a menu item is open (send key escape first) and when an element target's window is not the active one. Newlines in `text` are Return/Enter key presses, not literal characters — never put \\n in a composer by hoping it will send. Focus the field first (click, focus, or set_value), or pass an element `target` to focus it in the same call. On macOS the receipt carries `verified:true` only when the focused control's value actually reflects the typed text; on `verified:false` the text may have gone nowhere — observe again before relying on it.",
+    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, press_enter: { type: "boolean", description: "After typing, press Return/Enter once. Prefer this to putting a newline in `text` when you want to send." }, target: { ...elementTargetSchema, description: "Element ref from get_app_state; its control is accessibility-focused before typing." }, computer: computerParam }, additionalProperties: false },
   },
   {
     name: "key", description: "Press a named key or chord. Examples: return, enter, backspace, tab, escape, cmd+c (macOS), ctrl+c (Linux/Windows). This is the key-press tool; type() cannot send modifiers or Return by itself except via newlines/press_enter. macOS posts modified or window-targeted keys to the background app's process after confirming its key window (key_window_unconfirmed otherwise; strict approval mode refuses them); symbols such as * or ? use shift chords. For document commands such as Save, pass the observed document element as target so its exact window becomes key inside the app without foreground activation. Repeat with `repeat`. Pass an element `target` to accessibility-focus it first. `duration` holds the key instead of tapping (hold_key semantics) and cannot be combined with repeat or target.",
-    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, repeat: { type: "integer", minimum: 1, maximum: 100 }, duration: { type: "number", minimum: 0.05, maximum: 30, description: "Hold the key for this many seconds instead of tapping." }, target: { ...elementTargetSchema, description: "Element target from get_app_state; it is accessibility-focused first, then the key is sent. Element targets only." }, computer: computerParam }, additionalProperties: false },
+    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, repeat: { type: "integer", minimum: 1, maximum: 100 }, duration: { type: "number", minimum: 0.05, maximum: 30, description: "Hold the key for this many seconds instead of tapping." }, target: { ...elementTargetSchema, description: "Element ref from get_app_state; its control is accessibility-focused before the key." }, computer: computerParam }, additionalProperties: false },
   },
   {
     name: "hold_key", description: "Hold a key for `duration` seconds (0.05..30).",
     inputSchema: { type: "object", required: ["text", "duration"], properties: { text: { type: "string" }, duration: { type: "number", minimum: 0.05, maximum: 30 }, computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "set_value", description: "Set an editable element's value with readback verification. On macOS native text areas use selected-text replacement when supported; other native controls use AXValue. Readback verifies the control value, not saved files. Web-area replacement requires foreground control and refuses in background mode. Prefer browser control for web fields. Element targets only.",
+    name: "set_value", description: "Replace the entire editable control value and verify readback. Prefer this for filling or replacing text; type inserts at the selection. Readback verifies the control, not saved files. Web-area replacement requires foreground control and refuses in background mode. Prefer browser control for web fields. Element targets only.",
     inputSchema: { type: "object", required: ["target", "value"], properties: { target: elementTargetSchema, value: { type: "string" }, computer: computerParam }, additionalProperties: false },
   },
   {
@@ -456,7 +460,7 @@ export const TOOLS = [
     },
   },
   {
-    name: "run_actions", description: "Prefer one batch for 1..8 known related actions. Once a target is known, group its edit, document command and verification. Verified setters already include value readback. observe:true supplies the final read; do not add a duplicate final get_app_state step. Each step is {tool,arguments,find?}; args aliases arguments. arguments uses that tool's schema; common fields are typed below. target is an observed {type:'element',index,state_id?}, never a selector. Step-level find:{query,role,app_ref?,window_id?} resolves target; find:{from_target:{query,role},to:{query,role}} resolves both drag ends from one fresh observation. For macOS document Save, use key with text:'cmd+s' and the observed document target. Every step keeps consent, stop and target guards. Ambiguous/stale targets and failed wait_for conditions stop the batch. observe:true adds a compact final state/diff for the same view, or pass get_app_state arguments. Inspect completed_steps/action_sent before retrying; sent input must not be replayed.",
+    name: "run_actions", description: "Prefer one batch for 1..8 known related actions. Once a target is known, group its edit, document command and verification. Verified setters already include value readback. observe:true supplies the final read; do not add a duplicate final get_app_state step. Each step is {tool,arguments,find?}; args aliases arguments. arguments uses that tool's schema; common fields are typed below. target is the returned element ref string, never an index or selector. Step-level find:{query,role,app_ref?,window_id?} resolves target; find:{from_target:{query,role},to:{query,role}} resolves both drag ends from one fresh observation. For macOS document Save, use key with text:'cmd+s' and the observed document target. Every step keeps consent, stop and target guards. Ambiguous/stale targets and failed wait_for conditions stop the batch. observe:true adds a compact final state/diff for the same view, or pass get_app_state arguments. Inspect completed_steps/action_sent before retrying; sent input must not be replayed.",
     inputSchema: {
       type: "object",
       required: ["steps"],
@@ -484,8 +488,8 @@ export const TOOLS = [
     },
   },
   {
-    name: "select_text", description: "Select a text range [start, length] in an element, or place the caret when the range is omitted. Element targets only.",
-    inputSchema: { type: "object", required: ["target"], properties: { target: elementTargetSchema, text_range: { type: "array", items: { type: "integer" }, minItems: 2, maxItems: 2 }, computer: computerParam }, additionalProperties: false },
+    name: "select_text", description: "Select an explicit [start, length] in an element ref. [0,0] places the caret at the start. For whole-value replacement use set_value.",
+    inputSchema: { type: "object", required: ["target", "text_range"], properties: { target: elementTargetSchema, text_range: { type: "array", items: { type: "integer" }, minItems: 2, maxItems: 2 }, computer: computerParam }, additionalProperties: false },
   },
   {
     name: "perform_action", description: "Invoke a named accessibility action on an element (e.g. AXPress on macOS, Invoke on Windows/UIA, click on harmony). Only actions the element advertises. Element targets only.",
@@ -581,8 +585,11 @@ export const TOOLS = [
   },
 ];
 
+const dragTool = TOOLS.findIndex(tool => tool.name === "left_click_drag");
+TOOLS.splice(dragTool, 0, { ...TOOLS[dragTool], name: "drag" });
+
 export const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
-TOOLS.find(tool => tool.name === "run_actions").inputSchema.properties.steps.items.properties.tool.enum = [...TOOL_NAMES].filter(name => !["run_actions", "app_script", "trajectory_replay", "consent_allow", "consent_deny", "consent_revoke"].includes(name));
+
 const batchArguments = TOOLS.find(tool => tool.name === "run_actions").inputSchema.properties.steps.items.properties.arguments;
 batchArguments.properties = {};
 for (const [name, tool] of Object.entries({ target: "click", from_target: "left_click_drag", to: "left_click_drag", value: "set_value", text: "key", path: "invoke_menu", pid: "open_application", bundle_id: "open_application", name: "open_application", activate: "open_application", app_ref: "get_app_state", window_id: "get_app_state", detail: "get_app_state", query: "get_app_state", role: "get_app_state", limit: "get_app_state", text_range: "select_text" })) {
@@ -634,6 +641,7 @@ export const BACKEND_METHOD = Object.fromEntries(
  */
 export const MERGED_EXPANSION = {
   click: ["left_click", "double_click", "triple_click", "right_click", "middle_click"],
+  drag: ["left_click_drag"],
   pointer: ["mouse_move", "left_mouse_down", "left_mouse_up"],
   clipboard: ["read_clipboard", "write_clipboard"],
   recording: ["recording_start", "recording_stop", "recording_status", "recording_list"],
@@ -717,6 +725,7 @@ const TOOL_ANNOTATIONS = {
   write_clipboard: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   // Merged surface (aliases keep the wire names above callable).
   click: INPUT_ANNOTATION,
+  drag: INPUT_ANNOTATION,
   pointer: INPUT_ANNOTATION,
   browser: INPUT_ANNOTATION,
   trajectory: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -768,6 +777,7 @@ export const LEASE_GATED_TOOLS = new Set(TOOLS.filter((t) =>
  */
 const HIDDEN_FROM_LIST = new Set([
   "left_click", "double_click", "triple_click", "right_click", "middle_click",
+  "left_click_drag", "find_elements",
   "mouse_move", "left_mouse_down", "left_mouse_up",
   "read_clipboard", "write_clipboard",
   "recording_start", "recording_stop", "recording_status", "recording_list",
@@ -780,6 +790,9 @@ const HIDDEN_FROM_LIST = new Set([
 for (const tool of TOOLS) {
   if (HIDDEN_FROM_LIST.has(tool.name)) tool.hidden = true;
 }
+TOOLS.find(tool => tool.name === "run_actions").inputSchema.properties.steps.items.properties.tool.enum = TOOLS
+  .filter(tool => !tool.hidden && !["run_actions", "app_script", "consent"].includes(tool.name)).map(tool => tool.name);
+
 
 /**
  * Expand a merged, advertised tool into the wire tool it dispatches to.
@@ -792,6 +805,7 @@ for (const tool of TOOLS) {
 export function resolveTool(name, args = {}) {
   const bad = (message) => Object.assign(new Error(message), { code: "bad_args" });
   switch (name) {
+    case "drag": return { name: "left_click_drag", args };
     case "click": {
       const button = args.button ?? "left";
       const clicks = args.clicks ?? 1;

@@ -227,7 +227,7 @@ async function resolveTarget(spec, task, repCtx, server) { // repCtx carries the
         ? { skipReason: `no element labelled "${spec.element_by_label}" in app state` }
         : { error: `no element labelled "${spec.element_by_label}"` };
     }
-    return { target: { type: "element", state_id: lastAppState.state_id, index: el.index } };
+    return { target: el.ref };
   }
   if (spec.element_match) {
     // element_match accepts one spec or a list — a list matches an element
@@ -258,7 +258,7 @@ async function resolveTarget(spec, task, repCtx, server) { // repCtx carries the
       if (!ancestors.length || ancestors[0].path.length === ancestors[1]?.path.length) return { error: `no unique nearest ${spec.ancestor_role} ancestor in the observed state` };
       element = ancestors[0];
     }
-    return { target: { type: "element", state_id: lastAppState.state_id, index: element.index } };
+    return { target: element.ref };
   }
   return { target: spec };
 }

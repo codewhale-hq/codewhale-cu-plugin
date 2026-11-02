@@ -178,12 +178,12 @@ Once the GUI is the right interface: observe once, act once, then verify.
    shorten, or retry with guesses.
 3. `get_app_state` defaults to a text-first summary (macOS AX / Windows
    UIA / Linux AT-SPI / HarmonyOS uitest) with controls, values, actions,
-   layout, element indices and a `state_id`. Start here without a screenshot,
+   layout, opaque element refs and a `state_id` for view diffs. Start here without a screenshot,
    whether or not the model supports vision. Pass `query`, `role`, `limit`
    and `offset` instead of dumping the whole tree — truncated dumps hide the
    title and search field. `detail:"compact"` is smaller (same indices,
    shorter labels). `detail:"full"` adds nested menus and tree paths.
-   `find_elements` searches a cached `state_id` or observes now. Missing
+   Filter returned elements in host code; `get_app_state {query,role}` observes a fresh narrow view. Missing
    labels or values mean unknown content, not something to guess. `get_value`
    reads one field live. On macOS, browsers and Electron/webview apps expose
    page content as `AXWebArea` descendants; the first observation may arrive
@@ -231,8 +231,7 @@ Once the GUI is the right interface: observe once, act once, then verify.
    dismissing, a spinner finishing — call `wait_for` instead of looping
    `get_app_state` + `wait` by hand: it polls the accessibility tree until
    a `query`/`role` match appears (`state:"present"`) or disappears
-   (`state:"absent"`), then returns the matched elements bound to a fresh
-   `state_id` you can target immediately. A `timed_out:true` receipt means
+   (`state:"absent"`), then returns matched elements with fresh refs you can target immediately. A `timed_out:true` receipt means
    the condition never held — observe and reconsider rather than repeating
    the same wait.
 6. Verify with a fresh observation or a task oracle before claiming success.
@@ -244,14 +243,13 @@ Once the GUI is the right interface: observe once, act once, then verify.
 
 ## Choosing targets
 
-- Element: `{"type":"element","index":4}` — prefer this. A bare index binds
-  that computer's latest observation; add `state_id` only to pin a specific
-  earlier snapshot (e.g. one returned by `wait_for` after newer observes).
-  Elements are revalidated against the live tree before every action: if the
-  element moved, the click lands on its fresh center and the receipt carries
-  `target_reacquired: true`; if it no longer resolves (or changed role) the
-  call fails `element_stale` — call `get_app_state` again. A `state_id` only
-  works on the computer that issued it (`state_wrong_computer`).
+- Element: pass an element's returned `ref` string as `target`. It pins the
+  original observation and computer; copy it verbatim. The same cached record
+  and native identity are revalidated before every action. A moved element
+  uses its fresh center (`target_reacquired:true`); an expired or changed one
+  refuses `unknown_state` or `element_stale`. Observe again after a refusal;
+  never remove the pin or guess another reference. A ref from another
+  computer refuses `state_wrong_computer`.
 - Coordinate: `{"type":"coordinate","x":496,"y":331,"raster_id":"<returned ID>"}`
   — pixels from the observed raster; submit `x`/`y` unchanged, never transform
   them yourself. Screenshot, zoom and OCR issue a unique session-local ID.

@@ -16,8 +16,8 @@ For fixed sequences use `run_actions`, retaining each step's normal guards. Its 
 ## Observe, act, verify (full loop)
 
 1. `list_apps` finds running apps; `installed:true` finds cold-launch targets. Open the intended app once; do not guess identities. Pass `computer` when switching machines and read the receipt's identity.
-2. Start with `get_app_state` for text, controls, element indices and `state_id`. Use `query`, `role`, `limit` or `find_elements` to narrow. Repeat the same view with `since:state_id` (or `"latest"`) for changed rows; `resync_required:true` supplies a new full baseline. `removed_indices` left that view. Missing labels are unknown; do not guess them. Re-observe shallow/loading trees.
-3. Prefer element targets, `set_value`, or `focus` then `type`/`key`. On Linux, keys go to the active window and are refused while a menu is open; observe before typing, and send `key escape` to close a menu. Newlines and `press_enter` send Return. `wait_for` handles UI transitions. Re-observe after stale targets or a timeout.
+2. Start with `get_app_state` for text, controls and opaque element refs. Pass a returned ref as `target`; `state_id` is for cached searches and diffs. Use `query`, `role`, `limit` to narrow. Repeat the same view with `since:state_id` (or `"latest"`) for changed rows; `resync_required:true` supplies a new full baseline. `removed_indices` left that view. Missing labels are unknown; do not guess them. Re-observe shallow/loading trees.
+3. Prefer returned refs, `set_value`, or `focus` then `type`/`key`. On Linux, keys go to the active window and are refused while a menu is open; observe before typing, and send `key escape` to close a menu. Newlines and `press_enter` send Return. `wait_for` handles UI transitions. Re-observe after stale targets or a timeout.
 4. Use screenshots/zoom only when the tree cannot answer the task. Whole-screen shots show every app. Coordinates are pixels in the returned raster unless explicitly `space:"screen"`. Pass its `raster_id` in every raster coordinate target and as the parent of `zoom`; use the zoom's new ID for child-image points. OCR targets already carry it. `raster_stale` means observe again; never drop the ID to retry. A pin detects capture replacement, not a changed UI. Never calculate from a file path, omitted image, stale raster or invented state. Text-only models may use macOS OCR, not infer graphical meaning.
 5. Verify with fresh state or field readback; a sent action is not proof of success. When typing says `verified:false`, inspect the requested screenshot before relying on it.
 
@@ -28,9 +28,9 @@ Prefer `run_actions` for 1–8 known related `{tool,arguments}` steps (`args` is
 - `list_apps {all?, installed?}` — running apps by default; `all:true` includes helpers and `installed:true` lists launchable apps, including those not running.
 - `list_windows {app_ref?}` — windows with indices for `window_id`.
 - `get_app_state {app_ref?, query?, role?, limit?, detail?, since?}` — elements +
-  `state_id`. `since` takes an earlier state ID or `"latest"`; same complete
+  `state_id` and a `ref` per element. `since` takes an earlier state ID or `"latest"`; same complete
   view returns changed rows and `removed_indices`, otherwise a full baseline.
-- `find_elements {state_id?, query?, role?}` — filter a cached observation.
+- Filter an already returned `elements` array in host code; use `get_app_state {query,role}` for a fresh narrow view.
 - `wait_for {query|role, state, timeout?}` — poll until UI appears/disappears.
 - `screenshot {app_ref?|region?|display?}` — raster geometry and `raster_id` for visual work.
 - `zoom {region, raster_id}` — crop that parent; returns a new child `raster_id`.
@@ -55,8 +55,8 @@ a raster ID. Browser viewport points use the browser's separate contract.
   alias). `find:{query,role,app_ref?,window_id?}` resolves a fresh unique element
   for that step. `observe:true` adds compact final state. Stop on failure; read
   completed steps and delivery uncertainty before continuing.
-- `select_text {target, text_range?}` · `focus {target}` · `perform_action {target, action}`
-- `scroll {target, direction, amount?}` · `left_click_drag {from_target, to}`
+- `select_text {target, text_range}` · `focus {target}` · `perform_action {target, action}`
+- `scroll {target, direction, amount?}` · `drag {from_target, to}`
 - `invoke_menu {path:["File","New"]}` — app-level/menu-only commands. For document Save use `key {text:"cmd+s",target}` with its observed element; use its close button for Close.
 - `pointer {action, target?}` — move/down/up primitives (foreground/shared only).
 - `app_script {script, language?, timeout?}` — macOS local only: AppleScript
@@ -117,8 +117,8 @@ never carries `action_sent`.
 Type into the document body:
 1. `open_application {name:"TextEdit", activate:false}`
 2. `get_app_state {role:"AXTextArea"}` → index
-3. `type {target:{type:"element",index}, text:"…"}`
-4. `get_value {target:{type:"element",index}}` → confirm
+3. `type {target:"<returned-ref>", text:"…"}`
+4. `get_value {target:"<returned-ref>"}` → confirm
 
 Close a window without borrowing focus:
 1. Press the window's close-button element (`click` on the window's
