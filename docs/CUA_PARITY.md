@@ -154,7 +154,20 @@ added. The root guide is 4,084 bytes. Evidence is retained under
 
 The goal-only Calc results above use the immutable C5-corrected development
 Engine, not the older global binary that demonstrated the prefix-drift failure.
-Published 0.15.0 and its global notarized helper remain unchanged.
+These follow-ups shipped as [0.16.0](https://github.com/codewhale-hq/codewhale-cu-plugin/releases/tag/v0.16.0)
+from `369b614`, runtime `f40cba077ff48ba5`. The notarized app and trusted user
+plugin are now globally installed; original 0.15.0 assets retain their source.
+The installed development Engine also includes the C5 correction and bounded
+framing changes; it is not a published Engine 0.10.3.
+
+A final goal-only task on that exact installed app/plugin saved a real TextEdit
+note in 25.795 seconds and six provider requests. Independent saved bytes and
+a fresh-process reopen matched all 246 Unicode bytes. One malformed model
+batch was rejected with zero attempted steps and no input, then corrected.
+The operator replayed no task edits and closed both task documents. Model
+execution recorded 1,578 observer samples, zero target-foreground samples and
+zero physical keys. This is an installed task pass, not a matched speedup or
+whole-desktop coexistence claim.
 
 Default summary and compact observations now omit empty layout groups while
 retaining the complete target cache, original indices and explicit query/role

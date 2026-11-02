@@ -12,7 +12,7 @@ Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). Records below
 come from one maintainer Mac (arm64, Retina) and are evidence, not a
 publication verdict.
 
-### 0.16.0 — candidate, 2026-11-02
+### 0.16.0 — published 2026-11-02
 
 Product work follows [Cua Driver’s interface principles](CUA_PARITY.md): copied
 observation refs, narrow discovery/views, explicit text semantics, one existing
@@ -35,11 +35,50 @@ checks passed. Current native controls also cover a safe unconfirmed-focus
 refusal, successful keyboard/field-focus editing, saved formulas, fresh Calc
 reopen and exact Unicode TextEdit save/reopen.
 
-Final exact-source suite, hosted three-platform CI, signed/notarized release
-assets and global installation are pending. The original 0.15.0 full gates do
-not qualify this candidate. Existing open platform, fresh-machine, permission,
-accessibility and updater gates remain open; this candidate does not claim
-universal-model or other-platform parity.
+Frozen release source `369b6141bdee59dc11db71cfaa196ae951c56bb3`, runtime
+`f40cba077ff48ba5`, published at 2026-11-02 13:29:14 UTC. Exact-source
+[three-platform CI](https://github.com/codewhale-hq/codewhale-cu-plugin/actions/runs/41451335528)
+and [CodeQL](https://github.com/codewhale-hq/codewhale-cu-plugin/actions/runs/41451336089)
+passed. Each source suite ran 579 checks: Mac 550 pass/29 skip, Windows 513
+pass/66 skip, Linux 532 pass/47 skip, zero failures. Windows also passed 12
+hosted control/desktop checks; this is not physical-device qualification.
+
+The local first pass ran 579 checks: 541 pass, nine failures and 29 skips.
+The failures exposed stale Kimi metadata, old surface/export expectations,
+a too-long macOS socket path and a space-containing Node shebang fixture path.
+After correction, the five affected existing files passed 50 checks with one
+platform skip. Unchanged passing evidence was retained; the full suite was
+not repeated locally. All 66 packaged runtime files and the native source
+were unchanged by that metadata/test correction. No new tests/comments.
+
+The universal bundle contains Node 24.21.0, serves 37 tools and a 4,084-byte
+root guide; all 66 runtime files match the frozen commit. Apple accepted app
+`14c6cf91-4ab6-4402-9f7f-5bf93d5fbefc` and DMG
+`32c6fd8b-d1ac-4031-a9ad-37d171bd9401`; both are Developer ID signed,
+stapled and Gatekeeper accepted. DMG mounted-content verification passed.
+The release has 11 assets, each remote size/digest matching its local file;
+anonymous DMG, portable plugin and release-receipt downloads also match.
+A draft-tag API lookup returned 404 before publication; its shell continued
+after that error, so remote asset verification completed after publication.
+The ordering defect and successful verification are retained in the local
+publication receipt. Subsequent steps stopped on failure.
+
+The notarized helper and enabled/trusted user plugin are globally installed
+as 0.16.0. An installed Codewhale/DeepSeek task saved 246 exact Unicode bytes in
+25.795 seconds / six provider requests, then passed independent file and
+fresh-process accessibility reopen checks. Both task documents were closed;
+the operator replayed no task edits. One malformed model batch was rejected
+with zero attempted steps/no input before its corrected batch. Model execution
+recorded 1,578 observer samples, zero target-foreground samples and physical
+keys. The installed CLI is 0.10.2 development (SHA256
+`52f86af4e9cda0f740084f360e2de01adf8fa19366feb07e38bc5f12d78554dc`),
+not a published Engine 0.10.3. Five unrelated plugin state records were
+preserved. Previous app/plugin/state are retained on the SSD. The task's
+temporary loopback API was stopped and its ephemeral token removed.
+
+Existing open platform, fresh-machine, permission, accessibility and updater
+gates remain open. No universal-model, whole-desktop coexistence, matched
+speedup or other-platform parity follows from these scoped observations.
 
 ### 0.15.0 — published 2026-11-01
 
@@ -530,6 +569,8 @@ receipts belong in a public issue.
 - Suite usage: `docs/PARITY.md`.
 
 ## 5. Final actions — human-only, never scripted
+
+- [x] **Publish release** — v0.16.0 published 2026-11-02 at 13:29:14Z at Hunter Bown’s explicit direction to release the CU update. Tag `369b614`, runtime `f40cba077ff48ba5`; exact-source three-platform CI 41451335528 and CodeQL 41451336089 passed. App/DMG signed, notarized, stapled and Gatekeeper accepted. All 11 remote asset hashes and anonymous DMG/plugin/receipt downloads match. Installed global Codewhale/DeepSeek save/reopen passed; remaining limits and the publication-order defect are recorded above.
 
 - [x] **Repository visibility change** — public since 2026-09-13 (human).
 - [x] **Publish release** — v0.3.1 published 2026-09-13 by Hunter Bown (human); tag on `44bf9fcde4bebacf3d69d03d08972ba02b0d1bc5`; anonymous download verified (size 79,720,031, SHA-256 match, Gatekeeper accepted as Notarized Developer ID, stapled ticket valid).

@@ -179,9 +179,21 @@ limit. Full and explicit-role views and saved workbook bytes stayed identical.
 The denser payload grew from 12,829 to 13,613 bytes; no token or latency
 reduction is inferred from that observation.
 
-These are local source/development measurements. Published 0.15.0 assets retain
-their original source and signature. The operator's user plugin has unreleased
-frontend/guide changes over the published helper, and the global CLI is a
-local development Engine, not a published 0.10.3 release. The raw receipts,
-failed controls and configuration transitions remain in the local
-`cu-global-0150-20261101` and `cu-efficiency-20261101` artifact packets.
+Those measurements used local source/development cohorts. The follow-up is
+now published as 0.16.0 from `369b614`, runtime `f40cba077ff48ba5`, and both the
+notarized helper and trusted user plugin are globally installed. Original
+0.15.0 assets retain their source and signature. The global CLI is the
+C5-corrected 0.10.2 development Engine with bounded framing changes, not a
+published 0.10.3 release.
+
+The final installed Codewhale/DeepSeek task saved a TextEdit note in 25.795
+seconds / six provider requests. Independent bytes and a fresh-process
+accessibility reopen matched all 246 Unicode bytes; both task documents were
+closed, with no operator replay of task edits. A malformed model batch was
+refused before any attempted step or input, then corrected. Model execution
+recorded zero target-foreground samples and physical-key events. This is a
+scoped installed task pass, not a matched speedup or general efficiency proof.
+
+Raw receipts, failed controls and configuration transitions remain in the local
+`cu-global-0150-20261101`, `cu-efficiency-20261101`,
+`cu-window-text-20261102` and `cu-0160-release-20261102` artifact packets.
