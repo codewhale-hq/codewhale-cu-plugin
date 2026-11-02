@@ -535,8 +535,8 @@ static NSDictionary *cuPointerToolkit(NSRunningApplication *app) {
       NSString *image=[NSString stringWithUTF8String:region.prp_vip.vip_path]?:@"";
       NSString *file=image.lastPathComponent.lowercaseString;
       if([image containsString:@"/Tk.framework/"] || ([file hasPrefix:@"_tkinter"] && [file hasSuffix:@".so"]) ||
-         (([file hasPrefix:@"libtk"] || [file hasPrefix:@"libtcl9tk"]) && [file hasSuffix:@".dylib"]))
-        @throw [NSException exceptionWithName:@"pointer_reading_toolkit" reason:@"pointer_reading_toolkit: Tk derives input coordinates from the hardware cursor. Window-routed pointer input was refused before dispatch; use accessible controls or a separate computer." userInfo:nil];
+         (([file hasPrefix:@"libtk"] || [file hasPrefix:@"libtcl9tk"] || [file hasPrefix:@"libvclplug_osx"]) && [file hasSuffix:@".dylib"]))
+        @throw [NSException exceptionWithName:@"pointer_reading_toolkit" reason:@"pointer_reading_toolkit: this toolkit cannot reliably deliver a background pointer action to the requested point. No input was sent; use observed element refs, keyboard navigation or a separate computer." userInfo:nil];
       if([image containsString:@"/Electron Framework.framework/"] || [image containsString:@"/Chromium Framework.framework/"] || [image containsString:@"/Google Chrome Framework.framework/"]) chromium=YES;
       uint64_t next=region.prp_prinfo.pri_address+region.prp_prinfo.pri_size;
       if(next<=address) break;
@@ -2057,6 +2057,7 @@ static id execute(NSDictionary *p) {
   // guess: a point owned by another process, or a point that only lands on a
   // container, is not a press.
   if([tool isEqual:@"hit_test"]) {
+    if([args[@"perform"] boolValue]) cuPointerToolkit(inputApp);
     CGPoint p=CGPointMake([args[@"x"] doubleValue],[args[@"y"] doubleValue]);
     AXUIElementRef appEl=AXUIElementCreateApplication(inputApp.processIdentifier);
     AXUIElementSetMessagingTimeout(appEl,2.0);

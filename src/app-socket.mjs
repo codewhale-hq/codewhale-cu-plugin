@@ -197,7 +197,7 @@ export function openAppSession(sessionId) {
     if (transportGrant) {
       if (TOOLS.some(tool => grant.has(tool.name) && ["target", "from_target", "to"].some(field => tool.inputSchema.properties[field]))) transportGrant.add("resolve_element");
       if (["type", "key", "hold_key"].some(tool => grant.has(tool))) transportGrant.add("focused_control");
-      if (["type", "key", "hold_key", "left_click", "double_click", "triple_click", "right_click", "middle_click", "left_click_drag", "mouse_move", "scroll"].some(tool => grant.has(tool))) transportGrant.add("input_owner");
+      if (["type", "key", "hold_key", "left_click", "double_click", "triple_click", "right_click", "middle_click", "left_click_drag", "mouse_move", "left_mouse_down", "scroll"].some(tool => grant.has(tool))) transportGrant.add("input_owner");
     }
     const identity = hostIdentity();
     const host = { publicKey: identity.publicKey, label: appHostLabel, persistent: identity.persistent };

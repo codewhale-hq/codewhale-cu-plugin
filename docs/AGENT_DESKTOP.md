@@ -144,8 +144,17 @@ waited for a transient AX row instead of repeating input. Earlier failed
 controls are retained. TextEdit also saved and reopened 39 exact UTF-8 bytes
 including Chinese text and emoji through event typing. These prove native
 routes and saved effects; they are not another DeepSeek success or a latency
-comparison. The existing Engine owner is repairing C5 before the next paid
-Calc task. See [the Cua follow-up](CUA_PARITY.md#november-2-background-text-follow-up).
+comparison. A separately qualified Engine candidate fixed the demonstrated
+C5 tool-change assertion. Its first Calc diagnostic was stopped after 92.793
+seconds / 23 requests because a narrow grant blocked private target guards;
+the workbook stayed unchanged. After that boundary was corrected, the next
+run completed its Engine turn in 72.030 seconds / 16 requests but LibreOffice
+crashed and again saved no changes. Cua's known VCL limitation and independent
+controls showed unreliable background coordinate input. CU now refuses it
+before either semantic point delivery or raw events, while keeping refs and
+keyboard operations available. The matching refusal/keyboard control and 28
+affected existing checks pass; this is still not a successful model workbook
+journey. See [the Cua follow-up](CUA_PARITY.md#november-2-background-text-follow-up).
 
 These are local source/development measurements. Published 0.15.0 assets retain
 their original source and signature. The operator's user plugin has unreleased

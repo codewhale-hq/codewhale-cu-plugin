@@ -85,6 +85,20 @@ navigated with default typing and Return, captured the exact workbook, and
 refused an ungranted script. These are local controls, not a successful model
 completion.
 
+The next goal-only Calc run completed its Engine turn in 72.030 seconds and
+16 provider requests, but failed the workbook oracle: LibreOffice crashed
+after a raster click and select-all, with no saved changes. Its crash report
+points to the app's accessibility selected-children allocation. Independent
+controls also showed a raster Name Box click selecting another cell. Cua
+Driver's existing [VCL pointer classification](https://github.com/trycua/cua/blob/758da89fda958bb40cdc2c34919676a53f73e4f9/libs/cua-driver/rust/crates/platform-macos/src/input/pointer_toolkit.rs)
+already identifies unreliable background pointer delivery in this toolkit.
+CU now extends its existing toolkit refusal to VCL before either a coordinate
+AX hit-test action or raw pointer delivery. A real-app control refused before
+input, stopped the following select-all, then successfully navigated using
+window-targeted keys and default typing. Eighteen existing grant/session and
+ten affected pointer checks passed. Element refs and keyboard navigation stay
+available; the failed model journey remains a failure.
+
 An unapplied setter now returns `value_not_verified` and stops the known
 batch. Typing with Return retains `text_verified`, because a final key receipt
 cannot verify preceding text. A cell may commit only on Return; fresh state
