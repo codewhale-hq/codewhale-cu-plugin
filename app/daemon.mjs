@@ -20,13 +20,13 @@ import path from "node:path";
 import { handle, closeSession, closeAllSessions, releaseSessionInput, reopenSession, ALLOWED, controlStatus, setControlMode, summarizeSessions, createConsentController } from "../src/app-handler.mjs";
 import { runBackgroundCheck } from "./background-check.mjs";
 import { checkForUpdate, prepareUpdate, restartWithUpdate, readUpdateResult } from "./updates.mjs";
-import { APP_ID, APP_NAME, APP_VERSION, PLUGIN_ROOT, socketPath, runInfoPath, writeRegistration, defaultLaunch, hello, runtimeFingerprint } from "../src/app-socket.mjs";
+import { APP_ID, APP_NAME, APP_VERSION, PLUGIN_ROOT, socketPath, runInfoPath, readRegistration, writeRegistration, defaultLaunch, hello, runtimeFingerprint, hostPublicKey, managedBundleIdentity } from "../src/app-socket.mjs";
 import { stateDir } from "../src/registry.mjs";
 import * as consent from "../src/consent.mjs";
 import { isStrict, approvalMode } from "../src/approval-mode.mjs";
 
 const startedAt = new Date().toISOString();
-const bundle = process.env.CODEWHALE_CU_APP_BUNDLE || null;
+let bundle = process.env.CODEWHALE_CU_APP_BUNDLE || null;
 let controlOwner = false;
 let hostTrustEnabled = false;
 let hostTrustError = null;
@@ -37,9 +37,34 @@ const consentController = createConsentController({ onStateChange: () => notifyC
 const log = (msg) => process.stderr.write(`${new Date().toISOString()} ${APP_NAME}: ${msg}\n`);
 let build = null;
 try { build = runtimeFingerprint(); } catch (error) { log(`could not fingerprint the runtime: ${error.message}`); }
+let physical = null;
+try { if (bundle) physical = managedBundleIdentity(bundle); } catch {}
+const bootstrapOwner = process.env.CODEWHALE_CU_DESKTOP_OWNER_KEY;
+delete process.env.CODEWHALE_CU_DESKTOP_OWNER_KEY;
+const registration = readRegistration({ strict: !!(bootstrapOwner || physical) });
+let managed = registration?.managed ?? null;
+if (managed || bootstrapOwner) {
+  if (!physical || fs.realpathSync(PLUGIN_ROOT) !== path.join(physical.helperBundle, "Contents", "Resources", "plugin") || process.env.CODEWHALE_CU_CONTROL_FD !== "3" || (bootstrapOwner && !hostPublicKey(bootstrapOwner)) ||
+      (managed && (managed.container !== physical.container || managed.helperBundle !== physical.helperBundle || (bootstrapOwner && bootstrapOwner !== managed.publicKey)))) {
+    throw new Error("Managed helper ownership does not match this containing desktop or native control owner");
+  }
+  bundle = physical.helperBundle;
+  managed ??= { protocol: 1, ...physical, publicKey: bootstrapOwner, update: null };
+}
+let managedWork = false;
+let retirementRequested = false;
+function managedStatus() {
+  return managed ? { protocol: 1, container: managed.container, helperBundle: managed.helperBundle, publicKey: managed.publicKey,
+    phase: managed.update?.phase ?? "idle", ...(managed.update ? { updateId: managed.update.id, currentBuild: managed.update.currentBuild, nextBuild: managed.update.nextBuild, nextVersion: managed.update.nextVersion } : {}) } : null;
+}
+function saveManaged(next) {
+  if (next.update) managed = next;
+  writeRegistration({ id: APP_ID, path: bundle, launch: defaultLaunch(bundle), managed: next });
+  managed = next;
+}
 
 function appInfo() {
-  return { id: APP_ID, name: APP_NAME, version: APP_VERSION, build, pluginRoot: PLUGIN_ROOT, sessionProtocol: 2, backgroundProtocol: 1, controlProtocol: 2, consentProtocol: consentController.helperConsent ? 1 : 0, hostTrustProtocol: hostTrustEnabled ? 1 : 0, approval: approvalMode(), controlOwner, pid: process.pid, platform: process.platform, node: process.version, bundle, startedAt, socket: socketPath() };
+  return { id: APP_ID, name: APP_NAME, version: APP_VERSION, build, pluginRoot: PLUGIN_ROOT, sessionProtocol: 2, backgroundProtocol: 1, controlProtocol: 2, consentProtocol: consentController.helperConsent ? 1 : 0, hostTrustProtocol: hostTrustEnabled || managed ? 1 : 0, managedUpdateProtocol: managed ? 1 : 0, managed: managedStatus(), approval: approvalMode(), controlOwner, pid: process.pid, platform: process.platform, node: process.version, bundle, startedAt, socket: socketPath() };
 }
 
 if (await hello({ timeoutMs: 1_500 })) {
@@ -55,14 +80,6 @@ if (process.platform !== "win32") {
 
 const leases = new Map();
 const exclusionWrites = new Set();
-function hostPublicKey(value) {
-  try {
-    if (typeof value !== "string" || !/^[A-Za-z0-9+/]{59}=$/.test(value)) return null;
-    const der = Buffer.from(value, "base64");
-    const key = crypto.createPublicKey({ key: der, format: "der", type: "spki" });
-    return key.asymmetricKeyType === "ed25519" && key.export({ format: "der", type: "spki" }).equals(der) ? key : null;
-  } catch { return null; }
-}
 function updateHostTrust(message) {
   const previous = trustedHosts;
   trustedHosts = new Map();
@@ -148,6 +165,60 @@ let checking = false;
 let update = readUpdateResult();
 let updating = false;
 let controlError = null;
+function managedRefusal(code, message) { return { ok: false, error: { code, message }, managed: managedStatus() }; }
+async function manageUpdate(req) {
+  const owner = leases.get(req.sessionId);
+  if (!managed || !owner?.authenticated || owner.host?.persistent !== true || owner.host.publicKey !== managed.publicKey) {
+    return managedRefusal("managed_update_owner_required", "Only the authenticated containing desktop can manage this helper");
+  }
+  const result = () => ({ ok: true, managed: managedStatus(), control: { mode: controlStatus().mode, cleanupPending: controlStatus().cleanupPending }, app: appInfo() });
+  if (req.action === "status") return result();
+  if (retirementRequested && req.action !== "retire") return managedRefusal("managed_update_pending", "This helper has committed to retirement; recover the transaction after it exits");
+  if (managedWork) return managedRefusal("managed_update_busy", "Managed helper cleanup is still running; inspect its status before continuing");
+  if (!["prepare", "retire", "complete", "abort"].includes(req.action) || typeof req.updateId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(req.updateId)) {
+    return managedRefusal("bad_args", "Managed updates require an action and UUID transaction identity");
+  }
+  const pending = managed.update;
+  if (pending && pending.id !== req.updateId) return managedRefusal("managed_update_pending", "A different desktop update must be completed or recovered first");
+  if (!pending && req.action !== "prepare") return managedRefusal("managed_update_missing", "There is no matching pending desktop update");
+  if (req.action === "complete" && pending.phase !== "retired") return managedRefusal("managed_update_pending", "Completion requires an acknowledged retirement and a newly started helper");
+  if (req.action === "prepare" && (typeof req.currentBuild !== "string" || !/^[0-9a-f]{16}$/.test(req.currentBuild) || req.currentBuild !== build || typeof req.nextBuild !== "string" || !/^[0-9a-f]{16}$/.test(req.nextBuild) || typeof req.nextVersion !== "string" || req.nextVersion.length > 32 || !/^\d+\.\d+\.\d+$/.test(req.nextVersion) ||
+      (pending && (pending.currentBuild !== req.currentBuild || pending.nextBuild !== req.nextBuild || pending.nextVersion !== req.nextVersion)))) {
+    return managedRefusal("managed_update_identity_mismatch", "The desktop update does not identify the exact current and next helper");
+  }
+  if ([...leases.values()].some(lease => !lease.authenticated || lease.host?.persistent !== true || lease.host.publicKey !== managed.publicKey) ||
+      checking || updating || exclusionWrites.size || consentController.activePromptPayload() || controlStatus().cleanupPending) {
+    return managedRefusal("managed_update_busy", "Another client, unproved owner or pending native operation still owns Computer Use; nothing was retired");
+  }
+  if (req.action === "prepare" && pending && pending.phase !== "draining") return result();
+  if (req.action === "retire" && !["drained", "retired"].includes(pending.phase)) return managedRefusal("managed_update_pending", "The helper must finish draining before it can retire");
+  try {
+    const identity = managedBundleIdentity(bundle);
+    const diskBuild = runtimeFingerprint(path.join(bundle, "Contents", "Resources", "plugin"));
+    const wanted = req.action === "complete" ? pending.nextBuild : pending?.currentBuild ?? req.currentBuild;
+    if (identity.container !== managed.container || identity.helperBundle !== managed.helperBundle || build !== wanted || diskBuild !== wanted ||
+        (req.action === "complete" && APP_VERSION !== pending.nextVersion)) {
+      return managedRefusal("managed_update_identity_mismatch", "The running and installed helper must match the transaction before it can advance");
+    }
+    managedWork = true;
+    if (!pending) saveManaged({ ...managed, update: { id: req.updateId, phase: "draining", currentBuild: req.currentBuild, nextBuild: req.nextBuild, nextVersion: req.nextVersion } });
+    if (req.action === "retire") {
+      saveManaged({ ...managed, update: { ...managed.update, phase: "retired" } });
+      retirementRequested = true;
+      return result();
+    }
+    for (const [id, lease] of leases) { lease.stopped = true; lease.controller.abort(); consentController.cancel(id); }
+    const cleanup = await Promise.allSettled([...leases.keys()].map(id => closeSession(id)));
+    cleanup.push(...await closeAllSessions());
+    if (cleanup.some(item => item.status === "rejected")) return managedRefusal("input_release_failed", "Computer input cleanup failed; the desktop update remains fenced");
+    saveManaged({ ...managed, update: req.action === "prepare" ? { ...managed.update, phase: "drained" } : null });
+    notifyControlState();
+    return result();
+  } catch (error) {
+    log(`managed update failed: ${error.code ?? "storage_or_identity_error"}`);
+    return managedRefusal("managed_update_recovery_required", "The desktop update could not advance safely; recover its pending transaction before using Computer Use");
+  } finally { managedWork = false; }
+}
 const controlFile = path.join(stateDir(), "control.json");
 async function userControl(mode) {
   if (mode !== "ready") consentController.cancel();
@@ -230,7 +301,7 @@ if (process.env.CODEWHALE_CU_CONTROL_FD === "3") {
           send(id);
         }).catch(error => send(id, error));
       } else if (command === "check") {
-        if (checking || controlStatus().sessions.some(s => s.action)) { send(id, new Error("Wait for the current action to finish before running the check.")); continue; }
+        if (managed?.update || checking || controlStatus().sessions.some(s => s.action)) { send(id, new Error("Wait for the current action or desktop update to finish before running the check.")); continue; }
         checking = true; backgroundCheck = null; send(id);
         runBackgroundCheck({ bundle, onStateChange: notifyControlState }).then(result => { backgroundCheck = result; }).catch(error => {
           backgroundCheck = { ok: false, message: error.message };
@@ -288,13 +359,15 @@ async function serve(conn) {
         if (shuttingDown) reply = { ok: false, error: { code: "app_shutting_down", message: "Computer Use helper is shutting down" } };
         else if (req?.tool === "hello") reply = { ok: true, app: appInfo() };
         else if (req?.tool === "platform") reply = await handle(req);
-        else if (!ALLOWED.has(req?.tool) && !["open_session", "authenticate_session", "close_session", "release_session_input", "consent_request", "consent_deny", "consent_revoke", "consent_status"].includes(req?.tool)) reply = await handle(req);
+        else if (managed?.update && !["managed_update", "open_session", "authenticate_session", "close_session", "release_session_input", "consent_deny", "consent_revoke", "consent_status"].includes(req?.tool)) reply = managedRefusal("managed_update_pending", "The containing desktop must finish or recover its Computer Use update before admitting work");
+        else if (!ALLOWED.has(req?.tool) && !["managed_update", "open_session", "authenticate_session", "close_session", "release_session_input", "consent_request", "consent_deny", "consent_revoke", "consent_status"].includes(req?.tool)) reply = await handle(req);
         else if (typeof req?.sessionId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(req.sessionId)) {
           reply = { ok: false, error: { code: "session_required", message: "Update the MCP server: every computer request must carry its session identity." } };
         } else if (req.tool === "open_session") {
           if (ownedSession || leases.has(req.sessionId)) reply = { ok: false, error: { code: "session_owned", message: "Computer session already has an owner" } };
           else if (leases.size >= 256) reply = { ok: false, error: { code: "session_limit", message: "Too many active computer sessions" } };
-          else if (hostTrustEnabled && req.host != null && !hostPublicKey(req.host.publicKey)) reply = { ok: false, error: { code: "host_auth_failed", message: "The pairing public key is invalid." } };
+          else if ((hostTrustEnabled || managed) && req.host != null && !hostPublicKey(req.host.publicKey)) reply = { ok: false, error: { code: "host_auth_failed", message: "The pairing public key is invalid." } };
+          else if (managed?.update && (req.host?.publicKey !== managed.publicKey || req.host?.persistent !== true)) reply = managedRefusal("managed_update_pending", "Only the containing desktop can reconnect while its helper update is pending");
           else {
             ownedSession = req.sessionId;
             const leaseToken = crypto.randomUUID();
@@ -304,11 +377,11 @@ async function serve(conn) {
             const grant = Array.isArray(req.grant) && req.grant.length ? new Set(req.grant.map((t) => String(t))) : null;
             const pid = (value) => Number.isInteger(value) && value > 0 ? value : null;
             const owner = { pid: pid(req.owner?.pid), host_pid: pid(req.owner?.host_pid) };
-            const host = hostTrustEnabled && req.host ? { publicKey: req.host.publicKey, label: String(req.host.label || "This connection").slice(0, 80), persistent: req.host.persistent === true } : null;
+            const host = (hostTrustEnabled || managed) && req.host ? { publicKey: req.host.publicKey, label: String(req.host.label || "This connection").slice(0, 80), persistent: req.host.persistent === true } : null;
             const challenge = host ? crypto.randomBytes(32).toString("hex") : null;
             leases.set(ownedSession, { socket: conn, token: leaseToken, controller: new AbortController(), grant, owner: owner.pid || owner.host_pid ? owner : null, host, challenge, challengeExpiresAt: Date.now() + 30_000 });
             reopenSession(ownedSession);
-            reply = { ok: true, leaseToken, ...(grant ? { grant: [...grant] } : {}), ...(hostTrustEnabled ? { hostTrustProtocol: 1, ...(challenge ? { challenge } : {}) } : {}) };
+            reply = { ok: true, leaseToken, ...(grant ? { grant: [...grant] } : {}), ...(hostTrustEnabled || managed ? { hostTrustProtocol: 1, ...(challenge ? { challenge } : {}) } : {}) };
           }
         } else if (!leases.has(req.sessionId) || leases.get(req.sessionId).token !== req.leaseToken) {
           reply = { ok: false, error: { code: "session_owner_required", message: "Computer request needs its live session owner lease; update or restart the MCP server" } };
@@ -324,6 +397,8 @@ async function serve(conn) {
           } catch {}
           lease.authenticated = valid;
           reply = valid ? { ok: true, authenticated: true } : { ok: false, error: { code: "host_auth_failed", message: "The connection could not prove its pairing key. Restart the MCP connection." } };
+        } else if (req.tool === "managed_update") {
+          reply = await manageUpdate(req);
         } else if (leases.get(req.sessionId).grant && !leases.get(req.sessionId).grant.has(req.tool === "consent_request" ? (req.kind === "app_script" ? "app_script" : "consent_allow") : req.tool) && !["close_session", "release_session_input", "consent_deny", "consent_revoke", "consent_status"].includes(req.tool)) {
           // Cleanup must never be blocked by a grant; everything else is.
           reply = { ok: false, error: { code: "not_granted", message: `this session's capability grant does not include "${req.tool}"` } };
@@ -376,7 +451,8 @@ async function serve(conn) {
           requestConsent: consentController.helperConsent ? (request, signal) => consentController.request(request, { signal }) : undefined,
           onStateChange: notifyControlState,
         }));
-        if (!conn.destroyed) conn.write(JSON.stringify(reply) + "\n");
+        if (req.tool === "managed_update" && req.action === "retire" && reply.ok) await shutdown("managed desktop update", conn, reply);
+        else if (!conn.destroyed) conn.write(JSON.stringify(reply) + "\n");
       }).catch(error => {
         log(`request failed: ${error?.code ?? "internal_error"}`);
         if (!conn.destroyed) conn.write(JSON.stringify({ ok: false, error: { code: "outcome_unknown", message: "The helper could not complete this request. Observe the current state before retrying.", request_dispatched: true } }) + "\n");
@@ -400,13 +476,14 @@ server.listen(sock, () => {
     // record to bring the app up on demand.
     try {
       const launch = process.env.CODEWHALE_CU_APP_LAUNCH ? JSON.parse(process.env.CODEWHALE_CU_APP_LAUNCH) : defaultLaunch(bundle);
-      writeRegistration({ id: APP_ID, path: bundle, launch });
-    } catch (err) { log(`could not record launch command: ${err.message}`); }
+      if (managed) saveManaged(managed);
+      else writeRegistration({ id: APP_ID, path: bundle, launch });
+    } catch (err) { log(`could not record launch command: ${err.message}`); if (managed) shutdown("managed registration unavailable"); }
   }
   log(`v${APP_VERSION} listening on ${sock}${bundle ? ` (bundle ${bundle})` : " (bare, no bundle identity)"}`);
 });
 
-async function shutdown(signal) {
+async function shutdown(signal, replyTo, reply) {
   if (shuttingDown) return;
   shuttingDown = true;
   log(`${signal}; shutting down`);
@@ -414,16 +491,23 @@ async function shutdown(signal) {
   // Windows keeps a named-pipe instance bound while accepted connections
   // remain open. Retire those owners before allowing a replacement listener.
   // Their close handlers abort work; closeAllSessions still awaits cleanup.
-  for (const conn of connections) conn.destroy();
+  if (!replyTo) for (const conn of connections) conn.destroy();
   const timer = setTimeout(() => process.exit(1), 3_000);
   const results = await closeAllSessions();
-  clearTimeout(timer);
   for (const result of results) {
     if (result.status === "rejected") log(`input cleanup failed: ${result.reason?.message ?? result.reason}`);
   }
   try {
     if (JSON.parse(fs.readFileSync(runInfoPath(), "utf8")).pid === process.pid) fs.unlinkSync(runInfoPath());
   } catch {}
+  if (replyTo) {
+    const failure = results.some(result => result.status === "rejected");
+    if (!replyTo.destroyed) await new Promise(resolve => replyTo.end(JSON.stringify(failure ? managedRefusal("input_release_failed", "Retirement cleanup could not be verified; the managed update remains fenced") : reply) + "\n", resolve));
+    for (const conn of connections) conn.destroy();
+    clearTimeout(timer);
+    process.exit(failure ? 1 : 0);
+  }
+  clearTimeout(timer);
   // net.Server owns its Unix socket and removes it on close. Cleanup may
   // finish after a replacement has bound the path; never unlink its socket.
   process.exit(0);

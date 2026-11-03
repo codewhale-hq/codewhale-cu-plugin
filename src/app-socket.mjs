@@ -45,6 +45,44 @@ function hostIdentity() {
   return appHostIdentity;
 }
 
+export function appHostPublicKey() {
+  const identity = hostIdentity();
+  if (!identity.persistent) throw new Error("Managed helper ownership requires the existing persistent host identity");
+  return identity.publicKey;
+}
+
+export function hostPublicKey(value) {
+  try {
+    if (typeof value !== "string" || !/^[A-Za-z0-9+/]{59}=$/.test(value)) return null;
+    const der = Buffer.from(value, "base64");
+    const key = crypto.createPublicKey({ key: der, format: "der", type: "spki" });
+    return key.asymmetricKeyType === "ed25519" && key.export({ format: "der", type: "spki" }).equals(der) ? key : null;
+  } catch { return null; }
+}
+
+export function managedBundleIdentity(bundle) {
+  const helperBundle = fs.realpathSync(bundle);
+  if (!/\.app$/i.test(helperBundle) || !fs.statSync(helperBundle).isDirectory()) throw new Error("Managed helper bundle is invalid");
+  let container = path.dirname(helperBundle);
+  while (container !== path.dirname(container) && !/\.app$/i.test(container)) container = path.dirname(container);
+  if (!/\.app$/i.test(container) || !path.relative(container, helperBundle).startsWith(`Contents${path.sep}`)) throw new Error("Managed helper must be physically inside its desktop application");
+  return { helperBundle, container };
+}
+
+export function validateManagedRegistration(reg) {
+  const managed = reg?.managed;
+  if (managed == null) return null;
+  const absolute = value => typeof value === "string" && path.isAbsolute(value) && !value.includes("\0") && path.resolve(value) === value;
+  const update = managed.update;
+  if (typeof managed !== "object" || Array.isArray(managed) || managed.protocol !== 1 || !hostPublicKey(managed.publicKey) || !absolute(managed.container) || !absolute(managed.helperBundle) || reg.path !== managed.helperBundle ||
+      !/\.app$/i.test(managed.container) || !/\.app$/i.test(managed.helperBundle) || !path.relative(managed.container, managed.helperBundle).startsWith(`Contents${path.sep}`) ||
+      (update != null && (typeof update !== "object" || Array.isArray(update) || typeof update.id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(update.id) || !["draining", "drained", "retired"].includes(update.phase) ||
+        typeof update.currentBuild !== "string" || !/^[0-9a-f]{16}$/.test(update.currentBuild) || typeof update.nextBuild !== "string" || !/^[0-9a-f]{16}$/.test(update.nextBuild) || typeof update.nextVersion !== "string" || update.nextVersion.length > 32 || !/^\d+\.\d+\.\d+$/.test(update.nextVersion)))) {
+    throw Object.assign(new ExecError("Managed helper registration is invalid; the desktop updater must recover it"), { code: "managed_update_invalid" });
+  }
+  return managed;
+}
+
 /** Strict x.y.z comparison: true only when candidate is a newer release than current. */
 export function newerVersion(candidate, current) {
   const parse = (value) => /^\d+\.\d+\.\d+$/.test(value) ? value.split(".").map(Number) : null;
@@ -118,12 +156,14 @@ export function registrationPath() { return path.join(stateDir(), "app.json"); }
 /** Where the running daemon records its pid/socket (written on listen, removed on exit). */
 export function runInfoPath() { return path.join(stateDir(), "app-run.json"); }
 
-export function readRegistration() {
+export function readRegistration({ strict = false } = {}) {
   try {
+    if (fs.statSync(registrationPath()).size > 16384) throw new Error("Helper registration exceeds its size limit");
     const reg = JSON.parse(fs.readFileSync(registrationPath(), "utf8"));
-    if (!launchArgv(reg)) return null;
+    if (!launchArgv({ ...reg, managed: null })) throw new Error("Helper registration has no valid bundle path");
+    validateManagedRegistration(reg);
     return reg;
-  } catch { return null; }
+  } catch (error) { if (strict && error.code !== "ENOENT") throw error; return null; }
 }
 
 /**
@@ -135,12 +175,27 @@ export function launchArgv(reg, platform = process.platform) {
   const bundle = reg?.path;
   if (typeof bundle !== "string" || !path.isAbsolute(bundle) || bundle.includes("\0")) return null;
   if (platform === "darwin" && !/\.app\/?$/i.test(bundle)) return null;
+  try { if (validateManagedRegistration(reg)?.update) return null; } catch { return null; }
   return defaultLaunch(bundle, platform);
 }
 
 export function writeRegistration(reg) {
   fs.mkdirSync(stateDir(), { recursive: true });
-  fs.writeFileSync(registrationPath(), JSON.stringify({ ...reg, registeredAt: new Date().toISOString() }, null, 2) + "\n");
+  validateManagedRegistration(reg);
+  const temporary = `${registrationPath()}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  let fd;
+  try {
+    fd = fs.openSync(temporary, "wx", 0o600);
+    fs.writeFileSync(fd, JSON.stringify({ ...reg, registeredAt: new Date().toISOString() }, null, 2) + "\n");
+    fs.fsyncSync(fd); fs.closeSync(fd); fd = undefined;
+    fs.renameSync(temporary, registrationPath());
+    if (process.platform !== "win32") {
+      fd = fs.openSync(stateDir(), "r"); fs.fsyncSync(fd); fs.closeSync(fd); fd = undefined;
+    }
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
 }
 
 /**
@@ -283,6 +338,76 @@ export function launchApp(reg) {
   return child.pid ?? null;
 }
 
+async function launchManagedBundle(bundlePath, publicKey) {
+  const env = [...(publicKey ? [`CODEWHALE_CU_DESKTOP_OWNER_KEY=${publicKey}`] : []), ...["CODEWHALE_CU_STATE_DIR", "CODEWHALE_CU_APP_SOCKET"].filter(name => process.env[name]).map(name => `${name}=${process.env[name]}`)];
+  const child = spawn("/usr/bin/open", ["-n", "-g", ...env.flatMap(value => ["--env", value]), "-a", bundlePath], { stdio: "ignore" });
+  await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", code => code === 0 ? resolve() : reject(new ExecError("LaunchServices could not launch the managed helper"))); });
+}
+
+export async function bootstrapManagedApp({ bundlePath, expectedBuild, expectedVersion } = {}) {
+  throwIfAborted();
+  if (process.platform !== "darwin" || typeof expectedBuild !== "string" || !/^[0-9a-f]{16}$/.test(expectedBuild) || typeof expectedVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(expectedVersion)) {
+    throw Object.assign(new ExecError("Managed helper bootstrap requires an exact macOS helper build and version"), { code: "bad_args" });
+  }
+  const publicKey = appHostPublicKey();
+  const identity = managedBundleIdentity(bundlePath);
+  const root = path.join(identity.helperBundle, "Contents", "Resources", "plugin");
+  const reg = readRegistration({ strict: true });
+  if (reg?.managed && (reg.managed.publicKey !== publicKey || reg.managed.container !== identity.container || reg.managed.helperBundle !== identity.helperBundle || reg.managed.update)) {
+    throw Object.assign(new ExecError("An existing managed helper owner or transaction must be recovered before bootstrap"), { code: "managed_update_owner_required" });
+  }
+  if (runtimeFingerprint(root) !== expectedBuild || JSON.parse(fs.readFileSync(path.join(root, "plugin.json"), "utf8")).version !== expectedVersion) {
+    throw Object.assign(new ExecError("The nested helper does not match the desktop package metadata"), { code: "managed_update_identity_mismatch" });
+  }
+  let app = await hello();
+  const matches = value => value?.managedUpdateProtocol === 1 && value.managed?.publicKey === publicKey && value.managed?.container === identity.container && value.managed?.phase === "idle" && value.bundle === identity.helperBundle && value.build === expectedBuild && value.version === expectedVersion;
+  if (app) {
+    if (matches(app)) return app;
+    throw Object.assign(new ExecError("An unowned or different helper is running; close it through its native controls before first managed setup"), { code: "managed_update_owner_required" });
+  }
+  await launchManagedBundle(identity.helperBundle, publicKey);
+  const deadline = Date.now() + 8_000;
+  do {
+    app = await hello({ timeoutMs: 1_000 });
+    if (app) {
+      if (!matches(app)) throw Object.assign(new ExecError("The launched helper did not prove the expected desktop ownership and build"), { code: "managed_update_identity_mismatch" });
+      return app;
+    }
+    await wait(100);
+  } while (Date.now() < deadline);
+  throw Object.assign(new ExecError("The managed helper did not register; its native controls and ownership must be available before use"), { code: "app_unavailable" });
+}
+
+export async function launchManagedApp({ updateId, action = "complete" } = {}) {
+  throwIfAborted();
+  const reg = readRegistration({ strict: true });
+  const managed = validateManagedRegistration(reg);
+  if (!managed?.update || managed.update.id !== updateId || managed.publicKey !== appHostPublicKey() || !["complete", "abort"].includes(action)) {
+    throw Object.assign(new ExecError("Managed helper recovery requires its authenticated desktop and pending transaction"), { code: "managed_update_owner_required" });
+  }
+  const identity = managedBundleIdentity(reg.path);
+  const root = path.join(identity.helperBundle, "Contents", "Resources", "plugin");
+  const expected = action === "complete" ? managed.update.nextBuild : managed.update.currentBuild;
+  if (identity.container !== managed.container || identity.helperBundle !== managed.helperBundle || runtimeFingerprint(root) !== expected ||
+      (action === "complete" && JSON.parse(fs.readFileSync(path.join(root, "plugin.json"), "utf8")).version !== managed.update.nextVersion)) {
+    throw Object.assign(new ExecError("Installed helper does not match the managed update; recover the containing application before launching"), { code: "managed_update_identity_mismatch" });
+  }
+  let app = await hello();
+  if (!app) await launchManagedBundle(reg.path);
+  const deadline = Date.now() + 8_000;
+  do {
+    app ??= await hello({ timeoutMs: 1_000 });
+    if (app) {
+      if (app.build !== expected || app.bundle !== reg.path || app.managedUpdateProtocol !== 1 || app.managed?.updateId !== updateId) {
+        throw Object.assign(new ExecError("A different helper is running; the desktop updater must recover it without terminating unknown owners"), { code: "managed_update_identity_mismatch" });
+      }
+      return app;
+    }
+    await wait(100);
+  } while (Date.now() < deadline);
+  throw Object.assign(new ExecError("The exact managed helper did not start; its pending transaction remains fenced"), { code: "app_unavailable" });
+}
+
 let lastLaunchAt = 0;
 
 /**
@@ -294,8 +419,10 @@ export async function ensureApp({ launch = true } = {}) {
   if (process.env.CODEWHALE_CU_APP === "off") return { via: "direct", reason: "CODEWHALE_CU_APP=off" };
   let app = await hello();
   throwIfAborted();
+  if (app?.managed?.phase && app.managed.phase !== "idle") throw Object.assign(new ExecError("Computer Use is waiting for its desktop updater to complete or recover an update"), { code: "managed_update_pending" });
   if (app) return { via: "app", app };
   const reg = readRegistration();
+  if (reg?.managed?.update) throw Object.assign(new ExecError("The containing desktop must complete or recover its pending Computer Use update"), { code: "managed_update_pending" });
   if (!reg) {
     if (process.platform === "darwin") throw Object.assign(new ExecError(`Install ${APP_NAME} from https://codewhale.net/computer-use and open it once to finish macOS permission setup. Then retry; its native approval and Pause/Stop controls must be available before computer access.`), { code: "app_setup_required" });
     return { via: "direct", reason: `${APP_NAME} is not installed. Input and screen permissions belong to the current host.` };
