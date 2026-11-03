@@ -5,6 +5,16 @@ import { spawnSync } from "node:child_process";
 
 const BACKUP_NAME = /^(\d{13})-[0-9a-f-]{36}(\.app)?$/;
 
+export function assertStandaloneMacBundle(bundle) {
+  if (!bundle) return;
+  const parent = path.dirname(path.resolve(bundle));
+  let existing = parent;
+  while (!fs.existsSync(existing)) existing = path.dirname(existing);
+  const physical = path.resolve(fs.realpathSync(existing), path.relative(existing, parent));
+  const container = physical.split(path.sep).findLast(part => /\.app$/i.test(part));
+  if (container) throw new Error(`Computer Use is included in ${container.replace(/\.app$/i, "")}. Update that app to update Computer Use.`);
+}
+
 export function backupsToKeep(env = process.env) {
   const keep = Number(env.CODEWHALE_CU_BACKUPS_KEEP);
   return Number.isInteger(keep) && keep >= 1 ? keep : 2;
@@ -52,6 +62,7 @@ export function pruneBackups(dir, keep = backupsToKeep(), protect = null) {
 
 /** Publish a verified bundle in one rename, retaining the previous install. */
 export function replaceMacBundle(source, destination, { prepare = () => {}, verify = verifySignature } = {}) {
+  assertStandaloneMacBundle(destination);
   const parent = path.dirname(destination);
   fs.mkdirSync(parent, { recursive: true });
   if (fs.existsSync(destination) && !fs.existsSync(path.join(destination, "Contents", "Resources", "plugin", "app", "daemon.mjs"))) throw new Error("The installation destination contains a different application.");

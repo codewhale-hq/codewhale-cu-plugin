@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { inflateRawSync } from "node:zlib";
-import { replaceMacBundle, verifyReleaseBundle } from "./install-macos.mjs";
+import { assertStandaloneMacBundle, replaceMacBundle, verifyReleaseBundle } from "./install-macos.mjs";
 import { APP_VERSION, APP_NAME, newerVersion } from "../src/app-socket.mjs";
 import { stateDir } from "../src/registry.mjs";
 
@@ -36,6 +36,8 @@ export function releaseUpdate(release,current=APP_VERSION) {
   return {available:true,version,url,sha256:asset.digest.slice(7),size:asset.size,message:`Computer Use ${version} is available. Install it to restart the helper; existing computer sessions will stop.`};
 }
 export async function checkForUpdate() {
+  try { assertStandaloneMacBundle(process.env.CODEWHALE_CU_APP_BUNDLE); }
+  catch (error) { return {available:false,message:error.message}; }
   const response=await fetch("https://api.github.com/repos/codewhale-hq/codewhale-cu-plugin/releases/latest",{redirect:"error",headers:{Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"},signal:AbortSignal.timeout(10_000)});
   if(response.status===404) return {available:false,message:"No stable installer has been published yet. Your current app is unchanged."};
   if(!response.ok) throw new Error(`The update service is unavailable (${response.status}). Try again later.`);
@@ -78,6 +80,7 @@ export function validateReleaseZip(bytes) {
 }
 
 export async function prepareUpdate(update) {
+  assertStandaloneMacBundle(process.env.CODEWHALE_CU_APP_BUNDLE);
   if(!update?.available) throw new Error("Check for an available update first.");
   if(!newerVersion(update.version,APP_VERSION)||update.url!==`${repository}/releases/download/v${update.version}/Codewhale-Computer-Use-${update.version}-macos-universal.zip`||!Number.isSafeInteger(update.size)||update.size<=0||update.size>limit) throw new Error("The update identity is invalid.");
   // Only GitHub's fixed release URL and its asset CDN can serve the bytes.
@@ -106,6 +109,7 @@ export async function prepareUpdate(update) {
 }
 
 export async function restartWithUpdate(prepared,destination) {
+  assertStandaloneMacBundle(destination);
   const logDir=path.join(os.homedir(),"Library","Logs",APP_NAME); fs.mkdirSync(logDir,{recursive:true});
   const log=fs.openSync(path.join(logDir,"update.log"),"a",0o600);
   const child=spawn(process.execPath,[fileURLToPath(import.meta.url),"--apply",prepared.bundle,destination,String(process.pid),String(process.ppid)],{detached:true,stdio:["ignore",log,log]});
@@ -115,6 +119,7 @@ export async function restartWithUpdate(prepared,destination) {
 
 if(process.argv[1]===fileURLToPath(import.meta.url)&&process.argv[2]==="--apply") {
   const [source,destination,owner,launcher]=process.argv.slice(3);
+  assertStandaloneMacBundle(destination);
   let result;
   try {
     verifyReleaseBundle(source);

@@ -6,7 +6,7 @@ import os from "node:os";
 import { deflateRawSync } from "node:zlib";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { newerVersion, releaseUpdate, checkForUpdate, prepareUpdate, validateReleaseZip, readUpdateResult } from "../app/updates.mjs";
+import { newerVersion, releaseUpdate, checkForUpdate, prepareUpdate, restartWithUpdate, validateReleaseZip, readUpdateResult } from "../app/updates.mjs";
 import { replaceMacBundle } from "../app/install-macos.mjs";
 import { APP_VERSION } from "../src/app-socket.mjs";
 
@@ -36,6 +36,18 @@ test("update discovery uses the canonical API and refuses redirects",async t=>{
   const update=await checkForUpdate();
   assert.equal(update.available,true);
   assert.equal(update.url,release(nextVersion).assets[0].browser_download_url);
+  assert.equal(request.mock.callCount(),1);
+  const previous=process.env.CODEWHALE_CU_APP_BUNDLE;
+  const nested=path.join(os.tmpdir(),"Codewhale.app","Contents","Resources","helpers","Codewhale Computer Use.app");
+  process.env.CODEWHALE_CU_APP_BUNDLE=nested;
+  t.after(()=>{
+    if(previous===undefined) delete process.env.CODEWHALE_CU_APP_BUNDLE; else process.env.CODEWHALE_CU_APP_BUNDLE=previous;
+  });
+  const managed=await checkForUpdate();
+  assert.equal(managed.available,false);
+  assert.match(managed.message,/included in Codewhale/);
+  await assert.rejects(prepareUpdate(update),/Update that app/);
+  await assert.rejects(restartWithUpdate({},nested),/Update that app/);
   assert.equal(request.mock.callCount(),1);
 });
 test("update preparation rejects legacy and foreign repository identities before downloading",async t=>{
@@ -75,6 +87,15 @@ test("failed update preparation or verification preserves the complete previous 
   const result=replaceMacBundle(source,destination,{verify:()=>{}});
   assert.equal(fs.readFileSync(path.join(destination,relative),"utf8"),"new");
   assert.equal(fs.readFileSync(path.join(result.backup,relative),"utf8"),"old");
+  const outer=path.join(directory,"Codewhale.app","Contents");
+  fs.mkdirSync(outer,{recursive:true});
+  const alias=path.join(directory,"resources");
+  fs.symlinkSync(outer,alias,"junction");
+  for(const parent of [outer,alias]) {
+    const nested=path.join(parent,"helpers","Codewhale Computer Use.app");
+    assert.throws(()=>replaceMacBundle(source,nested,{verify:()=>{}}),/included in Codewhale/);
+    assert.equal(fs.existsSync(path.dirname(nested)),false);
+  }
 });
 
 test("a rejected apply leaves a readable result for the next launch without changing control consent",t=>{
