@@ -45,6 +45,14 @@ The manager's session ID must be unique to its desktop process. Update messages
 require that session's live token and proof of the pinned persistent key.
 Different Engine/MCP host identities must close their leases before preparation.
 
+The first managed bootstrap must happen at the desktop's final installation
+location. The desktop must guide the person to install/move and reopen it
+before bootstrap when running from a disk image, translocation or staging path.
+This protocol does not automatically relocate or rebind an existing managed
+installation. Moving a pinned app leaves its owner and pending transaction
+intact and refuses the new physical path until an explicit supported migration
+is available. Never reset the key or rewrite registration to hide that mismatch.
+
 ```js
 {
   tool: "managed_update",
@@ -132,6 +140,13 @@ clearing only that transaction. Neither resumes persisted Pause/Stop nor
 replays old work; old leases stay stopped. If old and next fingerprints are
 equal, completion still requires retirement and a fresh process.
 
+Startup selects completion only when the durable phase is `retired` and the
+installed fingerprint/version match the next identity. Otherwise an exact old
+fingerprint selects abort; any other identity stays blocked. In particular,
+when old and next fingerprints are equal, a crash in `draining` or `drained`
+selects abort, while a retired update can complete on the freshly started
+helper. A matching next fingerprint alone does not establish retirement.
+
 An owner disconnect does not remove the fence. Inspect status after an unknown
 response. Matching preparation can report/retry its durable phase; interrupted
 draining can be retried or aborted after cleanup. Unknown/missing disk identity
@@ -148,3 +163,8 @@ shutdown and control regressions remain separate checks. These do not qualify
 LaunchServices bootstrap, signed package updates, permission attribution,
 mounted installs or real saved-app outcomes. Those belong to the desktop and
 packaging owners' exact-artifact acceptance before release.
+
+A managed-capable release needs a fresh helper version and newly qualified
+artifact. Source commits with 0.16.0 development metadata do not alter or
+requalify the published signed 0.16.0 bundle. The release owner must reconcile
+all manifests, signed bundle metadata, package receipt and feed before release.
