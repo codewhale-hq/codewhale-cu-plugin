@@ -984,6 +984,41 @@ test('macOS screenshot rejects a display id used as an index instead of mislabel
   assert.deepEqual(captures.at(-1).slice(0, 5), ['-x', '-t', 'png', '-D', '1']);
 });
 
+// A region pins the crop itself in global screen points — x and y may be
+// negative where a display sits left of or above the main one — so it never
+// combines with -D: together they would reinterpret the region against one
+// display instead of the arranged desktop. Documented repro of the -R
+// global-points semantics (a command to reason from, not an on-hardware
+// verification): `screencapture -x -R -1500,100,400,300 out.png` with a
+// display arranged left of main.
+test('macOS region screenshots crop without -D, keep negative origins and reject malformed rects', async (t) => {
+  const displays = [
+    { index: 1, id: 3, main: true, points: { x: 0, y: 0, w: 2880, h: 1620 }, scale: 2 },
+    { index: 2, id: 5, points: { x: -1500, y: 100, w: 1500, h: 900 }, scale: 1 },
+  ];
+  const { backend, captures } = displayBackend(t, { displays });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cu-region-shot-'));
+  // Caller-chosen capture paths must sit in the recordings directory.
+  const oldRec = process.env.CODEWHALE_CU_RECORDINGS_DIR; process.env.CODEWHALE_CU_RECORDINGS_DIR = dir;
+  t.after(() => { if (oldRec === undefined) delete process.env.CODEWHALE_CU_RECORDINGS_DIR; else process.env.CODEWHALE_CU_RECORDINGS_DIR = oldRec; });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const shot = await backend.screenshot({ display: 2, region: [-1500, 100, 400, 300], path: path.join(dir, 'left.png') });
+  const rAt = captures.at(-1).indexOf('-R');
+  assert.ok(rAt !== -1 && captures.at(-1)[rAt + 1] === '-1500,100,400,300', `the region passes through verbatim: ${captures.at(-1)}`);
+  assert.equal(captures.at(-1).includes('-D'), false, 'a region shot sends -R and no -D');
+  assert.deepEqual(shot.points, { x: -1500, y: 100, w: 400, h: 300 }, 'the raster binds the region origin');
+
+  await backend.screenshot({ region: [0, 0, 400, 300], path: path.join(dir, 'main.png') });
+  assert.equal(captures.at(-1).includes('-D'), false, 'the active display is not combined with a region either');
+
+  for (const region of [['junk', 0, 400, 300], [0, 0, 400], [0, 0, 0, 300], [0, 0, 400, -1], [0, 0, Number.NaN, 300], [0, 0, Number.POSITIVE_INFINITY, 300]]) {
+    const before = captures.length;
+    await assert.rejects(backend.screenshot({ region }), /region must be \[x, y, w, h\]/);
+    assert.equal(captures.length, before, 'a malformed region never reaches screencapture');
+  }
+});
+
 // A 5K display captures to ~22MB of PNG, which is ~29MB of base64 — past the
 // 16MB a stdio host will accept in one message. That once dropped the whole
 // transport and every other tool with it. The raster is shrunk to fit instead,
