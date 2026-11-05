@@ -540,12 +540,17 @@ async function normalizeTarget(computer, target, kind, resolve, sink) {
 }
 
 function bindRaster(computer, shot, sourceFile = shot.file ?? shot.path) {
+  // A shot with no known geometry would bind a guessed (0,0) origin and
+  // silently remap every later coordinate target onto the wrong pixels.
+  // Keep the previous raster instead: a coordinate target then resolves
+  // against it, or fails no_raster when none exists.
+  if (shot.points == null && shot.origin == null) return null;
   const raster = {
     raster_id: crypto.randomUUID(),
     file: shot.file ?? shot.path,
     sourceFile,
     scale: shot.scale ?? 1,
-    origin: shot.points ?? { x: 0, y: 0 },
+    origin: shot.points ?? shot.origin,
     pixels: shot.pixels ?? null,
     capturedAt: shot.capturedAt ?? new Date().toISOString(),
   };
@@ -1855,7 +1860,7 @@ async function callTool(params, bindWhen = null) {
         else {
           // Raster lives on the remote machine; bind geometry for coordinate mapping.
           bindRaster(computer, { ...data, file: null, path: null }, data.file ?? data.path);
-          if (typeof ex.readImage !== "function") data.note = "file lives on the remote computer; pull it with scp if you need the bytes locally";
+          if (typeof ex.readImage !== "function") data.note = [data.note, "file lives on the remote computer; pull it with scp if you need the bytes locally"].filter(Boolean).join(" ");
         }
       }
       if (backendMethod === "zoom") bindZoomRaster(computer, zoomParent, args.region, ex.filesLocal ? data?.file ?? data?.path : null, data?.file ?? data?.path);
@@ -1964,9 +1969,14 @@ async function callTool(params, bindWhen = null) {
       if (data.ocr.raster) {
         const localFile = typeof ex?.remote !== "function" || ex.filesLocal;
         const raster = bindRaster(computer, localFile ? data.ocr.raster : { ...data.ocr.raster, file: null, path: null }, data.ocr.raster.file ?? data.ocr.raster.path);
-        data.ocr.raster.raster_id = raster.raster_id;
+        // bindRaster keeps the previous raster for a geometry-less capture,
+        // returning null only when it had nothing to change; pin the receipt
+        // to whichever raster its coordinate targets will actually resolve
+        // against instead of losing the whole observation to a TypeError.
+        const id = raster?.raster_id ?? lastRasters.get(computer.id)?.raster_id;
+        data.ocr.raster.raster_id = id;
         for (const block of data.ocr.blocks ?? []) {
-          if (block.target?.type === "coordinate" && block.target.space !== "screen") block.target.raster_id = raster.raster_id;
+          if (block.target?.type === "coordinate" && block.target.space !== "screen") block.target.raster_id = id;
         }
       }
       data.ocr.note = "Recognized text may be imperfect. These coordinate targets belong to this captured image, not to accessibility elements; observe again after the UI changes. Prefer ocr_region or query over a second full-window OCR.";
