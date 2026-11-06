@@ -12,6 +12,45 @@ Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). Records below
 come from one maintainer Mac (arm64, Retina) and are evidence, not a
 publication verdict.
 
+### 0.16.1 — published 2026-11-05
+
+Frozen release source `5b2466aef68de52aa1b46e58446135adeb850e7c`, runtime
+`4c743d2017143416`, published at 2026-11-06 03:58:05 UTC as Latest after a
+draft whose 11 asset sizes and SHA-256 digests matched the local receipt.
+Exact-source [three-platform CI](https://github.com/codewhale-hq/codewhale-cu-plugin/actions/runs/42157461728)
+passed (macOS 550 pass / 29 skip, Linux 532 / 47, Windows 513 / 66 plus 12
+controlled checks; zero failures) and
+[CodeQL](https://github.com/codewhale-hq/codewhale-cu-plugin/actions/runs/42157460794)
+passed. The local `npm test` on the same commit: 579 tests, 550 pass, 0 fail,
+29 platform skips. The CI-built portable archive equals a local `git archive`
+of the commit (`f649c65e…`).
+
+Apple accepted app `67b4a529-ca64-4f0c-ad6c-283d1a412d2f` and disk image
+`427a462f-22b7-452b-abb7-b80d43279918`; both are stapled and Gatekeeper
+`Notarized Developer ID`. Mac ZIP `1b52342414a8…` (the archive codewhale-app
+pins), DMG `93f5b43e1dc5…`. Anonymous latest-URL downloads of the DMG, ZIP,
+portable archive, `release.json` and `SHA256SUMS.txt` matched, and the
+downloaded DMG's app reports 0.16.1, stapled and accepted.
+
+Installed acceptance on macOS 26.1: a Developer ID-signed Codewhale
+0.10.3-beta.1 (codewhale-app `1273fc07`, unreleased Engine `1d3bbdf`)
+installed the helper at `~/.codewhale/computer-use/Codewhale Computer
+Use.app` and pinned ownership. tccd attributed capture to
+`net.codewhale.computer-use`; Accessibility granted and Screen Recording ok;
+the managed pin survived a macOS-initiated helper restart. Through the
+reinstalled Codewhale plugin: ScreenCaptureKit window capture, Calculator
+1234 × 56 = 69,104 by keys, TextEdit replace and save of 76 exact Unicode
+bytes, `launched:false` for the person's running TextEdit, and `kill_app`
+quitting only the task-launched Calculator. Claude Desktop and Claude Code
+reached the same helper. Before the separate install, the nested build was
+denied Screen Recording because tccd matched the outer Codewhale app's
+code requirement; that is the reason for this release.
+
+Open: fresh-machine, non-admin and desktop updater-apply qualification of
+the managed install; a published Codewhale desktop carrying it; other macOS
+versions, off-Space, live-lock, revocation and VoiceOver. Windows remains an
+unsigned experimental preview and Linux experimental.
+
 ### 0.16.0 — published 2026-11-02
 
 Product work follows [Cua Driver’s interface principles](CUA_PARITY.md): copied
@@ -570,6 +609,7 @@ receipts belong in a public issue.
 
 ## 5. Final actions — human-only, never scripted
 
+- [x] **Publish release** — v0.16.1 published 2026-11-05 (PST) at Hunter Bown’s direction ("Yes, release it") by Claude Opus 5.5 from the authenticated maintainer session. Tag `5b2466a`, runtime `4c743d2017143416`; exact-source three-platform CI 42157461728 and CodeQL 42157460794 passed; app/DMG notarized, stapled and Gatekeeper accepted; all 11 asset digests verified on the draft before publication and anonymous downloads verified after.
 - [x] **Publish release** — v0.16.0 published 2026-11-02 at 13:29:14Z at Hunter Bown’s explicit direction to release the CU update. Tag `369b614`, runtime `f40cba077ff48ba5`; exact-source three-platform CI 41451335528 and CodeQL 41451336089 passed. App/DMG signed, notarized, stapled and Gatekeeper accepted. All 11 remote asset hashes and anonymous DMG/plugin/receipt downloads match. Installed global Codewhale/DeepSeek save/reopen passed; remaining limits and the publication-order defect are recorded above.
 
 - [x] **Repository visibility change** — public since 2026-09-13 (human).

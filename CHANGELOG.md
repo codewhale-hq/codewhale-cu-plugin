@@ -1,6 +1,8 @@
 # Release notes
 
-## 0.16.1 — unreleased
+## 0.16.1 — 2026-11-05
+
+Published from `5b2466aef68de52aa1b46e58446135adeb850e7c`, runtime `4c743d2017143416`, with 11 verified assets. Exact-source three-platform CI and CodeQL passed; local Mac suite 550 pass, 29 platform skips, zero failures. Verified installed by a signed Codewhale desktop on macOS 26.1. [Qualification record](docs/RELEASE_CHECKLIST.md#0161--published-2026-11-05).
 
 - **Comes with the Codewhale desktop, installed as its own app.** Codewhale carries the signed helper and installs it to `~/.codewhale/computer-use/Codewhale Computer Use.app`, then owns its updates: the helper is pinned to that desktop's key and location, drains and retires before a new copy replaces it, and an existing unowned helper is preserved and refused rather than taken over. Because it is not nested inside Codewhale.app, macOS lists it as Codewhale Computer Use and its permissions survive desktop rebuilds. Details: [MANAGED_HELPER.md](docs/MANAGED_HELPER.md).
 - **Screen Recording guidance names the app macOS actually checks.** When Computer Use runs inside another app such as Codewhale, macOS grants screen capture to that containing app, not to Codewhale Computer Use. The setup panel and `request_access` (`screen_recording_app`, `setup_hint`) now say which app to turn on. Verified on macOS 26.1: the tccd log charged the bundled helper's capture to `net.codewhale.desktop`.
