@@ -926,12 +926,12 @@ export function create({ exec }) {
     let link = null, armed = null, firstWindow;
     // Binding an already-running app must not ask LaunchServices to reopen
     // it: reopen can raise windows even with open -g on some applications.
-    if (!urlArg) {
-      try { p = await native("app_info", { app_ref: find, activate }); }
-      catch (error) {
-        if (!error.message.includes("application not found")) throw error;
-      }
+    let running;
+    try { running = await native("app_info", { app_ref: find, activate: urlArg ? false : activate }); }
+    catch (error) {
+      if (!error.message.includes("application not found")) throw error;
     }
+    if (!urlArg) p = running;
     if (!p?.found) {
       if (!name && !bid) throw Object.assign(new ExecError(`no running application with pid ${pid}; call list_apps for the current processes`), { code: "app_not_found" });
       const args = [];
@@ -951,7 +951,7 @@ export function create({ exec }) {
           ? "app_not_found" : undefined;
         throw Object.assign(new ExecError(`open failed: ${stderr.slice(0, 200)}`), { code });
       }
-      launched = true;
+      launched = !running?.found;
       if (link) {
         const deadline = Date.now() + 10_000;
         for (;;) {
@@ -1055,7 +1055,10 @@ export function create({ exec }) {
     } catch { perms.screen_capture = "failed"; }
     caps.screenshot = perms.screen_capture === "ok";
     caps.recording = caps.screenshot;
-    return { platform: "darwin", capabilities: caps, permissions: perms, note: "macOS does not expose Screen-Recording TCC state to CLI; a black/empty screenshot means Screen Recording permission is missing. Background mode (open_application activate:false) uses accessibility actions and process-bound keyboard events; pointer gestures and modified keys are posted to the app's process without taking the front (strict approval mode refuses them); a self-activating app is put back behind the person's app and a background menu's key-focus grab is released. Foreground control (activate:true) uses the shared desktop and requires exclusive use. Neither mode is an isolated desktop. App-specific behavior still requires verification." };
+    const bundles = perms.screen_capture === "ok" ? [] : process.execPath.split(path.sep).filter((part) => part.endsWith(".app"));
+    const screenRecordingApp = bundles[0]?.slice(0, -4);
+    const setup = screenRecordingApp ? { screen_recording_app: screenRecordingApp, setup_hint: `Ask the person to turn on ${screenRecordingApp} in System Settings > Privacy & Security > Screen & System Audio Recording${bundles.length > 1 ? `. macOS grants screen capture to ${screenRecordingApp} because Computer Use runs inside it` : ""}, then quit and reopen it.` } : {};
+    return { platform: "darwin", capabilities: caps, permissions: perms, ...setup, note: "macOS does not expose Screen-Recording TCC state to CLI; a black/empty screenshot means Screen Recording permission is missing. Background mode (open_application activate:false) uses accessibility actions and process-bound keyboard events; pointer gestures and modified keys are posted to the app's process without taking the front (strict approval mode refuses them); a self-activating app is put back behind the person's app and a background menu's key-focus grab is released. Foreground control (activate:true) uses the shared desktop and requires exclusive use. Neither mode is an isolated desktop. App-specific behavior still requires verification." };
   }
 
   const api = {

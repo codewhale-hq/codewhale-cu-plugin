@@ -28,6 +28,11 @@ static void cuSendJSON(NSDictionary *payload) {
   [cuControlOutput appendData:json]; [cuControlOutput appendBytes:"\n" length:1];
   cuFlushControl();
 }
+static NSString *cuScreenRecordingApp(void) {
+  NSString *outer=nil;
+  for(NSString *part in NSBundle.mainBundle.bundlePath.pathComponents) if([part.pathExtension isEqualToString:@"app"]) { outer=part; break; }
+  return [outer isEqualToString:NSBundle.mainBundle.bundlePath.lastPathComponent]?nil:outer.stringByDeletingPathExtension;
+}
 static void cuSend(NSString *command) { cuSendJSON(@{@"command":command}); }
 static NSTextField *cuLabel(NSString *text, CGFloat size, NSFontWeight weight) {
   NSTextField *label=[NSTextField wrappingLabelWithString:text];
@@ -391,7 +396,7 @@ static NSView *cuSeparator(void) {
   BOOL ax=AXIsProcessTrusted(), sc=CGPreflightScreenCaptureAccess();
   self.setupSection.hidden=ax && sc && !self.settingsVisible;
   self.accessStatus.stringValue=ax?@"Granted · read controls and send input":@"Required to read controls and send input";
-  self.screenStatus.stringValue=sc?@"Granted · capture app windows":@"Required for screenshots. If missing in Settings, add Computer Use with +.";
+  self.screenStatus.stringValue=sc?@"Granted · capture app windows":(cuScreenRecordingApp()?[NSString stringWithFormat:@"Required for screenshots. Turn on %@ in Settings: Computer Use runs inside it.",cuScreenRecordingApp()]:@"Required for screenshots. If missing in Settings, add Computer Use with +.");
   self.accessButton.title=ax?@"Settings…":@"Allow…"; self.screenButton.title=sc?@"Settings…":@"Allow…";
   cuSend(@"status");
 }
