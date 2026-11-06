@@ -1,6 +1,14 @@
 # Helper lifecycle inside Codewhale
 
-This source contract lets the containing desktop update its nested helper.
+This source contract lets the Codewhale desktop install and update its helper.
+
+The desktop carries the signed helper inside its own bundle and installs it to
+`$CODEWHALE_HOME/computer-use/Codewhale Computer Use.app` (default
+`~/.codewhale/computer-use/`), outside `Codewhale.app`. macOS attributes a
+nested helper's Screen Recording to the outer app, so a nested copy would be
+listed as Codewhale and lose its grant whenever the desktop's signature
+changed. Installed separately, it is listed as Codewhale Computer Use and keeps
+its own Developer ID grants for every host that uses it.
 It reuses the helper's host challenge, socket-owned sessions, registration,
 cleanup queue and native human controls. It introduces no MCP tool, backend
 operation, private-key store or additional lease authority. Published 0.16.0
@@ -18,16 +26,18 @@ Call `setAppHostIdentity({ledgerKey: Buffer, label: string})` before opening any
 session. `appHostPublicKey()` returns only the derived Ed25519 public SPKI as
 base64, and refuses an ephemeral identity.
 
-`bootstrapManagedApp({bundlePath, expectedBuild, expectedVersion})` checks the
-physical helper location inside its containing `.app`, the on-disk runtime
+`bootstrapManagedApp({bundlePath, container, expectedBuild, expectedVersion})`
+checks the installed helper bundle, the desktop's own `.app` (`container`;
+omitted, it is the `.app` enclosing a nested helper), the on-disk runtime
 fingerprint and plugin version. It launches through `/usr/bin/open -n -g`
-with explicit `--env CODEWHALE_CU_DESKTOP_OWNER_KEY=<public SPKI>`. Configured
+with explicit `--env CODEWHALE_CU_DESKTOP_OWNER_KEY=<public SPKI>` and
+`--env CODEWHALE_CU_DESKTOP_CONTAINER=<desktop .app>`. Configured
 isolated CU state/socket variables also use explicit LaunchServices environment
 arguments. A plain environment on the `open` process is insufficient.
 
 The daemon requires its existing inherited native control channel and that its
 loaded plugin physically belongs to that helper. It pins the public key and
-containing application in the existing atomic, fsynced `app.json` registration.
+owning desktop application in the existing atomic, fsynced `app.json` registration.
 Later helper/desktop restarts retain that pin; a different key or physical
 installation refuses. Bootstrap is not computer-access approval and cannot
 change human Pause/Stop or existing host trust.
@@ -117,7 +127,8 @@ does not establish retirement. Do not use a later PID lookup or SIGTERM.
 After retirement commitment the old process cannot race an abort/completion to
 clear the fence. Its native launcher exits with the daemon. The desktop's
 existing OS/package updater owns atomic outer-app replacement and rollback;
-the nested helper does not alter the signed containing bundle.
+the desktop then copies its new helper payload over the retired installation
+before completing the transaction. The helper never alters the signed desktop.
 
 ## Recovery and completion
 

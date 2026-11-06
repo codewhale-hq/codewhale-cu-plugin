@@ -37,12 +37,19 @@ const consentController = createConsentController({ onStateChange: () => notifyC
 const log = (msg) => process.stderr.write(`${new Date().toISOString()} ${APP_NAME}: ${msg}\n`);
 let build = null;
 try { build = runtimeFingerprint(); } catch (error) { log(`could not fingerprint the runtime: ${error.message}`); }
-let physical = null;
-try { if (bundle) physical = managedBundleIdentity(bundle); } catch {}
 const bootstrapOwner = process.env.CODEWHALE_CU_DESKTOP_OWNER_KEY;
+const bootstrapContainer = process.env.CODEWHALE_CU_DESKTOP_CONTAINER;
 delete process.env.CODEWHALE_CU_DESKTOP_OWNER_KEY;
-const registration = readRegistration({ strict: !!(bootstrapOwner || physical) });
+delete process.env.CODEWHALE_CU_DESKTOP_CONTAINER;
+let nested = null;
+try { if (bundle) nested = managedBundleIdentity(bundle); } catch {}
+const registration = readRegistration({ strict: !!(bootstrapOwner || bootstrapContainer || nested) });
 let managed = registration?.managed ?? null;
+let physical = nested;
+const ownerContainer = bootstrapOwner ? bootstrapContainer : managed?.container;
+if (bundle && ownerContainer) {
+  try { physical = managedBundleIdentity(bundle, ownerContainer); } catch { physical = null; }
+}
 if (managed || bootstrapOwner) {
   if (!physical || fs.realpathSync(PLUGIN_ROOT) !== path.join(physical.helperBundle, "Contents", "Resources", "plugin") || process.env.CODEWHALE_CU_CONTROL_FD !== "3" || (bootstrapOwner && !hostPublicKey(bootstrapOwner)) ||
       (managed && (managed.container !== physical.container || managed.helperBundle !== physical.helperBundle || (bootstrapOwner && bootstrapOwner !== managed.publicKey)))) {
@@ -193,7 +200,7 @@ async function manageUpdate(req) {
   if (req.action === "prepare" && pending && pending.phase !== "draining") return result();
   if (req.action === "retire" && !["drained", "retired"].includes(pending.phase)) return managedRefusal("managed_update_pending", "The helper must finish draining before it can retire");
   try {
-    const identity = managedBundleIdentity(bundle);
+    const identity = managedBundleIdentity(bundle, managed.container);
     const diskBuild = runtimeFingerprint(path.join(bundle, "Contents", "Resources", "plugin"));
     const wanted = req.action === "complete" ? pending.nextBuild : pending?.currentBuild ?? req.currentBuild;
     if (identity.container !== managed.container || identity.helperBundle !== managed.helperBundle || build !== wanted || diskBuild !== wanted ||

@@ -13,12 +13,10 @@ keyboard focus.
    permits app screenshots. If it is not listed, use **+** in System Settings
    and select **Codewhale Computer Use** from Applications. macOS may require
    quitting and reopening the app, or show another screen-capture approval when
-   you first use it. When Computer Use came inside the **Codewhale** desktop
-   app, macOS grants screen capture to **Codewhale** instead: enable Codewhale,
-   then quit and reopen it. Switching Codewhale Computer Use on and off has no
-   effect there. A Codewhale build that is not signed with a Developer ID
-   loses this grant every time it is rebuilt; remove its old entry with **−**
-   and enable the new one.
+   you first use it. The Codewhale desktop installs Computer Use as this same
+   separate app, so the same entry applies. If a helper runs from inside
+   another app, macOS grants screen capture to that outer app instead, and the
+   setup panel names it.
 3. Return to the panel. It should show **Ready**. The granted permission rows
    remain available under **Settings…**.
 4. In Codewhale's **Connectors**, install, review and enable the ordinary

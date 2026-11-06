@@ -2,7 +2,7 @@
 
 ## 0.16.1 — unreleased
 
-- **The Codewhale desktop can own and update its bundled helper.** A helper inside Codewhale.app is pinned to that installation's key and location and updates with it; an existing unowned helper is preserved and refused rather than taken over. Details: [MANAGED_HELPER.md](docs/MANAGED_HELPER.md).
+- **Comes with the Codewhale desktop, installed as its own app.** Codewhale carries the signed helper and installs it to `~/.codewhale/computer-use/Codewhale Computer Use.app`, then owns its updates: the helper is pinned to that desktop's key and location, drains and retires before a new copy replaces it, and an existing unowned helper is preserved and refused rather than taken over. Because it is not nested inside Codewhale.app, macOS lists it as Codewhale Computer Use and its permissions survive desktop rebuilds. Details: [MANAGED_HELPER.md](docs/MANAGED_HELPER.md).
 - **Screen Recording guidance names the app macOS actually checks.** When Computer Use runs inside another app such as Codewhale, macOS grants screen capture to that containing app, not to Codewhale Computer Use. The setup panel and `request_access` (`screen_recording_app`, `setup_hint`) now say which app to turn on. Verified on macOS 26.1: the tccd log charged the bundled helper's capture to `net.codewhale.desktop`.
 - **Opening a document in a running app no longer claims the app was launched.** `open_application` with `url` reported `launched: true` for an app that was already open, which let `kill_app` treat the person's app as one Computer Use started. It now reports `launched: false` there, and the quit guard keeps applying.
 
