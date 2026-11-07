@@ -1,8 +1,8 @@
 // Test-only backend, injected via CODEWHALE_CU_TEST_BACKEND (see
 // src/transport.mjs). Records every call as JSONL in FAKE_BACKEND_CALLS and
-// answers with canned raster/element data. resolve_element reads its reply
-// from the JSON file at FAKE_BACKEND_CONTROL, falling back to element 0's
-// cached geometry.
+// answers with canned raster/element data. resolve_element and screenshot
+// overrides (and observations) read their replies from the JSON file at
+// FAKE_BACKEND_CONTROL, falling back to element 0's cached geometry.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -79,6 +79,11 @@ export function create() {
       const { region } = args;
       record("screenshot", args);
       const file = tmpPng("cu-fake-shot-");
+      // Control override: a capture with different (or no) geometry for the
+      // raster-binding tests. No keys here means the canned geometry below.
+      let ctrl = null;
+      try { ctrl = JSON.parse(fs.readFileSync(controlFile, "utf8")); } catch {}
+      if (ctrl?.screenshot) return { file, ...ctrl.screenshot };
       return region
         ? { file, points: { x: region[0], y: region[1], w: region[2], h: region[3] }, pixels: { w: region[2] * 2, h: region[3] * 2 }, scale: 2 }
         : { file, points: { x: 0, y: 0, w: 800, h: 600 }, pixels: { w: 1600, h: 1200 }, scale: 2 };

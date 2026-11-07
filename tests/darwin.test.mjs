@@ -1095,6 +1095,37 @@ test('macOS screenshot captures JPEG by default and honours an explicit .png pat
   );
 });
 
+// Display geometry can be unknown (list_displays reporting no points). Such a
+// capture must not silently re-anchor zoom crops to a guessed origin: the
+// previous raster stays the frame, and the receipt says so.
+test('macOS screenshots with unknown display geometry keep the previous raster and say so', async (t) => {
+  const displays = [{ index: 1, id: 3, main: true, scale: 2 }];
+  const { backend } = displayBackend(t, { displays });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cu-geom-shot-'));
+  // Caller-chosen capture paths must sit in the recordings directory.
+  const oldRec = process.env.CODEWHALE_CU_RECORDINGS_DIR; process.env.CODEWHALE_CU_RECORDINGS_DIR = dir;
+  t.after(() => { if (oldRec === undefined) delete process.env.CODEWHALE_CU_RECORDINGS_DIR; else process.env.CODEWHALE_CU_RECORDINGS_DIR = oldRec; });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const unknown = await backend.screenshot({ display: 1, path: path.join(dir, 'u.png') });
+  assert.match(unknown.note, /geometry unknown/);
+  assert.deepEqual(unknown.points, null);
+  await assert.rejects(backend.zoom({ region: [0, 0, 1, 1] }), /no screenshot taken yet/,
+    'a geometry-unknown shot never becomes a croppable frame');
+
+  displays[0] = { index: 1, id: 3, main: true, points: { x: 0, y: 0, w: 800, h: 450 }, scale: 2 };
+  await backend.screenshot({ display: 1, path: path.join(dir, 'a.png') });
+  displays[0] = { index: 1, id: 3, main: true, scale: 2 };
+  const again = await backend.screenshot({ display: 1, path: path.join(dir, 'b.png') });
+  assert.match(again.note, /geometry unknown/);
+  // zoom keeps cropping the anchored raster: its scale is 1px per 800pt (the
+  // PNG's pixel ground truth over the anchored points), so the 1x1 crop maps
+  // to 800-point axes — an unanchored raster would fall back to the display
+  // scale of 2 and report half-point axes instead.
+  const z = await backend.zoom({ region: [0, 0, 1, 1] });
+  assert.deepEqual(z.points, { x: 0, y: 0, w: 800, h: 800 });
+});
+
 // Dimensions come from the raster's own header. A JPEG carries them in a frame
 // marker rather than at a fixed offset, and reading the wrong bytes would
 // mis-scale every coordinate target derived from the capture.
