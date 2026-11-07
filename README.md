@@ -53,13 +53,11 @@ Install the helper and connect your host, or build from source:
    whale menu-bar icon, grant what it asks (Accessibility, then Screen
    Recording), and run the background check. No terminal, no Node, no
    compiler needed.
-2. **Inside Codewhale.** Install, review and enable Computer Use as an ordinary
-   plugin through **Connectors**, using a stable published plugin release.
-   Plugin updates are independent of Engine updates. On macOS, install the
-   separate Computer Use app above; it owns permissions and the human controls.
-   Each release carries the portable `computer-use.tar.gz` asset for this
-   installation path. Run `request_access`
-   and follow its setup hint; a missing helper returns `app_setup_required`.
+2. **Inside Codewhale.** Install the Mac app above, then use the
+   [Codewhale setup](#codewhale-cli-setup) for your installed CLI version.
+   The published CLI v0.10.2 has an older built-in plugin; installing the
+   marketplace entry does not replace it with this release. A helper app,
+   plugin bundle and CLI can have different versions.
 3. **From source.** Clone, test, install:
    ```bash
    git clone https://github.com/codewhale-hq/codewhale-cu-plugin
@@ -197,6 +195,40 @@ from source instead, use door 3 in [Install](#install). See
 [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) for the packaging,
 notarization and release procedure.
 
+## Codewhale CLI setup
+
+For the published CLI v0.10.2, connect the current app's MCP server directly.
+The Mac app includes Node, so this route needs no separately installed runtime:
+
+```bash
+APP="/Applications/Codewhale Computer Use.app"
+codewhale mcp add computer --command "$APP/Contents/MacOS/node" --arg "$APP/Contents/Resources/plugin/mcp/server.mjs"
+codewhale mcp tools computer
+```
+
+If the app is installed elsewhere, set `APP` to its actual bundle path.
+If the older built-in plugin is already enabled, run
+`/plugin disable computer-use` in Codewhale before using this connection.
+Direct MCP supplies tools without installing the plugin's commands and skills.
+In an existing session run `/mcp reload`, select Operate mode, and ask:
+“Check Computer Use permissions with request_access. Do not send input.”
+The receipt should report `via: "app"`, the running helper version and any
+missing permissions. Follow its setup hint if the helper is absent or
+unreachable; do not bypass it. A permission probe does not establish that
+arbitrary app actions work.
+
+The November 7 check used published CLI0.10.2 with the current installed
+CU0.16.1 server/helper: discovery and a real `request_access` call passed.
+A local synthetic model selected the call; no external model service or
+computer input was used. This was an existing-helper check, not a clean-Mac
+installation or an app-task qualification.
+
+On the unreleased CLI source candidate that removes the built-in copy, the
+ordinary marketplace route is available: install `computer-use`, inspect its
+capabilities, run the exact hash-bound trust confirmation, then enable it.
+See [catalog version and trust details](https://github.com/codewhale-hq/Codewhale/blob/main/docs/PLUGIN_MARKETPLACE.md#computer-use-across-versions).
+That source transition is not a published CLI migration.
+
 ## Developer quick start
 
 Choose the appropriate setup route ([Install](#install)), then point
@@ -204,7 +236,7 @@ your host at the server:
 
 | Host | Configuration |
 |---|---|
-| Codewhale | Discovers the Agent Plugins v1 bundle (`plugin.json` + `mcp.json`); nothing to configure. |
+| Codewhale | Use the [version-specific CLI setup](#codewhale-cli-setup); configure the current app directly over MCP on v0.10.2. |
 | Kimi Code | Run `/plugins install /path/to/codewhale-cu-plugin`, then `/reload`. The native `kimi.plugin.json` registers the server and skills. |
 | DeepSeek Harness (`dsh`) | `dsh plugin --profile web add @codewhale/computer-use-dsh`, then link `skills/` into `~/.dsh/skills`. See [DeepSeek Harness](#deepseek-harness-dsh). |
 | Claude Code | `claude mcp add computer -- node /path/to/mcp/server.mjs` |
