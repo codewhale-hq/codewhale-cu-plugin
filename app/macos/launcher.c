@@ -346,19 +346,20 @@ static NSRect cuPreviewFrame(NSRect screen) {
   CGFloat b=kCUAgentCursorBox, top=NSMaxY(NSScreen.screens.firstObject.frame);
   NSRect target=NSMakeRect(round(x-b/2),round(top-y-b/2),b,b);
   BOOL click=[data[@"click"] boolValue];
+  CGFloat shown=[data[@"covered"] boolValue]?0.35:1;
   double glide=MIN(MAX([data[@"glide_ms"] doubleValue],0),600)/1000.0;
   [self.cursorIdle invalidate];
   self.cursorIdle=[NSTimer scheduledTimerWithTimeInterval:8 target:self selector:@selector(hideAgentCursor:) userInfo:nil repeats:NO];
   CUAgentCursorView *view=self.cursorView;
   if(!w.isVisible || w.alphaValue<0.05) {
     [w setFrame:target display:NO]; w.alphaValue=0; [w orderFrontRegardless];
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx){ ctx.duration=MAX(glide,0.12); [[w animator] setAlphaValue:1]; }
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx){ ctx.duration=MAX(glide,0.12); [[w animator] setAlphaValue:shown]; }
                         completionHandler:^{ if(click) [view pulse]; }];
     return;
   }
   [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx){
     ctx.duration=glide; ctx.timingFunction=[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
-    [[w animator] setFrame:target display:YES]; [[w animator] setAlphaValue:1];
+    [[w animator] setFrame:target display:YES]; [[w animator] setAlphaValue:shown];
   } completionHandler:^{ if(click) [view pulse]; }];
 }
 - (void)hideAgentCursor:(NSTimer *)timer {

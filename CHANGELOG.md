@@ -3,6 +3,9 @@
 ## Unreleased
 
 - **The Codewhale cursor no longer moves for an action that is refused up front.** The helper glided the cursor and rang a click before checking the request, so an action refused for an unbound or protected app, a locked screen or missing Accessibility permission still showed a click that never happened and took 180 ms longer. The cursor now moves after those checks, and not at all when no Computer Use app is running to draw it. Refusals found later (a stale element, the person typing) can still follow a glide. Ships with the next helper release.
+- **A click in a text area now puts the caret where you clicked.** A coordinate click on a text field or text area in a background app only gave it focus, so the next `type` landed wherever the caret already was (the start of the document in TextEdit). The click now moves the insertion point to the clicked character and reports `caret_placed` and `caret_offset`; when the app does not support that, `caret_placed` is false and the receipt says typing will land at the old caret. Verified in a background TextEdit document: text typed after clicking the end of line two and the start of line three landed at those points, with the front app and key focus unchanged (CW-8095).
+- **The Codewhale cursor is drawn faint where another app covers the point.** A background click at a point hidden behind another app's window drew the full cursor and click ring on top of that window, as if it had clicked the app in front. It is now drawn at about a third strength with no ring there. The Dock and menu bar layers do not count as cover (CW-8096).
+- **The helper's run file no longer shows a finished update as still in progress.** After a managed update completed or was aborted, `app-run.json` kept the phase it had when the helper started (`retired`), while the helper itself reported idle. The run file is rewritten whenever the managed state changes (CW-8097).
 
 ## 0.16.2 — 2026-11-11
 

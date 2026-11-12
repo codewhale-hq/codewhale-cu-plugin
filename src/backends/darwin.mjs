@@ -613,6 +613,8 @@ export function create({ exec }) {
         return { action_sent: true, strategy: "a11y", action: hit.action, pointer_moved: false, at: { x, y }, button, clicks,
                  element: { role: hit.element?.role ?? null, label: hit.element?.label ?? null },
                  ...(Number.isFinite(hit.yield_ms) ? { yield_ms: hit.yield_ms } : {}),
+                 ...(typeof hit.caret_placed === "boolean" ? { caret_placed: hit.caret_placed, ...(Number.isFinite(hit.caret_offset) ? { caret_offset: hit.caret_offset } : {}),
+                   ...(hit.caret_placed ? {} : { note: "The text control took focus but its insertion point was not moved to the clicked point; typing lands wherever the caret already was. Use select_text or set_value to choose the position." }) } : {}),
                  ...(hit.menu_lease_held ? { menu_lease_held: true, menu_holds_key_focus: true } : {}) };
       }
       a11yReason = hit?.reason ?? "not_found";

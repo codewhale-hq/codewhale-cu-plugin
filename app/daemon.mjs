@@ -68,6 +68,7 @@ function saveManaged(next) {
   if (next.update) managed = next;
   writeRegistration({ id: APP_ID, path: bundle, launch: defaultLaunch(bundle), managed: next });
   managed = next;
+  try { if (JSON.parse(fs.readFileSync(runInfoPath(), "utf8")).pid === process.pid) fs.writeFileSync(runInfoPath(), JSON.stringify(appInfo(), null, 2) + "\n"); } catch {}
 }
 
 function appInfo() {

@@ -151,6 +151,14 @@ test('native window matching refuses another process, mismatched geometry and am
     assert.equal(owner([{...floating,kCGWindowAlpha:0},selected]).owner_pid,123,'transparent overlays do not intercept');
   }
   assert.equal(owner([{...selected,kCGWindowLayer:8}]).owner_pid,123,'the bound app can target its own floating panels');
+  const covered=(windows,target_pid,own_pids=[])=>JSON.parse(spawnSync(binary,[JSON.stringify({tool:'inspect_pointer_covered',args:{x:50,y:50,target_pid,own_pids,windows}})],{encoding:'utf8'}).stdout).covered;
+  const front={kCGWindowOwnerPID:999,kCGWindowLayer:0,kCGWindowAlpha:1,kCGWindowBounds:{X:0,Y:0,Width:400,Height:300}};
+  const cursorPanel={kCGWindowOwnerPID:555,kCGWindowLayer:1000,kCGWindowAlpha:1,kCGWindowBounds:{X:2,Y:2,Width:96,Height:96}};
+  assert.equal(covered([cursorPanel,front,selected],123,[555]),true,'another app in front of the target point dims the agent cursor');
+  assert.equal(covered([cursorPanel,selected,front],123,[555]),false,'the cursor panel itself never counts as cover');
+  assert.equal(covered([{...front,kCGWindowAlpha:0},selected],123),false);
+  assert.equal(covered([front],0),false,'no bound app means no claim');
+  assert.equal(covered([{...front,kCGWindowLayer:20},selected],123),false,'the Dock and menu bar layers span the screen and are not cover');
   const hide=spawnSync(binary,[JSON.stringify({tool:'agent_cursor',args:{hide:true}})],{encoding:'utf8'});
   assert.equal(hide.status,0,hide.stderr);assert.deepEqual(JSON.parse(hide.stdout),{hidden:true});
 
@@ -258,6 +266,18 @@ test('the agent cursor glides to every acting point and never rides on reads', a
   assert.deepEqual(calls.findLast(c => c.tool === 'bg_pointer').args.agent_pointer, { x: 140, y: 250, click: true, glide_ms: 180 }, 'a drag ends where the agent pointer let go');
   await backend.closeSession();
   assert.ok(calls.some(c => c.tool === 'agent_cursor' && c.args.hide === true), 'closing the session hides its cursor');
+});
+
+test('a focus click on a text control reports whether the caret reached the clicked point', async t => {
+  const hit = placed => ({ ...PRESSABLE, action: 'AXFocused', caret_placed: placed, ...(placed ? { caret_offset: 17 } : {}) });
+  for (const placed of [true, false]) {
+    const { backend } = stubBackend(t, r => r.tool === 'hit_test' ? hit(placed) : undefined);
+    await backend.open_application({ name: 'TextEdit' });
+    const r = await backend.left_click({ target: { x: 50, y: 60 } });
+    assert.equal(r.caret_placed, placed);
+    assert.equal(r.caret_offset, placed ? 17 : undefined);
+    assert.equal(/insertion point was not moved/.test(r.note ?? ''), !placed);
+  }
 });
 
 test('CODEWHALE_CU_AGENT_CURSOR=0 turns the drawn agent cursor and its glide off', async t => {

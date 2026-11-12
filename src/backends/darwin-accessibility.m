@@ -1110,6 +1110,32 @@ static NSString *cuClickAction(AXUIElementRef el, BOOL context) {
 }
 static BOOL cuMenuOpenForApp(pid_t pid);
 static void cuHoldMenuForPid(pid_t pid);
+static NSNumber *cuPlaceCaret(AXUIElementRef el, NSDictionary *args) {
+  if(![args[@"x"] isKindOfClass:NSNumber.class] || ![args[@"y"] isKindOfClass:NSNumber.class] || !cuSettable(el,@"AXSelectedTextRange")) return nil;
+  CGPoint point=CGPointMake([args[@"x"] doubleValue],[args[@"y"] doubleValue]);
+  AXValueRef where=AXValueCreate(kAXValueCGPointType,&point); CFTypeRef found=NULL;
+  AXError e=AXUIElementCopyParameterizedAttributeValue(el,kAXRangeForPositionParameterizedAttribute,where,&found);
+  CFRelease(where);
+  CFRange hit;
+  if(e!=kAXErrorSuccess || !found || CFGetTypeID(found)!=AXValueGetTypeID() || !AXValueGetValue(found,kAXValueCFRangeType,&hit)) { if(found) CFRelease(found); return nil; }
+  CFIndex caret=hit.location;
+  if(hit.length>0) {
+    CFTypeRef text=NULL, box=NULL; CGRect bounds;
+    BOOL newline=AXUIElementCopyParameterizedAttributeValue(el,kAXStringForRangeParameterizedAttribute,found,&text)==kAXErrorSuccess && text
+      && CFGetTypeID(text)==CFStringGetTypeID() && [(__bridge NSString *)text rangeOfCharacterFromSet:NSCharacterSet.newlineCharacterSet].location!=NSNotFound;
+    if(!newline && AXUIElementCopyParameterizedAttributeValue(el,kAXBoundsForRangeParameterizedAttribute,found,&box)==kAXErrorSuccess && box
+       && CFGetTypeID(box)==AXValueGetTypeID() && AXValueGetValue(box,kAXValueCGRectType,&bounds) && point.x>CGRectGetMidX(bounds)) caret=hit.location+hit.length;
+    if(text) CFRelease(text);
+    if(box) CFRelease(box);
+  }
+  CFRelease(found);
+  CFRange target=CFRangeMake(caret,0); AXValueRef range=AXValueCreate(kAXValueCFRangeType,&target);
+  e=AXUIElementSetAttributeValue(el,kAXSelectedTextRangeAttribute,range); CFRelease(range);
+  if(e!=kAXErrorSuccess) return nil;
+  id now=attr(el,@"AXSelectedTextRange"); CFRange read;
+  if(!now || CFGetTypeID((__bridge CFTypeRef)now)!=AXValueGetTypeID() || !AXValueGetValue((__bridge AXValueRef)now,kAXValueCFRangeType,&read) || read.location!=caret || read.length!=0) return nil;
+  return @(caret);
+}
 static NSDictionary *cuClick(AXUIElementRef el, BOOL context, NSDictionary *args) {
   // A control whose rendered frame is empty is one a user could not click:
   // virtualized lists and collapsed regions vend elements that do not exist on
@@ -1134,6 +1160,11 @@ static NSDictionary *cuClick(AXUIElementRef el, BOOL context, NSDictionary *args
   NSMutableDictionary *receipt=[@{@"action_sent":@YES,@"strategy":@"a11y",@"action":action,@"pointer_moved":@NO,
            @"verified":@(focus || (attribute && [attr(el,action) boolValue]))} mutableCopy];
   if(yieldMs>0) receipt[@"yield_ms"]=@(round(yieldMs));
+  if(focus && !context) {
+    NSNumber *caret=cuPlaceCaret(el,args);
+    receipt[@"caret_placed"]=caret?@YES:@NO;
+    if(caret) receipt[@"caret_offset"]=caret;
+  }
   pid_t pid=0;
   if(opensMenu && AXUIElementGetPid(el,&pid)==kAXErrorSuccess && pid>0) {
     BOOL open=NO;
@@ -1662,6 +1693,18 @@ static NSDictionary *windowAtPoint(NSArray *windows, CGPoint p) {
     return @{@"found":@NO,@"skipped":skipped};
 }
 
+static BOOL cuPointCovered(NSArray *windows, CGPoint p, pid_t target, NSArray *ownPids) {
+  if(target<=0) return NO;
+  for(NSDictionary *w in windows) {
+    CGRect b;
+    if(!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(__bridge NSString *)kCGWindowBounds],&b) || !CGRectContainsPoint(b,p)) continue;
+    NSNumber *owner=w[(__bridge NSString *)kCGWindowOwnerPID], *alpha=w[(__bridge NSString *)kCGWindowAlpha];
+    if((alpha && [alpha doubleValue]<=0) || [ownPids containsObject:owner?:@0] || [w[(__bridge NSString *)kCGWindowLayer] intValue]>=kCGDockWindowLevel) continue;
+    return [owner intValue]!=target;
+  }
+  return NO;
+}
+
 static id execute(NSDictionary *p) {
   NSString *tool=p[@"tool"]; NSDictionary *args=p[@"args"]?:@{};
   // The user's hardware cursor is never driven: there is no route that posts
@@ -1815,6 +1858,7 @@ static id execute(NSDictionary *p) {
   // Which application owns the point a pointer event would land on. A global
   // pointer event goes to whatever is on top, so this is what stops a click
   // meant for the agent's app from landing in the user's window.
+  if([tool isEqual:@"inspect_pointer_covered"]) return @{@"covered":@(cuPointCovered(args[@"windows"],CGPointMake([args[@"x"] doubleValue],[args[@"y"] doubleValue]),[args[@"target_pid"] intValue],args[@"own_pids"]?:@[]))};
   if([tool isEqual:@"window_at_point"]) {
     CGPoint p=CGPointMake([args[@"x"] doubleValue],[args[@"y"] doubleValue]);
     NSArray *windows=CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly|kCGWindowListExcludeDesktopElements,kCGNullWindowID));
@@ -1981,8 +2025,11 @@ static id execute(NSDictionary *p) {
   NSDictionary *agentPointer=args[@"agent_pointer"];
   if(AXIsProcessTrusted() && [NSRunningApplication runningApplicationsWithBundleIdentifier:@"net.codewhale.computer-use"].count && [agentPointer isKindOfClass:NSDictionary.class] && [agentPointer[@"x"] isKindOfClass:NSNumber.class] && [agentPointer[@"y"] isKindOfClass:NSNumber.class]) {
     double glide=MIN(MAX([agentPointer[@"glide_ms"] doubleValue],0),600);
+    NSArray *ownPids=[[NSRunningApplication runningApplicationsWithBundleIdentifier:@"net.codewhale.computer-use"] valueForKey:@"processIdentifier"];
+    NSArray *onScreen=CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly|kCGWindowListExcludeDesktopElements,kCGNullWindowID));
+    BOOL covered=cuPointCovered(onScreen,CGPointMake([agentPointer[@"x"] doubleValue],[agentPointer[@"y"] doubleValue]),resolve(args[@"input_app_ref"]).processIdentifier,ownPids);
     [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"net.codewhale.computer-use.agent-cursor" object:nil
-      userInfo:@{@"x":agentPointer[@"x"],@"y":agentPointer[@"y"],@"click":@([agentPointer[@"click"] boolValue]),@"glide_ms":@(glide)} deliverImmediately:YES];
+      userInfo:@{@"x":agentPointer[@"x"],@"y":agentPointer[@"y"],@"click":@([agentPointer[@"click"] boolValue] && !covered),@"covered":@(covered),@"glide_ms":@(glide)} deliverImmediately:YES];
     if(glide>0) usleep((useconds_t)(glide*1000));
   }
   if(mutates) { cuCheckCancelled(); cuLockInput(); }

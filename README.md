@@ -441,7 +441,9 @@ always-on-top window, so it never takes focus or receives your clicks, and
 screen capture excludes it, so screenshots show the app and not the cursor.
 The action waits for the glide (`CODEWHALE_CU_AGENT_CURSOR_GLIDE_MS`, default
 180, max 600). The cursor fades after 8 s idle and hides when the session
-closes. `CODEWHALE_CU_AGENT_CURSOR=0` turns the cursor and the glide off. It
+closes. Where another app's window covers the point, the cursor is drawn
+faint and without the click ring, because the action lands in the app behind
+that window. `CODEWHALE_CU_AGENT_CURSOR=0` turns the cursor and the glide off. It
 needs the 0.16.2 helper; with an older one nothing is sent. Your own cursor stays
 where you left it.
 
