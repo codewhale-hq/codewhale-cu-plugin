@@ -48,12 +48,56 @@ of the region was byte-identical with and without it; show, hide then show
 On the same two-display Mac `screencapture -R` gave identical bytes with no
 `-D`, `-D 1` and `-D 2`, and a region on the second display came back at 1x.
 
-Open: no installed end-to-end task ran through this notarized build, and the
-cursor has not been watched during a real task; a negative-origin display
-layout; with unknown geometry a screenshot receipt still carries the previous
-`raster_id`; refused actions still glide the cursor before the refusal.
-codewhale-app still pins the 0.16.1 archive. Everything open under 0.16.1
-remains open.
+Installed acceptance, 2026-11-11 (PST), macOS 26.1, CW-8094. codewhale-app
+`63edd8dc` pins this release (ZIP digest checked against GitHub's asset
+record). An unsigned development desktop package built from that commit was
+installed at `/Applications/Codewhale.app`; from the owner's click on
+Settings, Environments, "Set up Computer Use on this Mac" it retired the
+managed 0.16.1 helper and installed this one at
+`~/.codewhale/computer-use/Codewhale Computer Use.app`. That copy passes
+`codesign --verify --deep --strict` and Gatekeeper (Notarized Developer ID),
+and its live `hello` reports 0.16.2, runtime `416cf8a9cb999971`, managed phase
+idle. The 0.16.2 MCP server from the desktop bundle then drove the installed
+helper against a disposable TextEdit document opened with `activate:false`,
+with Chrome frontmost throughout:
+
+- `request_access`: accessibility `granted`, screen capture `ok`, standard
+  approval, served by the installed app. A window screenshot through
+  ScreenCaptureKit returned the real document, so Screen Recording works.
+- One coordinate click bound to its `raster_id`: `ok`, `strategy: a11y`,
+  `pointer_moved: false`, foreground unchanged.
+- One typed edit of 30 characters: `verified: true`, window-routed events,
+  foreground unchanged. A window-targeted `cmd+s` saved it and the bytes on
+  disk contain the typed text.
+- Agent cursor on that accepted click: the window server listed a helper
+  window at layer 1000, 96 by 96, centred on the click point (581, 184), alpha
+  rising to 1 within about 100 ms, sharing state none, fading out about 8 s
+  later. With it up, the helper's window screenshot, the helper's display
+  screenshot and a plain `screencapture` of the region all showed no cursor.
+
+Found in that run:
+
+- The click put the cursor and the focus on the text area but did not place
+  the caret: the receipt says `action: AXFocused`, and the typed text landed
+  at the start of the document, not at the clicked end of line two.
+- The cursor is drawn at the target point even where another app's window
+  covers the target window there (a browser overlapped the lower part of the
+  TextEdit window, including the click point).
+- `app-run.json` kept `managed.phase: "retired"` after the update completed,
+  while the live `hello` and `app.json` said idle with no pending update.
+- Sessions whose MCP server started before the swap keep 0.16.1 server code
+  until they restart, so they send no cursor.
+
+Not verified: nobody watched the cursor by eye (the evidence is the window
+list, since the panel is excluded from capture by design); glide, drag,
+scroll and the click ring; a signed desktop package and its updater path (the
+install was a hand-replaced unsigned package, then the in-app setup); Intel.
+Receipts: `CW/artifacts/cu-0162-installed-acceptance-20261111/`.
+
+Open: a negative-origin display layout; with unknown geometry a screenshot
+receipt still carries the previous `raster_id`; refused actions still glide
+the cursor before the refusal (fixed on `main` after this release). Everything
+open under 0.16.1 remains open.
 
 ### 0.16.1 — published 2026-11-05
 
@@ -652,7 +696,7 @@ receipts belong in a public issue.
 
 ## 5. Final actions — human-only, never scripted
 
-- [x] **Publish release** — v0.16.2 published 2026-11-11 (PST) at Hunter Bown’s direction ("release an updated version") by Claude Fable 5.2 from the authenticated maintainer session. Tag `283e2d3`, runtime `416cf8a9cb999971`; exact-source three-platform CI 43171433783 and CodeQL 43171434335 passed; app/DMG notarized, stapled and Gatekeeper accepted; all 11 asset digests verified on the draft before publication and anonymous downloads verified after. No installed end-to-end task preceded publication.
+- [x] **Publish release** — v0.16.2 published 2026-11-11 (PST) at Hunter Bown’s direction ("release an updated version") by Claude Fable 5.2 from the authenticated maintainer session. Tag `283e2d3`, runtime `416cf8a9cb999971`; exact-source three-platform CI 43171433783 and CodeQL 43171434335 passed; app/DMG notarized, stapled and Gatekeeper accepted; all 11 asset digests verified on the draft before publication and anonymous downloads verified after. No installed end-to-end task preceded publication; one ran afterwards the same day (see 0.16.2 above).
 - [x] **Publish release** — v0.16.1 published 2026-11-05 (PST) at Hunter Bown’s direction ("Yes, release it") by Claude Opus 5.5 from the authenticated maintainer session. Tag `5b2466a`, runtime `4c743d2017143416`; exact-source three-platform CI 42157461728 and CodeQL 42157460794 passed; app/DMG notarized, stapled and Gatekeeper accepted; all 11 asset digests verified on the draft before publication and anonymous downloads verified after.
 - [x] **Publish release** — v0.16.0 published 2026-11-02 at 13:29:14Z at Hunter Bown’s explicit direction to release the CU update. Tag `369b614`, runtime `f40cba077ff48ba5`; exact-source three-platform CI 41451335528 and CodeQL 41451336089 passed. App/DMG signed, notarized, stapled and Gatekeeper accepted. All 11 remote asset hashes and anonymous DMG/plugin/receipt downloads match. Installed global Codewhale/DeepSeek save/reopen passed; remaining limits and the publication-order defect are recorded above.
 
