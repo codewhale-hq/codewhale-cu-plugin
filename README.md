@@ -7,7 +7,7 @@
 
 **By Codewhale · macOS beta (notarized app and source) · Windows experimental unsigned preview · Linux experimental: X11 verified on a virtual desktop (Xvfb + openbox) and in the Docker test image, from source; Wayland input on sway (verified on headless sway), other Wayland desktops observation only**
 
-The [0.16.2 release](https://github.com/codewhale-hq/codewhale-cu-plugin/releases/tag/v0.16.2)
+The [0.16.3 release](https://github.com/codewhale-hq/codewhale-cu-plugin/releases/tag/v0.16.3)
 provides the notarized universal Mac app and an **unsigned Windows x64 preview**.
 The Windows ZIP bundles Node and includes setup instructions; it is intended
 for testing, with physical-device, mixed-DPI and signing acceptance still open.
@@ -134,7 +134,7 @@ see [qualification and restrictions](docs/CUA_PARITY.md#october-31-macos-phase-3
 **Status.** Release status is recorded in [CHANGELOG.md](CHANGELOG.md). The
 notarized Mac app is published on this repository's
 [GitHub releases](https://github.com/codewhale-hq/codewhale-cu-plugin/releases)
-(stable release: v0.16.2); remaining
+(stable release: v0.16.3); remaining
 gates are tracked in [the release checklist](docs/RELEASE_CHECKLIST.md). The
 [setup page](https://codewhale.net/computer-use) offers the notarized disk
 image directly.

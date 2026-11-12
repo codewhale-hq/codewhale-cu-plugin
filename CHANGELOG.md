@@ -2,7 +2,7 @@
 
 ## 0.16.3 — 2026-11-12
 
-Release candidate; publication and its evidence are recorded in the [qualification record](docs/RELEASE_CHECKLIST.md) once published.
+Published from `0f0ee2342b9d58439f8c40c72a1fa2edddb45387`, runtime `364c70a90c6a84e4`, with 11 verified assets. Exact-source three-platform CI and CodeQL passed; local Mac suite 567 pass, 21 platform skips, zero failures. Caret placement verified through the notarized build in an isolated instance; not run through a desktop-managed install. [Qualification record](docs/RELEASE_CHECKLIST.md#0163--published-2026-11-12).
 
 - **The Codewhale cursor no longer moves for an action that is refused up front.** The helper glided the cursor and rang a click before checking the request, so an action refused for an unbound or protected app, a locked screen or missing Accessibility permission still showed a click that never happened and took 180 ms longer. The cursor now moves after those checks, and not at all when no Computer Use app is running to draw it. Refusals found later (a stale element, the person typing) can still follow a glide.
 - **A click in a text area now puts the caret where you clicked.** A coordinate click on a text field or text area in a background app only gave it focus, so the next `type` landed wherever the caret already was (the start of the document in TextEdit). The click now moves the insertion point to the clicked character and reports `caret_placed` and `caret_offset`; when the app does not support that, `caret_placed` is false and the receipt says typing will land at the old caret. Verified in a background TextEdit document: text typed after clicking the end of line two and the start of line three landed at those points, with the front app and key focus unchanged (CW-8095).

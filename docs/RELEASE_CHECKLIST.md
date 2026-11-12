@@ -12,6 +12,47 @@ Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). Records below
 come from one maintainer Mac (arm64, Retina) and are evidence, not a
 publication verdict.
 
+### 0.16.3 — published 2026-11-12
+
+Frozen release source `0f0ee2342b9d58439f8c40c72a1fa2edddb45387`, runtime
+`364c70a90c6a84e4`, published at 2026-11-12 08:04:22 UTC as Latest after a
+draft whose 11 asset SHA-256 digests matched the local receipt. Exact-source
+[three-platform CI](https://github.com/codewhale-hq/codewhale-cu-plugin/actions/runs/43179370347)
+passed (macOS 559 pass / 29 skip, Linux 540 / 48, Windows 521 / 67 plus 12
+controlled checks; zero failures) and
+[CodeQL](https://github.com/codewhale-hq/codewhale-cu-plugin/actions/runs/43179371578)
+passed. The local `npm test` on the same tree: 588 tests, 567 pass, 0 fail,
+21 platform skips (Docker available). The CI-built portable archive equals a
+local `git archive` of the commit (`3f358a6e…`).
+
+Apple accepted app `77ff7f3a-8cfa-434d-9758-f6ba8ef031cf` and disk image
+`202e2342-1f76-4ada-8708-3c565e62abda`; both are stapled and Gatekeeper
+`Notarized Developer ID`. Mac ZIP `ca4f14390dfc…`, DMG `cbeacf7fd017…`.
+Anonymous latest-URL downloads of the DMG, ZIP, portable archive and
+`release.json` matched `SHA256SUMS.txt`; the downloaded ZIP's app reports
+0.16.3, stapled and accepted, and the downloaded DMG is stapled and accepted.
+
+Contents: the four findings of the 0.16.2 installed acceptance that belong
+to this repository (CW-8095 caret placement, CW-8096 dimmed covered cursor,
+CW-8097 run-file phase) plus the cursor no longer gliding for an action
+refused up front.
+
+Notarized-build check on macOS 26.1: an isolated instance of the notarized
+app (own state directory; the installed 0.16.2 helper was not touched)
+reported 0.16.3 with Accessibility granted. In a disposable TextEdit
+instance launched behind the person's work, a click at the end of line two
+then `type`, and a click at the start of line three then `type`, put the
+text at both points (`caret_offset` 33 and 40); foreground and key focus
+did not change. Source checks before the freeze: the cursor panel at alpha
+1 where the target was the top app window and 0.35 when the point was
+reported covered; a `hit_test` refused for an unbound app left no panel.
+
+Open: not run through a desktop-managed install (codewhale-app pins
+0.16.2); a point covered by a real second app window not shown live; the
+run-file fix not observed after a real managed update and without a test;
+caret placement tried in TextEdit only. Everything open under 0.16.2
+remains open.
+
 ### 0.16.2 — published 2026-11-11
 
 Frozen release source `283e2d3cc0b51d3e1fc67abe0372e3c29506a7df`, runtime
@@ -696,6 +737,7 @@ receipts belong in a public issue.
 
 ## 5. Final actions — human-only, never scripted
 
+- [x] **Publish release** — v0.16.3 published 2026-11-12 at Hunter Bown’s direction ("Release 0.16.3") by Claude Fable 5.2 from the authenticated maintainer session. Tag `0f0ee23`, runtime `364c70a90c6a84e4`; exact-source three-platform CI 43179370347 and CodeQL 43179371578 passed; app/DMG notarized, stapled and Gatekeeper accepted; all 11 asset digests verified on the draft before publication and anonymous downloads verified after.
 - [x] **Publish release** — v0.16.2 published 2026-11-11 (PST) at Hunter Bown’s direction ("release an updated version") by Claude Fable 5.2 from the authenticated maintainer session. Tag `283e2d3`, runtime `416cf8a9cb999971`; exact-source three-platform CI 43171433783 and CodeQL 43171434335 passed; app/DMG notarized, stapled and Gatekeeper accepted; all 11 asset digests verified on the draft before publication and anonymous downloads verified after. No installed end-to-end task preceded publication; one ran afterwards the same day (see 0.16.2 above).
 - [x] **Publish release** — v0.16.1 published 2026-11-05 (PST) at Hunter Bown’s direction ("Yes, release it") by Claude Opus 5.5 from the authenticated maintainer session. Tag `5b2466a`, runtime `4c743d2017143416`; exact-source three-platform CI 42157461728 and CodeQL 42157460794 passed; app/DMG notarized, stapled and Gatekeeper accepted; all 11 asset digests verified on the draft before publication and anonymous downloads verified after.
 - [x] **Publish release** — v0.16.0 published 2026-11-02 at 13:29:14Z at Hunter Bown’s explicit direction to release the CU update. Tag `369b614`, runtime `f40cba077ff48ba5`; exact-source three-platform CI 41451335528 and CodeQL 41451336089 passed. App/DMG signed, notarized, stapled and Gatekeeper accepted. All 11 remote asset hashes and anonymous DMG/plugin/receipt downloads match. Installed global Codewhale/DeepSeek save/reopen passed; remaining limits and the publication-order defect are recorded above.
