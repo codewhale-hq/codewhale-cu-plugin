@@ -1042,6 +1042,9 @@ test('macOS region screenshots crop without -D, keep negative origins and reject
   assert.ok(rAt !== -1 && captures.at(-1)[rAt + 1] === '-1500,100,400,300', `the region passes through verbatim: ${captures.at(-1)}`);
   assert.equal(captures.at(-1).includes('-D'), false, 'a region shot sends -R and no -D');
   assert.deepEqual(shot.points, { x: -1500, y: 100, w: 400, h: 300 }, 'the raster binds the region origin');
+  assert.equal(shot.display, 2);
+  const crossed = await backend.screenshot({ display: 2, region: [100, 100, 400, 300], path: path.join(dir, 'crossed.png') });
+  assert.equal(crossed.display, 1, 'the receipt names the display the region is on, not the one passed beside it');
 
   await backend.screenshot({ region: [0, 0, 400, 300], path: path.join(dir, 'main.png') });
   assert.equal(captures.at(-1).includes('-D'), false, 'the active display is not combined with a region either');

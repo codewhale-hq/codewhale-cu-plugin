@@ -719,7 +719,9 @@ export function create({ exec }) {
     await fitRasterToDimension(file, max_dimension);
     const stat = fs.statSync(file);
     displays ??= await displayInfo();
-    const d = displays.find((x) => x.index === (disp === "all" ? 1 : disp)) ?? displays[0];
+    const holds = (x) => x.points && region[0] + region[2] / 2 >= x.points.x && region[0] + region[2] / 2 < x.points.x + x.points.w
+      && region[1] + region[3] / 2 >= x.points.y && region[1] + region[3] / 2 < x.points.y + x.points.h;
+    const d = (region && displays.find(holds)) ?? displays.find((x) => x.index === (disp === "all" ? 1 : disp)) ?? displays[0];
     const scale = d?.scale ?? 1;
     const raster = {
       file,
@@ -727,7 +729,7 @@ export function create({ exec }) {
       ...(capture ? { capture_route: capture.route } : {}),
       ...(window?.off_space ? { off_space: true, note: "This window is on another Space; it was captured without switching Spaces. Coordinates on it are refused (window_off_space)." } : {}),
       bytes: stat.size,
-      display: disp ?? 1,
+      display: region ? d?.index ?? disp ?? 1 : disp ?? 1,
       // Region and window rasters describe that rect, not the whole display.
       // The PNG header is the pixel ground truth; scale is derived from
       // pixels/points below so Retina and mixed-DPI stay exact.
