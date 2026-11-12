@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/plugin.json",
   "name": "computer-use",
-  "version": "0.16.1",
+  "version": "0.16.2",
   "description": "Control apps with Codewhale. macOS beta; unsigned Windows preview; experimental Linux X11 (verified on a virtual desktop and in Docker) from source.",
   "author": {
     "name": "Codewhale"

@@ -1,6 +1,8 @@
 # Release notes
 
-## Unreleased
+## 0.16.2 — 2026-11-11
+
+Release candidate; publication and its evidence are recorded in the [qualification record](docs/RELEASE_CHECKLIST.md) once published.
 
 - **A visible Codewhale cursor on macOS.** Every action that targets a point glides an on-screen Codewhale pointer there before the action lands: the cyan arrow from the app icon with a whale badge, and a ring on clicks. The helper app draws it in a click-through window that screen capture excludes, so it never receives a click or appears in a screenshot. Your own cursor still never moves. It fades after 8 s idle and hides when the session closes. `CODEWHALE_CU_AGENT_CURSOR=0` turns it off and `CODEWHALE_CU_AGENT_CURSOR_GLIDE_MS` (default 180, max 600) sets the glide, which each pointing action waits for. It appears only with a helper that advertises it (`agent_cursor`); with an older helper nothing is sent. The preview panel draws the same pointer.
 - **macOS region screenshots work on displays left of or above the main one.** `screenshot` with `region` refused negative x or y, so a display arranged to the left of or above the main display could not be cropped. The region is now taken as global screen points, sent to `screencapture` on its own, and the receipt's `display` names the display the region is on. Malformed regions are still refused before any capture. Contributed by @asto18089 (PR 16). Checked on a two-display Mac: the same region produced identical bytes with and without a display beside it, and a region on the second display came back at that display's scale. A negative-origin layout was not available to test.
