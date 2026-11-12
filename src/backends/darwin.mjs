@@ -216,9 +216,19 @@ export function windowChanges(armed, settled) {
   };
 }
 
+// Tools that act at a point and so move the agent's drawn cursor there.
+const AGENT_CURSOR_TOOLS = new Set(["bg_pointer", "hit_test", "click_element", "perform_action", "scroll_element", "focus_element", "set_value", "select_text", "type"]);
+const AGENT_CURSOR_GLIDE_MS = Math.min(600, Math.max(0, Number(process.env.CODEWHALE_CU_AGENT_CURSOR_GLIDE_MS ?? 180) || 0));
+const MOUSE_DOWN_TYPES = new Set(Object.values(MOUSE).map((m) => m.down));
+function agentCursorClick(tool, args) {
+  if (tool === "bg_pointer") return (args.steps ?? []).some((s) => MOUSE_DOWN_TYPES.has(s?.type));
+  if (tool === "hit_test") return !args.direction;
+  return tool === "click_element" || tool === "perform_action";
+}
+
 export function create({ exec }) {
   const runL = (cmd, args, opts) => exec.run(cmd, args, opts);
-  const state = { activeDisplay: 1, lastRaster: null, inputApp: null, foregroundInput: false, previewEnabled: false, pointer: null, heldDrag: null };
+  const state = { activeDisplay: 1, lastRaster: null, inputApp: null, foregroundInput: false, previewEnabled: false, pointer: null, heldDrag: null, agentCursor: process.env.CODEWHALE_CU_AGENT_CURSOR !== "0" };
   const awakeSeconds = displayAwakeSeconds();
   const settleMs = Math.max(0, Number(process.env.CODEWHALE_CU_SETTLE_MS ?? 300) || 0);
   // Shared-surface politeness: menu-opening presses, real-pointer gestures,
@@ -364,11 +374,16 @@ export function create({ exec }) {
       throw Object.assign(new ExecError("Update the Computer Use helper before background typing; this helper may borrow keyboard focus."), { code: "app_upgrade_required" });
     }
     const t = args?.target;
-    if (t && Number.isFinite(t.x) && Number.isFinite(t.y)) state.pointer = { x: t.x, y: t.y };
+    let point = null;
+    if (t && Number.isFinite(t.x) && Number.isFinite(t.y)) point = { x: t.x, y: t.y };
+    if (tool === "hit_test" && args.perform && Number.isFinite(args.x) && Number.isFinite(args.y)) point = { x: args.x, y: args.y };
     if (tool === "bg_pointer") {
       const last = [...(args.steps ?? [])].reverse().find((s) => Number.isFinite(s?.x) && Number.isFinite(s?.y));
-      if (last) state.pointer = { x: last.x, y: last.y };
+      if (last) point = { x: last.x, y: last.y };
     }
+    if (point) state.pointer = point;
+    const agentPointer = point && state.agentCursor && AGENT_CURSOR_TOOLS.has(tool) && (tool !== "hit_test" || args.perform)
+      ? { ...point, click: agentCursorClick(tool, args), glide_ms: AGENT_CURSOR_GLIDE_MS } : undefined;
     if (args.observed_window && (await native("input_capabilities"))?.observed_window_input !== 1) throw Object.assign(new ExecError("Update Computer Use before acting on a captured window; this helper cannot preserve its identity"), { code: "app_upgrade_required" });
     const helper = await nativeHelper();
     let capabilityKey;
@@ -385,7 +400,7 @@ export function create({ exec }) {
     const armed = guarded ? await link?.request("arm", { target_pid: state.inputApp.pid, awake_s: awakeSeconds }) : null;
     let r;
     try {
-      const input = { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, focus_lease: !isStrict(), owner_pipe: true };
+      const input = { ...args, ...yieldArgs, ...(agentPointer ? { agent_pointer: agentPointer } : {}), input_app_ref: state.inputApp, foreground_input: state.foregroundInput, focus_lease: !isStrict(), owner_pipe: true };
       if (link?.nativeRpc) {
         const reply = await link.request("execute", { tool, args: input }, 20_000, { signal: currentSignal() });
         r = { code: reply?.ok ? 0 : 1, stdout: reply?.ok ? JSON.stringify(reply.data) : "", stderr: reply?.error ?? "native command owner disconnected",
@@ -862,6 +877,9 @@ export function create({ exec }) {
 
   async function closeSession() {
     await retirePreview(true).catch(() => {});
+    if (state.agentCursor && state.pointer) {
+      try { await native("agent_cursor", { hide: true }); } catch {}
+    }
     await browser.close().catch(() => {});
     const owned = [...rec.entries()];
     for (const [, recording] of owned) requestRecordingStop(recording);

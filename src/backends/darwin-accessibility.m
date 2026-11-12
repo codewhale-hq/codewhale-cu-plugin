@@ -1653,6 +1653,9 @@ static NSDictionary *windowAtPoint(NSArray *windows, CGPoint p) {
       pid_t owner=[w[(__bridge NSString *)kCGWindowOwnerPID] intValue];
       NSString *name=w[(__bridge NSString *)kCGWindowOwnerName]?:@"";
       NSNumber *alpha=w[(__bridge NSString *)kCGWindowAlpha], *layer=w[(__bridge NSString *)kCGWindowLayer]?:@0;
+      // Our own agent cursor (launcher.c CUAgentCursorPanel) sits on the very
+      // point it marks; it is click-through and never occludes input.
+      if([name isEqual:@"Codewhale Computer Use"] && [layer integerValue]>=1000 && b.size.width<=96 && b.size.height<=96) { [skipped addObject:@{@"owner":name,@"why":@"agent_cursor"}]; continue; }
       // Visible floating windows occlude input just like normal windows.
       if(alpha && [alpha doubleValue]<=0) { [skipped addObject:@{@"owner":name,@"why":@"transparent"}]; continue; }
       return @{@"found":@YES,@"owner_pid":@(owner),@"owner_name":name,
@@ -1670,6 +1673,19 @@ static id execute(NSDictionary *p) {
     @throw [NSException exceptionWithName:@"real_pointer_refused" reason:@"real_pointer_refused: Computer Use never drives the user's cursor; pointer input goes to the bound app's window (bg_pointer)" userInfo:nil];
   if([@[@"bg_key",@"bg_pointer"] containsObject:tool]) cuRequireLease(args);
   cuOwnerPipe=[args[@"owner_pipe"] boolValue];
+  // The agent's pointer is drawn by the app (launcher.c), never the user's
+  // cursor: glide it to the action's point, then act once it has arrived.
+  NSDictionary *agentPointer=args[@"agent_pointer"];
+  if([agentPointer isKindOfClass:NSDictionary.class] && [agentPointer[@"x"] isKindOfClass:NSNumber.class] && [agentPointer[@"y"] isKindOfClass:NSNumber.class]) {
+    double glide=MIN(MAX([agentPointer[@"glide_ms"] doubleValue],0),600);
+    [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"net.codewhale.computer-use.agent-cursor" object:nil
+      userInfo:@{@"x":agentPointer[@"x"],@"y":agentPointer[@"y"],@"click":@([agentPointer[@"click"] boolValue]),@"glide_ms":@(glide)} deliverImmediately:YES];
+    if(glide>0) usleep((useconds_t)(glide*1000));
+  }
+  if([tool isEqual:@"agent_cursor"]) {
+    [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"net.codewhale.computer-use.agent-cursor" object:nil userInfo:@{@"hide":@YES} deliverImmediately:YES];
+    return @{@"hidden":@YES};
+  }
   BOOL mutates=[@[@"type",@"key_event",@"bg_key",@"mouse_event",@"scroll",@"bg_pointer",@"set_value",@"focus_element",@"select_text",@"perform_action",@"click_element",@"scroll_element",@"invoke_menu"] containsObject:tool]
     || ([tool isEqual:@"hit_test"] && [args[@"perform"] boolValue])
     || ([tool isEqual:@"app_info"] && [args[@"activate"] boolValue]);

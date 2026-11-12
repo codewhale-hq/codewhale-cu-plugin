@@ -409,7 +409,7 @@ When the authorized task needs focus in an allowed app, select `activate: true`
 for foreground control without a second approval prompt. In either mode,
 raw clicks, hover, drag and wheel go to the bound
 app's window as process-routed events (`strategy: "pid-routed"`,
-`pointer_moved: false`) — the agent has its own pointer, drawn in the preview,
+`pointer_moved: false`) — the agent has its own pointer, drawn on screen,
 and **the user's cursor is never moved, warped or held on macOS**. There is no
 real-cursor fallback: a helper that cannot resolve the window route refuses
 `bg_dispatch_unavailable`. `pointer` down/move/up buffer a drag and deliver it
@@ -432,6 +432,18 @@ computer sessions. Idle shows Ready; Settings holds remembered access, previous
 connections and the optional background diagnostic. It is Codewhale's own UI, not an assertion that macOS shows an
 identical system indicator. It does not capture the screen. The screenshot
 preview is off by default.
+
+**The Codewhale cursor.** Every action that targets a point (click, hover,
+drag, scroll, element press, focus, set value, select text) first glides a
+Codewhale pointer to that point: the cyan arrow from the app icon with a small
+whale badge, plus a short ring on clicks. The app draws it in a click-through,
+always-on-top window, so it never takes focus or receives your clicks, and
+screen capture excludes it, so screenshots show the app and not the cursor.
+The action waits for the glide (`CODEWHALE_CU_AGENT_CURSOR_GLIDE_MS`, default
+180, max 600). The cursor fades after 8 s idle and hides when the session
+closes. `CODEWHALE_CU_AGENT_CURSOR=0` turns the cursor and the glide off. It
+needs the 0.16.2 helper; an older helper ignores it. Your own cursor stays
+where you left it.
 
 Only when the user asks to watch, enable `preview` with `enabled: true` to show a small, nonactivating window
 containing the controlled app and a cyan cursor labeled Codewhale. The preview
