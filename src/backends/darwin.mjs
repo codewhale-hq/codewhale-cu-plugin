@@ -682,13 +682,17 @@ export function create({ exec }) {
         throw new ExecError(`no display ${disp}; have [${displays.map((x) => x.index).join(", ")}] — screenshot takes the display index from list_displays, not its id`);
       }
     }
-    if (disp && disp !== "all" && !window) args.push("-D", String(disp));
+    // A region pins the crop itself in global screen points — x and y may be
+    // negative where a display sits left of or above the main one — so it is
+    // never combined with -D: together they would reinterpret the same
+    // capture against one display instead of the arranged desktop.
     if (region) {
-      if (!region.every((n) => Number.isFinite(n) && n >= 0) || region.length !== 4) {
-        throw new ExecError("region must be [x, y, w, h] in screen points");
+      if (region.length !== 4 || !region.every((n) => Number.isFinite(n)) || region[2] < 1 || region[3] < 1) {
+        throw new ExecError("region must be [x, y, w, h] in global screen points (x and y may be negative) and a positive size");
       }
       args.push("-R", region.join(","));
     }
+    else if (disp && disp !== "all" && !window) args.push("-D", String(disp));
     args.push(file);
     let capture = null;
     if (window) capture = await captureWindowFile(window.window_id, file);
