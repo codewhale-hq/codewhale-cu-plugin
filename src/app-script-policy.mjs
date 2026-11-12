@@ -32,14 +32,76 @@ export function appScriptMode(env = process.env) {
 
 const refuse = (reason) => ({ refused: reason, targets: [] });
 
-/** Remove string literals so structure checks cannot be fooled by quoted text. */
-function stripStrings(src, quotes) {
+const REGEX_KEYWORDS = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await"]);
+const CONTROL_KEYWORDS = new Set(["if", "while", "for", "with"]);
+const JS_LINE_END = new Set(["\n", "\r", "\u2028", "\u2029"]);
+const trailingWord = (text) => /[\w$]+$/.exec(text.trimEnd())?.[0] ?? "";
+
+/** Remove JXA string literals and comments so structure checks only see code that runs. */
+function maskJxa(src) {
+  let out = "";
+  const parens = [];
+  let afterControlParen = false;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === "`") {
+      for (i++; i < src.length && src[i] !== c; i++) {
+        if (src[i] === "\\") i++;
+        else if (c === "`" && src[i] === "$" && src[i + 1] === "{") return { refused: "template literal interpolation (${…}) runs code the policy cannot read — build the string with + instead" };
+      }
+      out += c + c;
+      afterControlParen = false;
+      continue;
+    }
+    if (c === "/" && src[i + 1] === "/") {
+      while (i + 1 < src.length && !JS_LINE_END.has(src[i + 1])) i++;
+      out += " ";
+      continue;
+    }
+    if (c === "/" && src[i + 1] === "*") {
+      const end = src.indexOf("*/", i + 2);
+      i = end < 0 ? src.length : end + 1;
+      out += " ";
+      continue;
+    }
+    if (src.startsWith("<!--", i) || src.startsWith("-->", i)) return { refused: "HTML-style comments are refused" };
+    if (c === "/") {
+      const last = out.trimEnd().slice(-1);
+      const word = trailingWord(out);
+      const division = (word !== "" && !REGEX_KEYWORDS.has(word)) || (last !== "" && "]\"'`".includes(last)) || (last === ")" && !afterControlParen);
+      if (!division) return { refused: "regular expression literals are refused" };
+    }
+    if (c === "(") parens.push(trailingWord(out));
+    if (c === ")") afterControlParen = CONTROL_KEYWORDS.has(parens.pop() ?? "");
+    else if (!/\s/.test(c)) afterControlParen = false;
+    out += c;
+  }
+  return { code: out };
+}
+
+/** Remove AppleScript string literals, piped names and comments so structure checks only see code that runs. */
+function maskAppleScript(src) {
   let out = "";
   for (let i = 0; i < src.length; i++) {
-    const q = src[i];
-    if (!quotes.includes(q)) { out += q; continue; }
-    out += q + q;
-    for (i++; i < src.length && src[i] !== q; i++) if (src[i] === "\\") i++;
+    const c = src[i];
+    if (c === '"' || c === "|") {
+      for (i++; i < src.length && src[i] !== c; i++) if (c === '"' && src[i] === "\\") i++;
+      out += c + c;
+    } else if ((c === "-" && src[i + 1] === "-") || c === "#") {
+      while (i + 1 < src.length && src[i + 1] !== "\n" && src[i + 1] !== "\r") i++;
+      out += " ";
+    } else if (c === "(" && src[i + 1] === "*") {
+      let depth = 1;
+      for (i += 2; i < src.length && depth > 0; i++) {
+        if (src[i] === "(" && src[i + 1] === "*") { depth++; i++; }
+        else if (src[i] === "*" && src[i + 1] === ")") { depth--; i++; }
+      }
+      i--;
+      out += " ";
+    } else if (c === "¬" && /^[ \t]*\r?\n/.test(src.slice(i + 1))) {
+      i += src.slice(i + 1).match(/^[ \t]*\r?\n/)[0].length;
+      out += " ";
+    } else out += c;
   }
   return out;
 }
@@ -95,7 +157,7 @@ function checkAppleScript(script) {
   // `current application`, `application "X"`, `application id "X"`,
   // `application process "X"`, or `application file`/`application support`
   // inside strings (already stripped). A computed target is refused.
-  const bare = stripStrings(src, ['"']);
+  const bare = maskAppleScript(script);
   for (const m of bare.matchAll(/\b(application|app)\b(\s*(?:id\s*)?)(.?)/gi)) {
     const before = bare.slice(Math.max(0, m.index - 20), m.index);
     if (/\bcurrent\s+$/i.test(before)) continue;
@@ -119,9 +181,11 @@ function checkAppleScript(script) {
 }
 
 // ---- JXA ----
-// Checked against the script with string literals removed: text inside a
-// string cannot run unless something evaluates it or indexes by it, and both
-// of those are refused below.
+// Checked against the script with string literals and comments removed: text
+// inside either cannot run unless something evaluates it or indexes by it, and
+// both of those are refused below. A template interpolation, a regular
+// expression or an HTML-style comment would let the mask misread where code
+// ends, so each is refused outright.
 const JXA_DENY = [
   [/doShellScript/i, "`doShellScript` runs a shell"],
   [/\bdoScript\b/, "`doScript` runs a shell command in a terminal"],
@@ -140,7 +204,6 @@ const JXA_DENY = [
 ];
 
 function checkJxa(script) {
-  const code = stripStrings(script, ['"', "'", "`"]);
   const targets = [];
   const literal = /\bApplication\s*\(\s*(["'])((?:(?!\1)[^\\]|\\.)*)\1\s*\)/g;
   for (const m of script.matchAll(literal)) { const ref = refFor(m[2]); if (ref) targets.push(ref); }
@@ -149,6 +212,9 @@ function checkJxa(script) {
   const refused = (reason) => ({ refused: reason, targets });
   if (/doShellScript/i.test(script)) return refused("`doShellScript` runs a shell");
   if (/\\u|\\x/.test(script)) return refused("escape sequences are refused so names cannot be spelled around the policy");
+  const masked = maskJxa(script);
+  if (masked.refused) return refused(masked.refused);
+  const code = masked.code;
   for (const [re, why] of JXA_DENY) if (re.test(code)) return refused(why);
   // Computed member access could spell doShellScript at runtime; only numeric
   // indexes are allowed. Collections take .at(i) and .byName("x") instead.

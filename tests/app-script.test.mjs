@@ -11,6 +11,7 @@ import path from "node:path";
 import url from "node:url";
 import { spawn } from "node:child_process";
 import { handle, issueAppScriptToken } from "../src/app-handler.mjs";
+import { checkAppScript } from "../src/app-script-policy.mjs";
 process.env.CODEWHALE_CU_APPROVAL = "strict";
 
 const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
@@ -146,4 +147,62 @@ test("unrestricted mode still honors a deny for a named target", async (t) => {
   assert.equal(r.error?.code, "app_denied");
   const bare = await s.tool("app_script", { script: "return 1" });
   assert.equal(bare.error?.code, "consent_required", "a no-app script needs osascript consent in every mode");
+});
+
+const BT = "`";
+const SHELL = 'var a=Application.currentApplication();a.includeStandardAdditions=true;';
+const JXA_HIDDEN = [
+  ["a template interpolation", BT + '${(()=>{' + SHELL + 'return a["do"+"ShellScript"]("printf x")})()}' + BT],
+  ["an interpolation inside Application()", 'Application(' + BT + '${"Fin"+"der"}' + BT + ').windows.at(0).name()'],
+  ["an interpolation in a tagged template", 'String.raw' + BT + '${Application("Terminal")}' + BT],
+  ["an interpolation nested in an interpolation", BT + 'a${' + BT + 'b${Application("Terminal")}' + BT + '}' + BT],
+  ["an interpolation after an escaped backtick", BT + '\\' + BT + '${Application("Terminal")}' + BT],
+  ["code after an apostrophe in a line comment", "// it's\n" + SHELL + 'a["do"+"ShellScript"]("id")\n// \''],
+  ["code after a quote in a block comment", '/* " */' + SHELL + 'a["do"+"ShellScript"]("id")' + '/* " */'],
+  ["code after a quote in a regular expression", "var r = /'/;" + SHELL + 'a["do"+"ShellScript"]("id");var s = \'x\''],
+  ["code after a keyword and a regular expression", "function f(){return /'/.test(1)}" + SHELL + 'a["do"+"ShellScript"]("id");f(\'x\')'],
+  ["code after a quote in an HTML-style comment", "<!-- '\n" + SHELL + 'a["do"+"ShellScript"]("id")\n<!-- \''],
+  ["code after a line separator in a line comment", "// '\u2028" + SHELL + 'a["do"+"ShellScript"]("id")\n// \''],
+];
+
+test("the JXA policy refuses code a template, comment or regular expression would hide", () => {
+  const accepted = JXA_HIDDEN.filter(([, script]) => !checkAppScript(script, "javascript", { CODEWHALE_CU_APP_SCRIPT: "apps" }).refused).map(([what]) => what);
+  assert.deepEqual(accepted, []);
+});
+
+test("the JXA policy still reads templates, comments and division that run nothing", () => {
+  for (const script of [
+    'Application("Finder").name() + ' + BT + 'plain text' + BT,
+    BT + 'a \\${not interpolated}' + BT,
+    '// it\'s a "comment"\nApplication("Finder").windows.at(0).name()',
+    '/* it\'s a "comment" */ Application("Finder").name()',
+    'var n = Application("Finder").windows.length / 2; n',
+    'var n = (1 + 2) / 3; n',
+  ]) {
+    const r = checkAppScript(script, "javascript", { CODEWHALE_CU_APP_SCRIPT: "apps" });
+    assert.equal(r.refused, null, script);
+  }
+});
+
+test("the AppleScript policy refuses code a comment or quoted name would hide", () => {
+  const accepted = [
+    ["a quote in a line comment", '-- "\ntell application (appName) to quit\n-- "'],
+    ["a quote in a hash comment", '# "\ntell application (appName) to quit\n# "'],
+    ["a quote in a block comment", '(* " *)\ntell application (appName) to quit\n(* " *)'],
+    ["a quote in a nested block comment", '(* (* *) " *)\ntell application (appName) to quit\n(* " *)'],
+    ["a quote in a piped name", 'set |a"| to 1\ntell application (appName) to quit\nset b to "x"'],
+    ["a quote in a comment ended by a continuation", '-- "\xac\ntell application (appName) to quit\n-- "'],
+  ].filter(([, script]) => !checkAppScript(script, "applescript", { CODEWHALE_CU_APP_SCRIPT: "apps" }).refused).map(([what]) => what);
+  assert.deepEqual(accepted, []);
+});
+
+test("the AppleScript policy still reads scripts with comments and continuations", () => {
+  for (const script of [
+    '-- it\'s a "comment"\ntell application "Finder" to get name of every window',
+    '(* a "comment" *) tell application "Finder" to get name of every window',
+    'tell application \xac\n"Finder" to get name of every window',
+  ]) {
+    const r = checkAppScript(script, "applescript", { CODEWHALE_CU_APP_SCRIPT: "apps" });
+    assert.equal(r.refused, null, script);
+  }
 });
