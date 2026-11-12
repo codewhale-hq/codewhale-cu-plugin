@@ -1118,6 +1118,7 @@ test('macOS screenshots with unknown display geometry keep the previous raster a
   displays[0] = { index: 1, id: 3, main: true, scale: 2 };
   const again = await backend.screenshot({ display: 1, path: path.join(dir, 'b.png') });
   assert.match(again.note, /geometry unknown/);
+  if (spawnSync('sips', ['--version'], { stdio: 'ignore' }).error) { t.skip('sips unavailable'); return; }
   // zoom keeps cropping the anchored raster: its scale is 1px per 800pt (the
   // PNG's pixel ground truth over the anchored points), so the 1x1 crop maps
   // to 800-point axes — an unanchored raster would fall back to the display

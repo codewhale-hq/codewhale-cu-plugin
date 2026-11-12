@@ -431,6 +431,8 @@ test("a screenshot with unknown geometry keeps the previous raster binding", asy
 test("a geometry-less capture on a computer without a raster leaves coordinates refused", async () => {
   const reg = await tool("computer_register", { computer: "geom-pad", transport: "local" });
   assert.equal(reg.ok, true);
+  const allowed = await tool("consent", { action: "allow", app: "Fixture", computer: "geom-pad" });
+  assert.equal(allowed.ok, true, JSON.stringify(allowed.error));
   setControl({ screenshot: { pixels: { w: 50, h: 50 }, scale: 1 } });
   try {
     const unbound = await tool("screenshot", { computer: "geom-pad" });
