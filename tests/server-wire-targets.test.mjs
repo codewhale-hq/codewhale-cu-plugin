@@ -218,6 +218,31 @@ test("binding an app retires earlier captures before another coordinate action",
   assert.equal(calls().filter(c => c.method === "left_click").length, before);
 });
 
+test("a geometry-less wire screenshot keeps the previous binding and the backend's note", async () => {
+  // The wire route binds screenshots that live on the remote computer; a
+  // capture arriving without geometry must not re-anchor coordinates at a
+  // guessed origin, and a backend note must survive the binding untouched.
+  const anchored = await tool("screenshot", { region: [100, 50, 200, 100] });
+  assert.equal(anchored.ok, true);
+  fs.writeFileSync(callsFile + ".control.json", JSON.stringify({
+    screenshot: { note: "display geometry unknown; coordinates not re-anchored", pixels: { w: 100, h: 100 }, scale: 1 },
+  }));
+  try {
+    const unbound = await tool("screenshot");
+    assert.equal(unbound.ok, true, JSON.stringify(unbound.error));
+    assert.match(unbound.note, /geometry unknown/, "the backend's own note reaches the receipt");
+    const click = await tool("left_click", { target: { type: "coordinate", x: 80, y: 40 } });
+    assert.equal(click.ok, true, JSON.stringify(click.error));
+    const sent = calls().filter(c => c.method === "left_click").at(-1);
+    // Resolved through the anchored region raster (80/2 + 100 = 140), not a
+    // geometry-less capture guessed at the origin (0,0) — which would have
+    // clipped (80,40) into its own 100x100 pixels.
+    assert.deepEqual({ x: sent.args.target.x, y: sent.args.target.y }, { x: 140, y: 70 });
+  } finally {
+    fs.rmSync(callsFile + ".control.json", { force: true });
+  }
+});
+
 test("a successful launch without resolved app identity still retires capture pins", async () => {
   const shot = await tool("screenshot");
   fs.writeFileSync(callsFile + ".control.json", JSON.stringify({ open_without_resolved: true }));

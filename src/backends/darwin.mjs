@@ -706,7 +706,7 @@ export function create({ exec }) {
     displays ??= await displayInfo();
     const d = displays.find((x) => x.index === (disp === "all" ? 1 : disp)) ?? displays[0];
     const scale = d?.scale ?? 1;
-    state.lastRaster = {
+    const raster = {
       file,
       ...(window ? { app_ref, window_index: window_id ?? 0, observed_window: { id: window.window_id, pid: window.pid ?? state.inputApp?.pid, frame: window.points } } : {}),
       ...(capture ? { capture_route: capture.route } : {}),
@@ -721,8 +721,13 @@ export function create({ exec }) {
       scale: d?.scale ?? 1,
       capturedAt: new Date().toISOString(),
     };
-    if (state.lastRaster.points?.w) state.lastRaster.scale = state.lastRaster.pixels.w / state.lastRaster.points.w;
-    return { ...state.lastRaster, path: file };
+    if (raster.points?.w) raster.scale = raster.pixels.w / raster.points.w;
+    // A capture whose geometry is unknown must not re-anchor coordinate
+    // targets at a guessed origin: the previous raster stays the frame zoom
+    // crops, and the receipt says so instead of staying silent.
+    if (raster.points) state.lastRaster = raster;
+    else raster.note = [raster.note, "display geometry unknown; coordinates not re-anchored"].filter(Boolean).join(" ");
+    return { ...raster, path: file };
   }
 
   // Always crops the last raster this backend captured; a caller-named

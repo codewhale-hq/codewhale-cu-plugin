@@ -362,6 +362,33 @@ test("optional OCR binds its exact raster for coordinate actions while preservin
   assert.equal((await tool("get_app_state", {})).ocr, undefined, "normal observations do not request OCR");
 });
 
+test("a geometry-less OCR raster keeps the receipt anchored to the previous raster", async () => {
+  // darwin can hand get_app_state an OCR capture whose display geometry is
+  // unknown (no points, no origin). The observation must survive: its
+  // coordinate targets stay pinned to the still-current previous raster
+  // instead of dropping the whole receipt or guessing a fresh origin.
+  const bound = await tool("screenshot");
+  assert.equal(bound.ok, true);
+  setControl({ observation: { elements: [], ocr: {
+    status: "ok",
+    raster: { file: "/fixture/ocr.png", pixels: { w: 400, h: 200 }, scale: 2 },
+    blocks: [{ text: "Raster text", confidence: 0.9, bounds: { x: 60, y: 20, w: 40, h: 40 }, target: { type: "coordinate", x: 80, y: 40 } }],
+  } } });
+  try {
+    const state = await tool("get_app_state", { include_ocr: true });
+    assert.equal(state.ok, true, JSON.stringify(state.error));
+    assert.equal(state.ocr.status, "ok");
+    assert.equal(state.ocr.raster.raster_id, bound.raster_id, "the OCR receipt names the raster its coordinates still resolve against");
+    assert.equal(state.ocr.blocks[0].target.raster_id, bound.raster_id);
+    const clicked = await tool("left_click", { target: state.ocr.blocks[0].target });
+    assert.equal(clicked.ok, true, JSON.stringify(clicked.error));
+    const last = calls("left_click").at(-1);
+    // Resolved through the previous full raster (origin 0, scale 2): pixel
+    // (80,40) maps to point (40,20) — not invented (0,0)-origin geometry.
+    assert.deepEqual({ x: last.args.target.x, y: last.args.target.y }, { x: 40, y: 20 });
+  } finally { setControl(null); }
+});
+
 test("coordinate targets map raster pixels through the bound scale", async () => {
   const shot = await tool("screenshot");
   assert.equal(shot.ok, true);
@@ -380,6 +407,43 @@ test("region screenshots bind the region origin for later coordinates", async ()
   const last = calls("left_click").at(-1);
   // origin (50,40) + pixel (100,60) / scale 2 -> (100, 70)
   assert.deepEqual({ x: last.args.target.x, y: last.args.target.y }, { x: 100, y: 70 });
+});
+
+test("a screenshot with unknown geometry keeps the previous raster binding", async () => {
+  const bound = await tool("screenshot");
+  assert.equal(bound.ok, true);
+  setControl({ screenshot: { pixels: { w: 100, h: 100 }, scale: 1 } });
+  try {
+    const unbound = await tool("screenshot");
+    assert.equal(unbound.ok, true, JSON.stringify(unbound.error));
+    assert.equal(unbound.points, undefined, "the receipt reports no geometry the capture does not know");
+    assert.equal(unbound.raster_id, bound.raster_id, "the receipt still names the raster coordinate targets resolve against");
+    const r = await tool("left_click", { target: { type: "coordinate", x: 400, y: 300 } });
+    assert.equal(r.ok, true, JSON.stringify(r.error));
+    const last = calls("left_click").at(-1);
+    // Resolved through the previous full raster (origin 0, scale 2), not a
+    // geometry-less capture guessed at a fresh (0,0) origin: (400,300) would
+    // be outside that capture's 100x100 pixels.
+    assert.deepEqual({ x: last.args.target.x, y: last.args.target.y }, { x: 200, y: 150 });
+  } finally { setControl(null); }
+});
+
+test("a geometry-less capture on a computer without a raster leaves coordinates refused", async () => {
+  const reg = await tool("computer_register", { computer: "geom-pad", transport: "local" });
+  assert.equal(reg.ok, true);
+  const allowed = await tool("consent", { action: "allow", app: "Fixture", computer: "geom-pad" });
+  assert.equal(allowed.ok, true, JSON.stringify(allowed.error));
+  setControl({ screenshot: { pixels: { w: 50, h: 50 }, scale: 1 } });
+  try {
+    const unbound = await tool("screenshot", { computer: "geom-pad" });
+    assert.equal(unbound.ok, true, JSON.stringify(unbound.error));
+    const r = await tool("left_click", { target: { type: "coordinate", x: 25, y: 25 }, computer: "geom-pad" });
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.equal(r.error.code, "no_raster", "no binding was invented from unknown geometry");
+  } finally {
+    setControl(null);
+    await tool("computer_remove", { computer: "geom-pad" });
+  }
 });
 
 test("zoom binds a child raster that keeps parent scale and shifted origin", async () => {
