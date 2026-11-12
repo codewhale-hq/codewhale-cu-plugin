@@ -140,8 +140,7 @@ static void cuDrawCursor(CGFloat x, CGFloat y, NSColor *fill, NSString *label) {
 // The agent's own on-screen pointer. It is a small click-through window that
 // glides to wherever the agent acts; the user's hardware cursor never moves.
 // Screen capture excludes it (sharingType none), so the agent's screenshots
-// show the app, not its own cursor. The helper's window-occlusion check
-// recognises it by owner, layer and this size (darwin-accessibility.m).
+// show the app, not its own cursor.
 static const CGFloat kCUAgentCursorBox=96;
 @interface CUAgentCursorView : NSView
 @end
@@ -368,7 +367,7 @@ static NSRect cuPreviewFrame(NSRect screen) {
   CUAgentCursorPanel *w=self.cursorPanel;
   if(!w.isVisible) return;
   [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx){ ctx.duration=0.25; [[w animator] setAlphaValue:0]; }
-                      completionHandler:^{ if(w.alphaValue<0.05) [w orderOut:nil]; }];
+                      completionHandler:^{ if(!self.cursorIdle && w.alphaValue<0.05) [w orderOut:nil]; }];
 }
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
   forward(SIGTERM);

@@ -151,11 +151,6 @@ test('native window matching refuses another process, mismatched geometry and am
     assert.equal(owner([{...floating,kCGWindowAlpha:0},selected]).owner_pid,123,'transparent overlays do not intercept');
   }
   assert.equal(owner([{...selected,kCGWindowLayer:8}]).owner_pid,123,'the bound app can target its own floating panels');
-  // The agent's own drawn cursor sits on the point it marks and never occludes it.
-  const agentCursor={kCGWindowOwnerPID:777,kCGWindowOwnerName:'Codewhale Computer Use',kCGWindowLayer:1000,kCGWindowAlpha:1,kCGWindowNumber:46,kCGWindowBounds:{X:2,Y:2,Width:96,Height:96}};
-  assert.equal(owner([agentCursor,selected]).owner_pid,123,'the agent cursor is click-through');
-  assert.equal(owner([{...agentCursor,kCGWindowBounds:{X:0,Y:0,Width:400,Height:300}},selected]).owner_pid,777,'a full-size window of the same owner still occludes');
-  assert.equal(owner([{...agentCursor,kCGWindowLayer:0},selected]).owner_pid,777,'only the screen-saver-level cursor panel is exempt');
   const hide=spawnSync(binary,[JSON.stringify({tool:'agent_cursor',args:{hide:true}})],{encoding:'utf8'});
   assert.equal(hide.status,0,hide.stderr);assert.deepEqual(JSON.parse(hide.stdout),{hidden:true});
 
@@ -248,7 +243,7 @@ test('macOS background binding avoids reopen and delivers a held drag at the age
 });
 
 test('the agent cursor glides to every acting point and never rides on reads', async t => {
-  const reply = r => r.tool === 'input_capabilities' ? { input_lease: 1, window_record: 1, background_focus_guard: 1, background_actions: 1 }
+  const reply = r => r.tool === 'input_capabilities' ? { input_lease: 1, window_record: 1, background_focus_guard: 1, background_actions: 1, agent_cursor: 1 }
     : r.tool === 'hit_test' ? PRESSABLE : undefined;
   const { backend, calls } = stubBackend(t, reply);
   await backend.open_application({ name: 'TextEdit' });

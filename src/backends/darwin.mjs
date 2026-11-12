@@ -382,8 +382,13 @@ export function create({ exec }) {
       if (last) point = { x: last.x, y: last.y };
     }
     if (point) state.pointer = point;
-    const agentPointer = point && state.agentCursor && AGENT_CURSOR_TOOLS.has(tool) && (tool !== "hit_test" || args.perform)
-      ? { ...point, click: agentCursorClick(tool, args), glide_ms: AGENT_CURSOR_GLIDE_MS } : undefined;
+    let agentPointer;
+    if (point && state.agentCursor && AGENT_CURSOR_TOOLS.has(tool) && (tool !== "hit_test" || args.perform) && (await native("input_capabilities"))?.agent_cursor === 1) {
+      const last = state.agentCursorAt;
+      const same = last && last.x === point.x && last.y === point.y;
+      if (!same || Date.now() - last.at > 500) agentPointer = { ...point, click: agentCursorClick(tool, args), glide_ms: same ? 0 : AGENT_CURSOR_GLIDE_MS };
+      state.agentCursorAt = { ...point, at: Date.now() };
+    }
     if (args.observed_window && (await native("input_capabilities"))?.observed_window_input !== 1) throw Object.assign(new ExecError("Update Computer Use before acting on a captured window; this helper cannot preserve its identity"), { code: "app_upgrade_required" });
     const helper = await nativeHelper();
     let capabilityKey;
@@ -879,9 +884,6 @@ export function create({ exec }) {
 
   async function closeSession() {
     await retirePreview(true).catch(() => {});
-    if (state.agentCursor && state.pointer) {
-      try { await native("agent_cursor", { hide: true }); } catch {}
-    }
     await browser.close().catch(() => {});
     const owned = [...rec.entries()];
     for (const [, recording] of owned) requestRecordingStop(recording);
@@ -891,6 +893,10 @@ export function create({ exec }) {
       return result;
     }));
     const failed = results.find(result => result.code !== 0);
+    if (state.agentCursorAt) {
+      state.agentCursorAt = null;
+      try { await native("agent_cursor", { hide: true }); } catch {}
+    }
     if (failed) throw new ExecError(failed.error || "screen recorder failed; partial file retained");
   }
 

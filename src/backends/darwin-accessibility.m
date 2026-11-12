@@ -1653,9 +1653,6 @@ static NSDictionary *windowAtPoint(NSArray *windows, CGPoint p) {
       pid_t owner=[w[(__bridge NSString *)kCGWindowOwnerPID] intValue];
       NSString *name=w[(__bridge NSString *)kCGWindowOwnerName]?:@"";
       NSNumber *alpha=w[(__bridge NSString *)kCGWindowAlpha], *layer=w[(__bridge NSString *)kCGWindowLayer]?:@0;
-      // Our own agent cursor (launcher.c CUAgentCursorPanel) sits on the very
-      // point it marks; it is click-through and never occludes input.
-      if([name isEqual:@"Codewhale Computer Use"] && [layer integerValue]>=1000 && b.size.width<=96 && b.size.height<=96) { [skipped addObject:@{@"owner":name,@"why":@"agent_cursor"}]; continue; }
       // Visible floating windows occlude input just like normal windows.
       if(alpha && [alpha doubleValue]<=0) { [skipped addObject:@{@"owner":name,@"why":@"transparent"}]; continue; }
       return @{@"found":@YES,@"owner_pid":@(owner),@"owner_name":name,
@@ -1696,7 +1693,7 @@ static id execute(NSDictionary *p) {
     return cuPostKey(args,[args[@"input_app_ref"][@"pid"] intValue]);
   }
   cuCheckCancelled();
-  if([tool isEqual:@"input_capabilities"]) return @{@"pid_input":@1,@"agent":@1,@"screen_lock_check":@1,@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"focus_lease":@1,@"focused_control":@1,@"window_record":@(cuResolveBgPointer()?1:0),@"observed_window_input":@1,@"targeted_keys":@1,@"window_text_input":@1,@"literal_text_replace":@1,@"pointer_context":@1,@"pointer_owner_validation":@1,@"menu_path":@1};
+  if([tool isEqual:@"input_capabilities"]) return @{@"pid_input":@1,@"agent_cursor":@1,@"agent":@1,@"screen_lock_check":@1,@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"background_focus_guard":@1,@"focus_lease":@1,@"focused_control":@1,@"window_record":@(cuResolveBgPointer()?1:0),@"observed_window_input":@1,@"targeted_keys":@1,@"window_text_input":@1,@"literal_text_replace":@1,@"pointer_context":@1,@"pointer_owner_validation":@1,@"menu_path":@1};
   if([tool isEqual:@"front_lease_watchdog"]) {
     long long remaining = [args[@"deadline"] longLongValue] - (long long)([NSDate new].timeIntervalSince1970 * 1000);
     if(remaining > 0 && remaining < 30000) usleep((useconds_t)remaining * 1000);

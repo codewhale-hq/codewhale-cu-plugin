@@ -442,7 +442,7 @@ screen capture excludes it, so screenshots show the app and not the cursor.
 The action waits for the glide (`CODEWHALE_CU_AGENT_CURSOR_GLIDE_MS`, default
 180, max 600). The cursor fades after 8 s idle and hides when the session
 closes. `CODEWHALE_CU_AGENT_CURSOR=0` turns the cursor and the glide off. It
-needs the 0.16.2 helper; an older helper ignores it. Your own cursor stays
+needs the 0.16.2 helper; with an older one nothing is sent. Your own cursor stays
 where you left it.
 
 Only when the user asks to watch, enable `preview` with `enabled: true` to show a small, nonactivating window
