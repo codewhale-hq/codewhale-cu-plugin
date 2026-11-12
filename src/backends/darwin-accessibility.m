@@ -1670,15 +1670,6 @@ static id execute(NSDictionary *p) {
     @throw [NSException exceptionWithName:@"real_pointer_refused" reason:@"real_pointer_refused: Computer Use never drives the user's cursor; pointer input goes to the bound app's window (bg_pointer)" userInfo:nil];
   if([@[@"bg_key",@"bg_pointer"] containsObject:tool]) cuRequireLease(args);
   cuOwnerPipe=[args[@"owner_pipe"] boolValue];
-  // The agent's pointer is drawn by the app (launcher.c), never the user's
-  // cursor: glide it to the action's point, then act once it has arrived.
-  NSDictionary *agentPointer=args[@"agent_pointer"];
-  if([agentPointer isKindOfClass:NSDictionary.class] && [agentPointer[@"x"] isKindOfClass:NSNumber.class] && [agentPointer[@"y"] isKindOfClass:NSNumber.class]) {
-    double glide=MIN(MAX([agentPointer[@"glide_ms"] doubleValue],0),600);
-    [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"net.codewhale.computer-use.agent-cursor" object:nil
-      userInfo:@{@"x":agentPointer[@"x"],@"y":agentPointer[@"y"],@"click":@([agentPointer[@"click"] boolValue]),@"glide_ms":@(glide)} deliverImmediately:YES];
-    if(glide>0) usleep((useconds_t)(glide*1000));
-  }
   if([tool isEqual:@"agent_cursor"]) {
     [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"net.codewhale.computer-use.agent-cursor" object:nil userInfo:@{@"hide":@YES} deliverImmediately:YES];
     return @{@"hidden":@YES};
@@ -1985,6 +1976,15 @@ static id execute(NSDictionary *p) {
   if([@[@"bg_pointer",@"type",@"key_event",@"bg_key"] containsObject:tool]
      || ([tool isEqual:@"app_info"] && [args[@"activate"] boolValue]))
     cuFrontLeaseRestoreIfHeld();
+  // The agent's pointer is drawn by the app (launcher.c), never the user's
+  // cursor: glide it to the action's point, then act once it has arrived.
+  NSDictionary *agentPointer=args[@"agent_pointer"];
+  if(AXIsProcessTrusted() && [NSRunningApplication runningApplicationsWithBundleIdentifier:@"net.codewhale.computer-use"].count && [agentPointer isKindOfClass:NSDictionary.class] && [agentPointer[@"x"] isKindOfClass:NSNumber.class] && [agentPointer[@"y"] isKindOfClass:NSNumber.class]) {
+    double glide=MIN(MAX([agentPointer[@"glide_ms"] doubleValue],0),600);
+    [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"net.codewhale.computer-use.agent-cursor" object:nil
+      userInfo:@{@"x":agentPointer[@"x"],@"y":agentPointer[@"y"],@"click":@([agentPointer[@"click"] boolValue]),@"glide_ms":@(glide)} deliverImmediately:YES];
+    if(glide>0) usleep((useconds_t)(glide*1000));
+  }
   if(mutates) { cuCheckCancelled(); cuLockInput(); }
   if(!AXIsProcessTrusted()) @throw [NSException exceptionWithName:@"permission" reason:@"Accessibility permission is missing for Codewhale Computer Use (or the direct host)." userInfo:nil];
   if([tool isEqual:@"focused_control"]) {

@@ -1,5 +1,9 @@
 # Release notes
 
+## Unreleased
+
+- **The Codewhale cursor no longer moves for an action that is refused up front.** The helper glided the cursor and rang a click before checking the request, so an action refused for an unbound or protected app, a locked screen or missing Accessibility permission still showed a click that never happened and took 180 ms longer. The cursor now moves after those checks, and not at all when no Computer Use app is running to draw it. Refusals found later (a stale element, the person typing) can still follow a glide. Ships with the next helper release.
+
 ## 0.16.2 — 2026-11-11
 
 Published from `283e2d3cc0b51d3e1fc67abe0372e3c29506a7df`, runtime `416cf8a9cb999971`, with 11 verified assets. Exact-source three-platform CI and CodeQL passed; local Mac suite 566 pass, 21 platform skips, zero failures. No installed end-to-end task was run through the notarized build before publication. [Qualification record](docs/RELEASE_CHECKLIST.md#0162--published-2026-11-11).
