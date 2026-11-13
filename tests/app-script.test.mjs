@@ -194,6 +194,20 @@ const JXA_HIDDEN = [
   ["computed member after a numeric dot", '1.["toString"]'],
   ["quoted key in a destructuring pattern", 'var {"constructor": F} = function(){}; F("return 42")()'],
   ["quoted key in a multi-key destructuring pattern", 'var {a: 1, "constructor": F} = {a: 1, constructor: function(){}}; F("return 42")()'],
+  ["chained bracket after numeric index", '[function(){}][0]["constructor"]("return 42")()'],
+  ["chained bracket after variable index", 'var a = [globalThis]; a[0]["eval"]("42")'],
+  ["chained bracket after optional chaining index", 'var a = [function(){}]; a?.[0]["constructor"]("return 42")()'],
+  ["chained bracket after numeric index and block comment", '[function(){}][0] /* c */ ["constructor"]("return 42")()'],
+  ["aliased Objective-C bridge ($)", 'var b = $; b.NSClassFromString("NS" + "Task")'],
+  ["destructured Objective-C bridge ($)", 'var { NSString } = $; NSString.stringWithString("ok").js'],
+  ["with ($) Objective-C bridge", 'with ($) { NSString.stringWithString("ok").js }'],
+  ["aliased Path constructor", 'var p = Path; p("/tmp").toString()'],
+  ["detached Finder.open method", 'var f = Application("Finder"); var op = f.open; op("/tmp")'],
+  ["detached Finder.launch method", 'var f = Application("Finder"); var l = f.launch; l()'],
+  ["detached System Events keystroke method", 'var se = Application("System Events"); var k = se.keystroke; k("id")'],
+  ["detached System Events click method", 'var se = Application("System Events"); var cl = se.click; cl({at: [10, 10]})'],
+  ["destructured Finder.open method", 'var { open } = Application("Finder"); open("/tmp")'],
+  ["destructured System Events click method", 'var { click } = Application("System Events"); click({at: [10, 10]})'],
 ];
 
 test("the JXA policy refuses code a template, comment or regular expression would hide", () => {
@@ -286,6 +300,8 @@ test("the AppleScript policy refuses code a comment or quoted name would hide", 
     ["a line comment inside a block comment that hides the closer", '(* -- *)\ntell application (appName) to quit\n*)'],
     ["a piped name inside a block comment", '(* |(*| *)\ntell application (appName) to quit'],
     ["a backslash that ends the script", 'set a to "x\\'],
+    ["click at split across a bare CR continuation", 'tell application "System Events" to click ¬\r at {10, 10}'],
+    ["a quote in a comment ended by a bare CR continuation", '-- "\u00ac\rtell application (appName) to quit\n-- "'],
   ].filter(([, script]) => !checkAppScript(script, "applescript", { CODEWHALE_CU_APP_SCRIPT: "apps" }).refused).map(([what]) => what);
   assert.deepEqual(accepted, []);
 });

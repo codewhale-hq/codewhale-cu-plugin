@@ -125,8 +125,8 @@ function maskAppleScript(src) {
       if (depth > 0) return { refused: UNREADABLE_AS };
       i--;
       out += " ";
-    } else if (c === "¬" && /^[ \t]*\r?\n/.test(src.slice(i + 1))) {
-      i += src.slice(i + 1).match(/^[ \t]*\r?\n/)[0].length;
+    } else if (c === "¬" && /^[ \t]*(?:\r\n|\r|\n)/.test(src.slice(i + 1))) {
+      i += src.slice(i + 1).match(/^[ \t]*(?:\r\n|\r|\n)/)[0].length;
       out += " ";
     } else out += c;
   }
@@ -160,13 +160,13 @@ const AS_DENY = [
   // file I/O, opening URLs, mounting volumes and reading the environment are
   // not app scripting.
   [/\bopen\s+for\s+access\b/i, "StandardAdditions file access (`open for access`) is not app scripting"],
-  [/\b(read|write)\b[^\n]*\b(POSIX\s+file|file|alias)\b/i, "StandardAdditions file reads and writes are not app scripting"],
+  [/\b(read|write)\b[^\r\n]*\b(POSIX\s+file|file|alias)\b/i, "StandardAdditions file reads and writes are not app scripting"],
   [/\bopen\s+location\b/i, "`open location` opens a URL outside any consented app"],
   [/\bmount\s+volume\b/i, "`mount volume` is not app scripting"],
   [/\bsystem\s+attribute\b/i, "`system attribute` reads the environment"],
   // A consented app must not become a launcher for another app or a
   // runnable file (Finder, `launch`, `reopen`).
-  [/\b(open|launch|reopen)\b[^\n]*\b(POSIX\s+file|file|alias|application\s+file|disk\s+item)\b/i, "opening files or applications through another app is refused — use open_application, which asks for consent"],
+  [/\b(open|launch|reopen)\b[^\r\n]*\b(POSIX\s+file|file|alias|application\s+file|disk\s+item)\b/i, "opening files or applications through another app is refused — use open_application, which asks for consent"],
 ];
 
 function checkTargetLiteral(lit) {
@@ -177,7 +177,7 @@ function checkTargetLiteral(lit) {
 
 function checkAppleScript(script) {
   // Join ¬ continuations so a phrase split across lines is still one phrase.
-  const src = script.replace(/¬[ \t]*\r?\n/g, " ");
+  const src = script.replace(/¬[ \t]*(?:\r\n|\r|\n)/g, " ");
   const targets = [];
   const refused = (reason) => ({ refused: reason, targets });
   // Any other use of `application`/`app` must be a form the policy knows:
@@ -236,18 +236,20 @@ function checkAppleScript(script) {
 const JXA_DENY = [
   [/doShellScript/i, "`doShellScript` runs a shell"],
   [/\bdoScript\b/, "`doScript` runs a shell command in a terminal"],
-  [/\.\s*(keystroke|keyCode)\s*\(/, "System Events keystrokes go to the frontmost app, not the named one — use the type or key tool"],
-  [/\.\s*click\s*\(\s*\{/, "coordinate clicks through System Events go to whatever is on screen — use the click tool"],
+  [/\b(keystroke|keyCode)\b/, "System Events keystrokes go to the frontmost app, not the named one — use the type or key tool"],
+  [/\bclick\b(?!\s*\(\s*\))/, "coordinate clicks through System Events go to whatever is on screen — use the click tool"],
+  [/\bwith\s*\(/, "`with (…)` hides object properties from the policy"],
   [/\bObjC\b/, "the Objective-C bridge (ObjC) reaches Cocoa directly"],
-  [/\$\s*[.([]/, "the Objective-C bridge ($) reaches Cocoa directly"],
+  [/(?<![\p{ID_Continue}$])\$(?![\p{ID_Continue}$])/u, "the Objective-C bridge ($) reaches Cocoa directly"],
   [/\bNS(Task|UserUnixTask|UserScriptTask|AppleScript|Workspace)\b/, "Cocoa process and script classes are not app scripting"],
   [/includeStandardAdditions/, "StandardAdditions exposes doShellScript; use the app's own dictionary"],
   [/\b(eval|Function|Library|Ref|require|importScripts|constructor|prototype|__proto__|Reflect|Proxy)\b/, "dynamic code loading, evaluation and reflection are refused"],
   [/\bObject\s*\.\s*(getOwnProperty\w*|defineProperty|defineProperties|entries|values|assign|getPrototypeOf|setPrototypeOf)\b/, "reflection over objects is refused"],
   [/\bosascript\b/i, "nested osascript is refused"],
-  [/\.\s*(open|launch|reopen)\s*\(/, "opening files or applications through another app is refused — use open_application, which asks for consent"],
-  [/\bPath\s*\(/, "file paths (Path(…)) are not app scripting"],
-  [/\.\s*(openLocation|mountVolume|systemAttribute|openForAccess|read|write)\s*\(/, "StandardAdditions calls are not app scripting"],
+  [/\.\s*(open|launch|reopen)\b/, "opening files or applications through another app is refused — use open_application, which asks for consent"],
+  [/\bPath\b/, "file paths (Path(…)) are not app scripting"],
+  [/\.\s*(openLocation|mountVolume|systemAttribute|openForAccess|read|write)\b/, "StandardAdditions calls are not app scripting"],
+  [/[{,]\s*(?:open|launch|reopen|openLocation|mountVolume|systemAttribute|openForAccess|read|write)\b/, "destructuring denied methods is refused"],
 ];
 
 function checkJxa(script) {
@@ -293,7 +295,7 @@ function checkJxa(script) {
   for (const [re, why] of JXA_DENY) if (re.test(code)) return refused(why);
   // Computed member access could spell doShellScript at runtime; only numeric
   // indexes are allowed. Collections take .at(i) and .byName("x") instead.
-  for (const m of code.matchAll(/(?:[\p{ID_Continue}$)\]}"'`]|\d\.|\?\.)\s*\[([^\]]*)\]/gu)) {
+  for (const m of code.matchAll(/(?<=[\p{ID_Continue}$)\]}"'`]|\d\.|\?\.)\s*\[([^\]]*)\]/gu)) {
     if (!/^\s*\d+\s*$/.test(m[1])) return refused("computed member access (x[expr]) is refused — use .at(i), .byName(\"Name\") or a literal property");
   }
   // Computed keys in object literals and destructuring patterns ({[k]: v}).
