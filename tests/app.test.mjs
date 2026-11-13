@@ -38,6 +38,7 @@ test("hello identifies the app and the bundle it runs from", async () => {
   assert.equal(app.bundle, "/tmp/fake-bundle.app");
   assert.equal(app.platform, process.platform);
   assert.equal(app.socket, socketPath());
+  assert.equal(Object.hasOwn(app, "grants"), false);
 });
 
 test("launching from a bundle registers a relaunch command", () => {
@@ -149,4 +150,105 @@ test("build-app produces every platform layout with a complete runtime copy", as
       assert.ok(!fs.existsSync(path.join(root, "tests")), "no dev files in the runtime copy");
     }
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
+});
+
+test("hello reports macOS grants when the native helper provides them and omits grants otherwise", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cu-grants-"));
+  const previousSocket = process.env.CODEWHALE_CU_APP_SOCKET;
+  t.after(() => {
+    if (previousSocket === undefined) delete process.env.CODEWHALE_CU_APP_SOCKET;
+    else process.env.CODEWHALE_CU_APP_SOCKET = previousSocket;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  let seq = 0;
+  async function withBundleDaemon(bundlePath, fn, { timeoutMs = 500 } = {}) {
+    const subDir = path.join(dir, `run-${++seq}`);
+    fs.mkdirSync(subDir, { recursive: true });
+    const endpoint = process.platform === "win32"
+      ? `\\\\.\\pipe\\cu-grants-${process.pid}-${seq}`
+      : path.join(subDir, "app.sock");
+    process.env.CODEWHALE_CU_APP_SOCKET = endpoint;
+    const child = spawn(process.execPath, [path.join(ROOT, "app", "daemon.mjs")], {
+      env: { ...process.env, CODEWHALE_CU_STATE_DIR: subDir, CODEWHALE_CU_APP_SOCKET: endpoint, CODEWHALE_CU_APP_BUNDLE: bundlePath },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    child.stderr.on("data", () => {});
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    try {
+      const deadline = Date.now() + 8_000;
+      let app = null;
+      while (Date.now() < deadline && !(app = await hello({ timeoutMs }))) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      assert.ok(app, "daemon answered hello");
+      await fn(app);
+    } finally {
+      child.kill("SIGTERM");
+      await Promise.race([exited, new Promise((r) => setTimeout(r, 2_000))]);
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    }
+  }
+
+  const fakeBundle = path.join(dir, "fake.app");
+  const fakeHelper = path.join(fakeBundle, "Contents", "MacOS", "accessibility");
+  fs.mkdirSync(path.dirname(fakeHelper), { recursive: true });
+  fs.writeFileSync(fakeHelper, "#!/bin/sh\nprintf '{\"trusted\":true,\"screen_recording\":false}\\n'\n", { mode: 0o755 });
+
+  if (process.platform !== "darwin") {
+    await withBundleDaemon(fakeBundle, (app) => {
+      assert.equal(Object.hasOwn(app, "grants"), false);
+    });
+    return;
+  }
+
+  await withBundleDaemon(fakeBundle, (app) => {
+    assert.deepEqual(app.grants, { accessibility: true, screen_recording: false });
+    assert.equal(typeof app.grants.accessibility, "boolean");
+    assert.equal(typeof app.grants.screen_recording, "boolean");
+  });
+
+  const failingBundle = path.join(dir, "failing.app");
+  const failingHelper = path.join(failingBundle, "Contents", "MacOS", "accessibility");
+  fs.mkdirSync(path.dirname(failingHelper), { recursive: true });
+  fs.writeFileSync(failingHelper, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  await withBundleDaemon(failingBundle, (app) => {
+    assert.equal(Object.hasOwn(app, "grants"), false);
+  });
+
+  const incompleteBundle = path.join(dir, "incomplete.app");
+  const incompleteHelper = path.join(incompleteBundle, "Contents", "MacOS", "accessibility");
+  fs.mkdirSync(path.dirname(incompleteHelper), { recursive: true });
+  fs.writeFileSync(incompleteHelper, "#!/bin/sh\nprintf '{\"trusted\":true}\\n'\n", { mode: 0o755 });
+  await withBundleDaemon(incompleteBundle, (app) => {
+    assert.equal(Object.hasOwn(app, "grants"), false);
+  });
+
+  const ignoringTermBundle = path.join(dir, "ignoring-term.app");
+  const ignoringTermHelper = path.join(ignoringTermBundle, "Contents", "MacOS", "accessibility");
+  fs.mkdirSync(path.dirname(ignoringTermHelper), { recursive: true });
+  fs.writeFileSync(ignoringTermHelper, "#!/bin/sh\ntrap \"\" TERM; sleep 5\n", { mode: 0o755 });
+  await withBundleDaemon(ignoringTermBundle, async (app) => {
+    assert.equal(Object.hasOwn(app, "grants"), false);
+    await new Promise((r) => setTimeout(r, 1_600));
+    const startedAt = Date.now();
+    const fresh = await hello({ timeoutMs: 2_000 });
+    const elapsedMs = Date.now() - startedAt;
+    assert.ok(fresh, "hello answered before 2s when helper ignored SIGTERM");
+    assert.equal(Object.hasOwn(fresh, "grants"), false);
+    assert.ok(elapsedMs < 2_000, `expected hello in under 2000ms, got ${elapsedMs}ms`);
+  }, { timeoutMs: 2_000 });
+
+  const realBundle = path.join(dir, "real.app");
+  const realHelper = path.join(realBundle, "Contents", "MacOS", "accessibility");
+  fs.mkdirSync(path.dirname(realHelper), { recursive: true });
+  const compiled = spawnSync("clang", ["-fobjc-arc", "-Os", "-framework", "Cocoa", "-framework", "ApplicationServices", "-framework", "ScreenCaptureKit", "-framework", "AVFoundation", "-framework", "CoreMedia", "-framework", "Vision", path.join(ROOT, "src", "backends", "darwin-accessibility.m"), "-o", realHelper], { encoding: "utf8" });
+  assert.equal(compiled.status, 0, compiled.stderr);
+  const direct = spawnSync(realHelper, [JSON.stringify({ tool: "permissions" })], { encoding: "utf8" });
+  assert.equal(direct.status, 0, direct.stderr);
+  const parsed = JSON.parse(direct.stdout);
+  assert.equal(typeof parsed.trusted, "boolean");
+  assert.equal(typeof parsed.screen_recording, "boolean");
+  await withBundleDaemon(realBundle, (app) => {
+    assert.deepEqual(app.grants, { accessibility: parsed.trusted, screen_recording: parsed.screen_recording });
+  });
 });

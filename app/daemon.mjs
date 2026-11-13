@@ -17,6 +17,7 @@ import fs from "node:fs";
 import net from "node:net";
 import crypto from "node:crypto";
 import path from "node:path";
+import { execFile } from "node:child_process";
 import { handle, closeSession, closeAllSessions, releaseSessionInput, reopenSession, ALLOWED, controlStatus, setControlMode, summarizeSessions, createConsentController } from "../src/app-handler.mjs";
 import { runBackgroundCheck } from "./background-check.mjs";
 import { checkForUpdate, prepareUpdate, restartWithUpdate, readUpdateResult } from "./updates.mjs";
@@ -69,6 +70,49 @@ function saveManaged(next) {
   writeRegistration({ id: APP_ID, path: bundle, launch: defaultLaunch(bundle), managed: next });
   managed = next;
   try { if (JSON.parse(fs.readFileSync(runInfoPath(), "utf8")).pid === process.pid) fs.writeFileSync(runInfoPath(), JSON.stringify(appInfo(), null, 2) + "\n"); } catch {}
+}
+
+const GRANTS_CACHE_MS = 1_500;
+const GRANTS_TIMEOUT_MS = 750;
+let cachedGrants = null;
+let pendingGrants = null;
+
+function readMacGrants() {
+  if (process.platform !== "darwin" || !bundle) return Promise.resolve(null);
+  if (cachedGrants && Date.now() - cachedGrants.at < GRANTS_CACHE_MS) return Promise.resolve(cachedGrants.value);
+  if (pendingGrants) return pendingGrants;
+  const helper = path.join(bundle, "Contents", "MacOS", "accessibility");
+  if (!fs.existsSync(helper)) return Promise.resolve(null);
+  pendingGrants = new Promise((resolve) => {
+    let settled = false;
+    let child;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      cachedGrants = { at: Date.now(), value };
+      pendingGrants = null;
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      try { child?.kill("SIGKILL"); } catch {}
+      finish(null);
+    }, GRANTS_TIMEOUT_MS + 50);
+    timer.unref?.();
+    child = execFile(helper, [JSON.stringify({ tool: "permissions" })], { timeout: GRANTS_TIMEOUT_MS, killSignal: "SIGKILL", maxBuffer: 64 * 1024 }, (error, stdout) => {
+      let value = null;
+      if (!error && stdout) {
+        try {
+          const parsed = JSON.parse(stdout);
+          if (typeof parsed?.trusted === "boolean" && typeof parsed?.screen_recording === "boolean") {
+            value = { accessibility: parsed.trusted, screen_recording: parsed.screen_recording };
+          }
+        } catch {}
+      }
+      finish(value);
+    });
+  });
+  return pendingGrants;
 }
 
 function appInfo() {
@@ -365,7 +409,10 @@ async function serve(conn) {
         try { req = JSON.parse(line); } catch { return conn.write(JSON.stringify({ ok: false, error: { code: "bad_payload", message: "request is not JSON" } }) + "\n"); }
         let reply;
         if (shuttingDown) reply = { ok: false, error: { code: "app_shutting_down", message: "Computer Use helper is shutting down" } };
-        else if (req?.tool === "hello") reply = { ok: true, app: appInfo() };
+        else if (req?.tool === "hello") {
+          const grants = await readMacGrants();
+          reply = { ok: true, app: grants ? { ...appInfo(), grants } : appInfo() };
+        }
         else if (req?.tool === "platform") reply = await handle(req);
         else if (managed?.update && !["managed_update", "open_session", "authenticate_session", "close_session", "release_session_input", "consent_deny", "consent_revoke", "consent_status"].includes(req?.tool)) reply = managedRefusal("managed_update_pending", "The containing desktop must finish or recover its Computer Use update before admitting work");
         else if (!ALLOWED.has(req?.tool) && !["managed_update", "open_session", "authenticate_session", "close_session", "release_session_input", "consent_request", "consent_deny", "consent_revoke", "consent_status"].includes(req?.tool)) reply = await handle(req);

@@ -1799,7 +1799,7 @@ static id execute(NSDictionary *p) {
     return cuType(args, nil, [fixture isKindOfClass:NSDictionary.class]?[fixture mutableCopy]:nil, YES);
   }
 #endif
-  if([tool isEqual:@"permissions"]) return @{@"trusted":@(AXIsProcessTrusted())};
+  if([tool isEqual:@"permissions"]) return @{@"trusted":AXIsProcessTrusted()?@YES:@NO,@"screen_recording":CGPreflightScreenCaptureAccess()?@YES:@NO};
   if([tool isEqual:@"list_apps"]) {
     NSMutableArray *apps=[NSMutableArray array];
     for(NSRunningApplication *a in NSWorkspace.sharedWorkspace.runningApplications) {

@@ -1,5 +1,9 @@
 # Release notes
 
+## Unreleased
+
+- **The helper's `hello` reply now reports macOS Accessibility and Screen Recording grants.** On macOS, `hello` includes `app.grants` with `accessibility` and `screen_recording` booleans read directly from the helper's own OS grant state without triggering a screen capture or permission prompt, and omits `grants` on other platforms or when the native check is unavailable (CW-8195).
+
 ## 0.16.3 — 2026-11-12
 
 Published from `0f0ee2342b9d58439f8c40c72a1fa2edddb45387`, runtime `364c70a90c6a84e4`, with 11 verified assets. Exact-source three-platform CI and CodeQL passed; local Mac suite 567 pass, 21 platform skips, zero failures. Caret placement verified through the notarized build in an isolated instance; not run through a desktop-managed install. [Qualification record](docs/RELEASE_CHECKLIST.md#0163--published-2026-11-12).
