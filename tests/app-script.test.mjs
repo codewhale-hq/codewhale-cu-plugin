@@ -164,13 +164,18 @@ const JXA_HIDDEN = [
   ["code after a keyword and a regular expression", "function f(){return /'/.test(1)}" + SHELL + 'a["do"+"ShellScript"]("id");f(\'x\')'],
   ["code after a quote in an HTML-style comment", "<!-- '\n" + SHELL + 'a["do"+"ShellScript"]("id")\n<!-- \''],
   ["code after a line separator in a line comment", "// '\u2028" + SHELL + 'a["do"+"ShellScript"]("id")\n// \''],
+  ["code after a paragraph separator in a line comment", "// '\u2029" + SHELL + 'a["do"+"ShellScript"]("id")\n// \''],
+  ["code after a carriage return in a line comment", "// '\r" + SHELL + 'a["do"+"ShellScript"]("id")\n// \''],
   ["code after a quote on a hashbang line", "#! jxa '\n" + HIDDEN_RUN + "\n'"],
+  ["code after a BOM and /* on a hashbang line", "\uFEFF#! /*\n" + HIDDEN_RUN + "\n/* */"],
+  ["code after a BOM and backtick on a hashbang line", "\uFEFF#! " + BT + "\n" + HIDDEN_RUN + "\n// " + BT],
+  ["code after a BOM and quote on a hashbang line", "\uFEFF#! '\n" + HIDDEN_RUN + "\n'"],
   ["code after a regular expression heritage", "class A extends /'/ {}\n" + HIDDEN_RUN + "\nvar s = 'x'"],
   ["code after a regular expression following break", "while(1){break\n/'/.test(1)}\n" + HIDDEN_RUN + "\nvar s = 'x'"],
   ["code after a regular expression following continue", "for(var i=0;i<1;i++){continue\n/'/.test(1)}\n" + HIDDEN_RUN + "\nvar s = 'x'"],
   ["code after a regular expression following debugger", "debugger\n/'/.test(1)\n" + HIDDEN_RUN + "\nvar s = 'x'"],
   ["code after a regular expression in a for-await body", "async function f(){for await (var x of y) /'/.test(1)}\n" + HIDDEN_RUN + "\nvar s = 'x'"],
-  ["code after a regular expression following default", "var o = {};\nswitch(1){default /'/.test(1)}\n" + HIDDEN_RUN + "\nvar s = 'x'"],
+  ["code after a regular expression following default", "var o = {};\nswitch(1){default: /'/.test(1)}\n" + HIDDEN_RUN + "\nvar s = 'x'"],
   ["code inside an unterminated single-quoted string", "var s = '" + HIDDEN_RUN],
   ["code inside an unterminated double-quoted string", 'var s = "' + HIDDEN_RUN],
   ["code inside an unterminated template", "var s = " + BT + HIDDEN_RUN],
@@ -178,6 +183,17 @@ const JXA_HIDDEN = [
   ["code after a string that crosses a line", "var s = 'a\n" + HIDDEN_RUN + "\nvar t = 'b'"],
   ["code after a string that crosses a carriage return", 'var s = "a\r' + HIDDEN_RUN + '\rvar t = "b"'],
   ["code after a backslash that ends the script", "var s = 'a\\"],
+  ["computed member via optional chaining", 'var o = {a: 1}; o?.["con" + "structor"]'],
+  ["computed member via optional chaining with spaces", 'var o = {a: 1}; o ?. ["con" + "structor"]'],
+  ["computed member after a tagged template", '((x)=>x)' + BT + 'a' + BT + '["do" + "ShellScript"]'],
+  ["computed member after String.raw tagged template", 'String.raw' + BT + 'x' + BT + '["length"]'],
+  ["computed member after a function expression", 'var F = function(){}["constructor"]; F("return 42")()'],
+  ["computed member after an object literal", 'var v = {a: 1}["a"]'],
+  ["computed member after a string literal", '""["constructor"]'],
+  ["computed member after a non-ASCII identifier", 'var \u03bb = function(){}; \u03bb["constructor"]("return 42")()'],
+  ["computed member after a numeric dot", '1.["toString"]'],
+  ["quoted key in a destructuring pattern", 'var {"constructor": F} = function(){}; F("return 42")()'],
+  ["quoted key in a multi-key destructuring pattern", 'var {a: 1, "constructor": F} = {a: 1, constructor: function(){}}; F("return 42")()'],
 ];
 
 test("the JXA policy refuses code a template, comment or regular expression would hide", () => {
@@ -194,15 +210,64 @@ test("the JXA policy still reads templates, comments and division that run nothi
     'var n = Application("Finder").windows.length / 2; n',
     'var n = (1 + 2) / 3; n',
     '#!/usr/bin/env jxa\nApplication("Finder").name()',
+    '\uFEFF#!/usr/bin/env jxa\nApplication("Finder").name()',
     "var s = 'a\\\nb'; s",
     "var s = 'a\\\r\nb'; s",
     "var s = 'a\u2028b'; s",
     'class A extends Object {}\nApplication("Finder").name()',
     'for (var i = 0; i < 2; i++) { if (i) continue\n}\nApplication("Finder").name()',
+    'new RegExp("a")',
+    'Application("System Events").processes.byName("Safari").windows?.[0].name()',
+    'switch (1) { case "a": Application("Finder").name(); break; }',
+    'var x = true ? "a" : "b"; x',
+    'Application("Finder"); "/tmp/a:b"',
   ]) {
     const r = checkAppScript(script, "javascript", { CODEWHALE_CU_APP_SCRIPT: "apps" });
     assert.equal(r.refused, null, script);
   }
+});
+
+test("the policy resolves targets through comments and refuses escaped or path-form app names", () => {
+  for (const [script, language] of [
+    ['Application(/* c */"Terminal").name()', "javascript"],
+    ['Application("Terminal"/* c */).name()', "javascript"],
+    ['Application(// c\n"Terminal").name()', "javascript"],
+    ['Application/* c */("Terminal").name()', "javascript"],
+    ['Application("System Events").processes.byName(/* c */"Terminal").name()', "javascript"],
+    ["var s = 'Application(\"'; Application(\"Terminal\").activate()", "javascript"],
+    ['Application(/* c */' + BT + 'Finder' + BT + ').name()', "javascript"],
+    ['Application("\\Terminal").name()', "javascript"],
+    ['Application("\\124erminal").name()', "javascript"],
+    ['Application("Term\\\ninal").name()', "javascript"],
+    ['Application("System Events").processes.byName("\\Terminal").name()', "javascript"],
+    ['Application("/Applications/Utilities/Terminal.app").name()', "javascript"],
+    ['Application("Terminal.app/").name()', "javascript"],
+    ['Application("Macintosh HD:Applications:Utilities:Terminal.app:").name()', "javascript"],
+    ['Application("System Events").processes.byName("/usr/bin/sh").name()', "javascript"],
+    ['Application("  TERMINAL.APP  ").name()', "javascript"],
+    ['Application("COM.APPLE.TERMINAL").name()', "javascript"],
+    ['tell application (* c *) "Terminal" to activate', "applescript"],
+    ['tell application id (* c *) "com.apple.Terminal" to activate', "applescript"],
+    ['tell application "System Events" to tell process (* c *) "Terminal" to activate', "applescript"],
+    ['set s to "tell app \\""; tell application "Terminal" to activate', "applescript"],
+    ['tell application "Term\\inal" to activate', "applescript"],
+    ['tell application "/Applications/Utilities/Terminal.app" to activate', "applescript"],
+    ['tell application "Macintosh HD:Applications:Utilities:Terminal.app:" to activate', "applescript"],
+    ['tell application "  TERMINAL.APP  " to activate', "applescript"],
+    ['tell application id "COM.APPLE.TERMINAL" to activate', "applescript"],
+  ]) {
+    const r = checkAppScript(script, language, { CODEWHALE_CU_APP_SCRIPT: "apps" });
+    assert.ok(r.refused, `must refuse (${language}): ${script}`);
+  }
+  assert.deepEqual(checkAppScript('Application(/* c */"Mail").name()', "javascript").targets, [{ name: "Mail" }]);
+  assert.deepEqual(checkAppScript('Application("System Events").processes.byName(/* c */"Mail").name()', "javascript").targets, [{ name: "System Events" }, { name: "Mail" }]);
+});
+
+test("a comment inside Application() still hits a per-app deny end to end", async (t) => {
+  const s = await boot(t);
+  assert.equal((await s.tool("consent", { action: "deny", app: "Mail" })).ok, true);
+  const denied = await s.tool("app_script", { script: 'Application(/* c */"Mail").name()', language: "javascript" });
+  assert.equal(denied.error?.code, "app_denied");
 });
 
 test("the AppleScript policy refuses code a comment or quoted name would hide", () => {
@@ -228,12 +293,13 @@ test("the AppleScript policy refuses code a comment or quoted name would hide", 
 test("the AppleScript policy still reads scripts with comments and continuations", () => {
   for (const script of [
     '-- it\'s a "comment"\ntell application "Finder" to get name of every window',
-    '(* a comment (* nested *) *) tell application "Finder" to get name of every window',
+    '(* a comment (* nested *) *)\ntell application "Finder" to get name of every window',
     'tell application "Finder" to get name of every window -- "(*"\n# "',
     'set |a\\|b| to 1\ntell application "Finder" to get name of every window',
     'set a to "x\\"y"\ntell application "Finder" to get name of every window',
     'set a to "line one\nline two"\ntell application "Finder" to get name of every window',
     'tell application \xac\n"Finder" to get name of every window',
+    'tell application "Finder" to return "/tmp/a:b"',
   ]) {
     const r = checkAppScript(script, "applescript", { CODEWHALE_CU_APP_SCRIPT: "apps" });
     assert.equal(r.refused, null, script);

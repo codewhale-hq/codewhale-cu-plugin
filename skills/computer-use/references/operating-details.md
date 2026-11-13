@@ -422,8 +422,13 @@ with stderr, and `script_timeout` means the script — or a consent dialog
   So does any app the script does not name with a literal: write
   `tell application "Mail"` / `Application("Mail")`, `process "Safari"` /
   `processes.byName("Safari")`, and in JXA use `.at(i)` or `.byName("x")`
-  instead of `x[expr]`. Shell work belongs to the host's own shell. Never
-  rewrite a refused script to slip past the check; the refusal is the answer.
+  instead of `x[expr]`. JXA regular expression literals (use
+  `new RegExp("…")`), `${…}` template interpolations (use `+`),
+  HTML-style comments, quoted object keys (`{"k": …}`), escape sequences
+  or paths in app names, and AppleScript block comments containing quotes,
+  pipes or `--` also refuse. Shell work belongs to the host's own shell.
+  Never rewrite a refused script to slip past the check; the refusal is
+  the answer.
 - The current helper requires human approval for each exact script, even with
   installation trust. A changed script needs new approval. Other supported
   routes retain host attestation or elicitation; never fabricate either.

@@ -41,11 +41,13 @@ const trailingWord = (text) => /[\w$]+$/.exec(text.trimEnd())?.[0] ?? "";
 /** Remove JXA string literals and comments so structure checks only see code that runs. */
 function maskJxa(src) {
   let out = "";
+  const literals = new Map();
   const parens = [];
   let afterControlParen = false;
   for (let i = 0; i < src.length; i++) {
     const c = src[i];
     if (c === '"' || c === "'" || c === "`") {
+      const start = i + 1;
       let closed = false;
       for (i++; i < src.length; i++) {
         const d = src[i];
@@ -55,11 +57,12 @@ function maskJxa(src) {
         else if (d === "\n" || d === "\r") return { refused: UNREADABLE_JS };
       }
       if (!closed) return { refused: UNREADABLE_JS };
+      if (c !== "`") literals.set(out.length, src.slice(start, i));
       out += c + c;
       afterControlParen = false;
       continue;
     }
-    if (i === 0 && c === "#" && src[1] === "!") {
+    if ((i === 0 || (i === 1 && src[0] === "\uFEFF")) && c === "#" && src[i + 1] === "!") {
       while (i + 1 < src.length && !JS_LINE_END.has(src[i + 1])) i++;
       out += " ";
       continue;
@@ -81,31 +84,33 @@ function maskJxa(src) {
       const last = out.trimEnd().slice(-1);
       const word = trailingWord(out);
       const division = (word !== "" && !REGEX_KEYWORDS.has(word)) || (last !== "" && "]\"'`".includes(last)) || (last === ")" && !afterControlParen);
-      if (!division) return { refused: "regular expression literals are refused" };
+      if (!division) return { refused: "regular expression literals are refused — use new RegExp(\"…\") instead" };
     }
     if (c === "(") parens.push(trailingWord(out));
     if (c === ")") afterControlParen = CONTROL_KEYWORDS.has(parens.pop() ?? "");
     else if (!/\s/.test(c)) afterControlParen = false;
     out += c;
   }
-  return { code: out };
+  return { code: out, literals };
 }
 
 const UNREADABLE_AS = "the script ends inside a string, piped name or comment — the policy cannot read it";
 const COMMENT_AS = "block comments that contain quotes, pipes or -- are refused — AppleScript reads those inside a comment, so the policy cannot tell where it ends";
 
-/** Remove AppleScript string literals, piped names and comments so structure checks only see code that runs. */
 function maskAppleScript(src) {
   let out = "";
+  const literals = new Map();
   for (let i = 0; i < src.length; i++) {
     const c = src[i];
     if (c === '"' || c === "|") {
+      const start = i + 1;
       let closed = false;
       for (i++; i < src.length; i++) {
         if (src[i] === c) { closed = true; break; }
         if (src[i] === "\\") i++;
       }
       if (!closed) return { refused: UNREADABLE_AS };
+      if (c === '"') literals.set(out.length, src.slice(start, i));
       out += c + c;
     } else if ((c === "-" && src[i + 1] === "-") || c === "#") {
       while (i + 1 < src.length && src[i + 1] !== "\n" && src[i + 1] !== "\r") i++;
@@ -125,7 +130,7 @@ function maskAppleScript(src) {
       out += " ";
     } else out += c;
   }
-  return { code: out };
+  return { code: out, literals };
 }
 
 function refFor(value, { bundle = false } = {}) {
@@ -164,32 +169,40 @@ const AS_DENY = [
   [/\b(open|launch|reopen)\b[^\n]*\b(POSIX\s+file|file|alias|application\s+file|disk\s+item)\b/i, "opening files or applications through another app is refused — use open_application, which asks for consent"],
 ];
 
+function checkTargetLiteral(lit) {
+  if (lit.includes("\\")) return "escape sequences are refused in application names";
+  if (/[/:]/.test(lit)) return "application paths are refused — name the application directly, e.g. \"Finder\"";
+  return null;
+}
+
 function checkAppleScript(script) {
   // Join ¬ continuations so a phrase split across lines is still one phrase.
   const src = script.replace(/¬[ \t]*\r?\n/g, " ");
   const targets = [];
   const refused = (reason) => ({ refused: reason, targets });
-  // application "X", app "X", application id "com.x", plus System Events'
-  // `process "X"` / `application process "X"` GUI-scripting targets.
-  const literal = /\b(?:application|app)\s+(id\s+)?"((?:[^"\\]|\\.)*)"/gi;
-  for (const m of src.matchAll(literal)) { const ref = refFor(m[2], { bundle: !!m[1] }); if (ref) targets.push(ref); }
-  for (const m of src.matchAll(/\b(?:application\s+)?process\s+"((?:[^"\\]|\\.)*)"/gi)) { const ref = refFor(m[1]); if (ref) targets.push(ref); }
-  for (const [re, why] of AS_DENY) if (re.test(src)) return refused(why);
   // Any other use of `application`/`app` must be a form the policy knows:
   // `current application`, `application "X"`, `application id "X"`,
   // `application process "X"`, or `application file`/`application support`
   // inside strings (already stripped). A computed target is refused.
   const masked = maskAppleScript(script);
   if (masked.refused) return refused(masked.refused);
-  const bare = masked.code;
+  const { code: bare, literals } = masked;
+  let targetRefusal = null;
+  let staticRefusal = null;
   for (const m of bare.matchAll(/\b(application|app)\b(\s*(?:id\s*)?)(.?)/gi)) {
     const before = bare.slice(Math.max(0, m.index - 20), m.index);
     if (/\bcurrent\s+$/i.test(before)) continue;
-    if (m[3] === '"') continue;
+    if (m[3] === '"') {
+      const lit = literals.get(m.index + m[1].length + m[2].length);
+      targetRefusal ??= checkTargetLiteral(lit);
+      const ref = refFor(lit, { bundle: /\bid\b/i.test(m[2]) });
+      if (ref) targets.push(ref);
+      continue;
+    }
     const rest = bare.slice(m.index + m[1].length);
     if (/^\s*process(es)?\b/i.test(rest)) continue;
     if (/^\s*support\b/i.test(rest)) continue; // path to application support
-    return refused("the script names an application the policy cannot read statically — name it as a literal: tell application \"Name\"");
+    staticRefusal ??= "the script names an application the policy cannot read statically — name it as a literal: tell application \"Name\"";
   }
   // A System Events process reached by index or predicate (process 1, first
   // process whose frontmost is true) is an app the ledger never saw. Only a
@@ -197,10 +210,20 @@ function checkAppleScript(script) {
   for (const m of bare.matchAll(/\bprocess(es)?\b/gi)) {
     const rest = bare.slice(m.index + m[0].length);
     const before = bare.slice(Math.max(0, m.index - 40), m.index);
-    if (!m[1] && /^\s*""/.test(rest)) continue;
+    const pm = !m[1] ? /^\s*("")/.exec(rest) : null;
+    if (pm) {
+      const lit = literals.get(m.index + m[0].length + pm[0].length - 2);
+      targetRefusal ??= checkTargetLiteral(lit);
+      const ref = refFor(lit);
+      if (ref) targets.push(ref);
+      continue;
+    }
     if (/\bname\s+of\s+(every\s+)?(application\s+)?$/i.test(before)) continue;
-    return refused("System Events processes must be named with a literal (process \"Name\") so the app can be consented");
+    staticRefusal ??= "System Events processes must be named with a literal (process \"Name\") so the app can be consented";
   }
+  if (targetRefusal) return refused(targetRefusal);
+  for (const [re, why] of AS_DENY) if (re.test(src)) return refused(why);
+  if (staticRefusal) return refused(staticRefusal);
   return { refused: null, targets };
 }
 
@@ -229,39 +252,54 @@ const JXA_DENY = [
 
 function checkJxa(script) {
   const targets = [];
-  const literal = /\bApplication\s*\(\s*(["'])((?:(?!\1)[^\\]|\\.)*)\1\s*\)/g;
-  for (const m of script.matchAll(literal)) { const ref = refFor(m[2]); if (ref) targets.push(ref); }
-  const byName = /\b(?:applicationProcesses|processes)\s*\.\s*byName\s*\(\s*(["'])((?:(?!\1)[^\\]|\\.)*)\1\s*\)/g;
-  for (const m of script.matchAll(byName)) { const ref = refFor(m[2]); if (ref) targets.push(ref); }
   const refused = (reason) => ({ refused: reason, targets });
-  if (/doShellScript/i.test(script)) return refused("`doShellScript` runs a shell");
-  if (/\\u|\\x/.test(script)) return refused("escape sequences are refused so names cannot be spelled around the policy");
   const masked = maskJxa(script);
   if (masked.refused) return refused(masked.refused);
-  const code = masked.code;
-  for (const [re, why] of JXA_DENY) if (re.test(code)) return refused(why);
-  // Computed member access could spell doShellScript at runtime; only numeric
-  // indexes are allowed. Collections take .at(i) and .byName("x") instead.
-  for (const m of code.matchAll(/[\w$)\]]\s*\[([^\]]*)\]/g)) {
-    if (!/^\s*\d+\s*$/.test(m[1])) return refused("computed member access (x[expr]) is refused — use .at(i), .byName(\"Name\") or a literal property");
-  }
-  // Computed keys in object literals and destructuring patterns ({[k]: v}).
-  if (/[{,]\s*\[/.test(code)) return refused("computed keys ({[expr]: …}) and nested array literals are refused");
-  // System Events processes: a literal .byName("X"), or listing names.
-  for (const m of code.matchAll(/\b(applicationProcesses|processes)\b/g)) {
-    const rest = code.slice(m.index + m[0].length);
-    if (/^\s*\.\s*byName\s*\(\s*(""|'')\s*\)/.test(rest)) continue;
-    if (/^\s*\.\s*name\s*\(\s*\)/.test(rest)) continue;
-    return refused("System Events processes must be named with .byName(\"Name\") so the app can be consented");
-  }
+  const { code, literals } = masked;
+  let targetRefusal = null;
+  let staticRefusal = null;
   // Application must be called with one literal, or be .currentApplication().
   for (const m of code.matchAll(/\bApplication\b/g)) {
     const rest = code.slice(m.index + "Application".length);
     if (/^\s*\.\s*currentApplication\s*\(\s*\)/.test(rest)) continue;
-    if (/^\s*\(\s*``/.test(rest)) return refused("Application(`…`) may interpolate — name the app with a plain string");
-    if (/^\s*\(\s*(""|'')\s*\)/.test(rest)) continue;
-    return refused("the script names an application the policy cannot read statically — use Application(\"Name\")");
+    if (/^\s*\(\s*``/.test(rest)) { staticRefusal ??= "Application(`…`) may interpolate — name the app with a plain string"; continue; }
+    const lm = /^\s*\(\s*(""|'')\s*\)/.exec(rest);
+    if (lm) {
+      const lit = literals.get(m.index + "Application".length + lm[0].indexOf(lm[1]));
+      targetRefusal ??= checkTargetLiteral(lit);
+      const ref = refFor(lit);
+      if (ref) targets.push(ref);
+      continue;
+    }
+    staticRefusal ??= "the script names an application the policy cannot read statically — use Application(\"Name\")";
   }
+  // System Events processes: a literal .byName("X"), or listing names.
+  for (const m of code.matchAll(/\b(applicationProcesses|processes)\b/g)) {
+    const rest = code.slice(m.index + m[0].length);
+    const bm = /^\s*\.\s*byName\s*\(\s*(""|'')\s*\)/.exec(rest);
+    if (bm) {
+      const lit = literals.get(m.index + m[0].length + bm[0].indexOf(bm[1]));
+      targetRefusal ??= checkTargetLiteral(lit);
+      const ref = refFor(lit);
+      if (ref) targets.push(ref);
+      continue;
+    }
+    if (/^\s*\.\s*name\s*\(\s*\)/.test(rest)) continue;
+    staticRefusal ??= "System Events processes must be named with .byName(\"Name\") so the app can be consented";
+  }
+  if (targetRefusal) return refused(targetRefusal);
+  if (/doShellScript/i.test(script)) return refused("`doShellScript` runs a shell");
+  if (/\\u|\\x/.test(script)) return refused("escape sequences are refused so names cannot be spelled around the policy");
+  for (const [re, why] of JXA_DENY) if (re.test(code)) return refused(why);
+  // Computed member access could spell doShellScript at runtime; only numeric
+  // indexes are allowed. Collections take .at(i) and .byName("x") instead.
+  for (const m of code.matchAll(/(?:[\p{ID_Continue}$)\]}"'`]|\d\.|\?\.)\s*\[([^\]]*)\]/gu)) {
+    if (!/^\s*\d+\s*$/.test(m[1])) return refused("computed member access (x[expr]) is refused — use .at(i), .byName(\"Name\") or a literal property");
+  }
+  // Computed keys in object literals and destructuring patterns ({[k]: v}).
+  if (/[{,]\s*\[/.test(code)) return refused("computed keys ({[expr]: …}) and nested array literals are refused");
+  if (/[{,]\s*(""|'')\s*:/.test(code)) return refused("quoted property keys ({\"key\": …}) are refused — write an unquoted identifier key");
+  if (staticRefusal) return refused(staticRefusal);
   return { refused: null, targets };
 }
 
