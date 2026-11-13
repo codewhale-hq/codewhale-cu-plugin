@@ -32,8 +32,9 @@ export function appScriptMode(env = process.env) {
 
 const refuse = (reason) => ({ refused: reason, targets: [] });
 
-const REGEX_KEYWORDS = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await"]);
-const CONTROL_KEYWORDS = new Set(["if", "while", "for", "with"]);
+const REGEX_KEYWORDS = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await", "extends", "default", "break", "continue", "debugger"]);
+const CONTROL_KEYWORDS = new Set(["if", "while", "for", "with", "await"]);
+const UNREADABLE_JS = "the script ends inside a string, template or comment, or a quoted string crosses a line — the policy cannot read it";
 const JS_LINE_END = new Set(["\n", "\r", "\u2028", "\u2029"]);
 const trailingWord = (text) => /[\w$]+$/.exec(text.trimEnd())?.[0] ?? "";
 
@@ -45,12 +46,22 @@ function maskJxa(src) {
   for (let i = 0; i < src.length; i++) {
     const c = src[i];
     if (c === '"' || c === "'" || c === "`") {
-      for (i++; i < src.length && src[i] !== c; i++) {
-        if (src[i] === "\\") i++;
-        else if (c === "`" && src[i] === "$" && src[i + 1] === "{") return { refused: "template literal interpolation (${…}) runs code the policy cannot read — build the string with + instead" };
+      let closed = false;
+      for (i++; i < src.length; i++) {
+        const d = src[i];
+        if (d === c) { closed = true; break; }
+        if (d === "\\") { if (src[i + 1] === "\r" && src[i + 2] === "\n") i++; i++; }
+        else if (c === "`") { if (d === "$" && src[i + 1] === "{") return { refused: "template literal interpolation (${…}) runs code the policy cannot read — build the string with + instead" }; }
+        else if (d === "\n" || d === "\r") return { refused: UNREADABLE_JS };
       }
+      if (!closed) return { refused: UNREADABLE_JS };
       out += c + c;
       afterControlParen = false;
+      continue;
+    }
+    if (i === 0 && c === "#" && src[1] === "!") {
+      while (i + 1 < src.length && !JS_LINE_END.has(src[i + 1])) i++;
+      out += " ";
       continue;
     }
     if (c === "/" && src[i + 1] === "/") {
@@ -60,7 +71,8 @@ function maskJxa(src) {
     }
     if (c === "/" && src[i + 1] === "*") {
       const end = src.indexOf("*/", i + 2);
-      i = end < 0 ? src.length : end + 1;
+      if (end < 0) return { refused: UNREADABLE_JS };
+      i = end + 1;
       out += " ";
       continue;
     }
@@ -79,13 +91,21 @@ function maskJxa(src) {
   return { code: out };
 }
 
+const UNREADABLE_AS = "the script ends inside a string, piped name or comment — the policy cannot read it";
+const COMMENT_AS = "block comments that contain quotes, pipes or -- are refused — AppleScript reads those inside a comment, so the policy cannot tell where it ends";
+
 /** Remove AppleScript string literals, piped names and comments so structure checks only see code that runs. */
 function maskAppleScript(src) {
   let out = "";
   for (let i = 0; i < src.length; i++) {
     const c = src[i];
     if (c === '"' || c === "|") {
-      for (i++; i < src.length && src[i] !== c; i++) if (c === '"' && src[i] === "\\") i++;
+      let closed = false;
+      for (i++; i < src.length; i++) {
+        if (src[i] === c) { closed = true; break; }
+        if (src[i] === "\\") i++;
+      }
+      if (!closed) return { refused: UNREADABLE_AS };
       out += c + c;
     } else if ((c === "-" && src[i + 1] === "-") || c === "#") {
       while (i + 1 < src.length && src[i + 1] !== "\n" && src[i + 1] !== "\r") i++;
@@ -95,7 +115,9 @@ function maskAppleScript(src) {
       for (i += 2; i < src.length && depth > 0; i++) {
         if (src[i] === "(" && src[i + 1] === "*") { depth++; i++; }
         else if (src[i] === "*" && src[i + 1] === ")") { depth--; i++; }
+        else if (src[i] === '"' || src[i] === "|" || (src[i] === "-" && src[i + 1] === "-")) return { refused: COMMENT_AS };
       }
+      if (depth > 0) return { refused: UNREADABLE_AS };
       i--;
       out += " ";
     } else if (c === "¬" && /^[ \t]*\r?\n/.test(src.slice(i + 1))) {
@@ -103,7 +125,7 @@ function maskAppleScript(src) {
       out += " ";
     } else out += c;
   }
-  return out;
+  return { code: out };
 }
 
 function refFor(value, { bundle = false } = {}) {
@@ -157,7 +179,9 @@ function checkAppleScript(script) {
   // `current application`, `application "X"`, `application id "X"`,
   // `application process "X"`, or `application file`/`application support`
   // inside strings (already stripped). A computed target is refused.
-  const bare = maskAppleScript(script);
+  const masked = maskAppleScript(script);
+  if (masked.refused) return refused(masked.refused);
+  const bare = masked.code;
   for (const m of bare.matchAll(/\b(application|app)\b(\s*(?:id\s*)?)(.?)/gi)) {
     const before = bare.slice(Math.max(0, m.index - 20), m.index);
     if (/\bcurrent\s+$/i.test(before)) continue;

@@ -151,6 +151,7 @@ test("unrestricted mode still honors a deny for a named target", async (t) => {
 
 const BT = "`";
 const SHELL = 'var a=Application.currentApplication();a.includeStandardAdditions=true;';
+const HIDDEN_RUN = SHELL + 'a["do"+"ShellScript"]("id")';
 const JXA_HIDDEN = [
   ["a template interpolation", BT + '${(()=>{' + SHELL + 'return a["do"+"ShellScript"]("printf x")})()}' + BT],
   ["an interpolation inside Application()", 'Application(' + BT + '${"Fin"+"der"}' + BT + ').windows.at(0).name()'],
@@ -163,6 +164,20 @@ const JXA_HIDDEN = [
   ["code after a keyword and a regular expression", "function f(){return /'/.test(1)}" + SHELL + 'a["do"+"ShellScript"]("id");f(\'x\')'],
   ["code after a quote in an HTML-style comment", "<!-- '\n" + SHELL + 'a["do"+"ShellScript"]("id")\n<!-- \''],
   ["code after a line separator in a line comment", "// '\u2028" + SHELL + 'a["do"+"ShellScript"]("id")\n// \''],
+  ["code after a quote on a hashbang line", "#! jxa '\n" + HIDDEN_RUN + "\n'"],
+  ["code after a regular expression heritage", "class A extends /'/ {}\n" + HIDDEN_RUN + "\nvar s = 'x'"],
+  ["code after a regular expression following break", "while(1){break\n/'/.test(1)}\n" + HIDDEN_RUN + "\nvar s = 'x'"],
+  ["code after a regular expression following continue", "for(var i=0;i<1;i++){continue\n/'/.test(1)}\n" + HIDDEN_RUN + "\nvar s = 'x'"],
+  ["code after a regular expression following debugger", "debugger\n/'/.test(1)\n" + HIDDEN_RUN + "\nvar s = 'x'"],
+  ["code after a regular expression in a for-await body", "async function f(){for await (var x of y) /'/.test(1)}\n" + HIDDEN_RUN + "\nvar s = 'x'"],
+  ["code after a regular expression following default", "var o = {};\nswitch(1){default /'/.test(1)}\n" + HIDDEN_RUN + "\nvar s = 'x'"],
+  ["code inside an unterminated single-quoted string", "var s = '" + HIDDEN_RUN],
+  ["code inside an unterminated double-quoted string", 'var s = "' + HIDDEN_RUN],
+  ["code inside an unterminated template", "var s = " + BT + HIDDEN_RUN],
+  ["code inside an unterminated block comment", "/* " + HIDDEN_RUN],
+  ["code after a string that crosses a line", "var s = 'a\n" + HIDDEN_RUN + "\nvar t = 'b'"],
+  ["code after a string that crosses a carriage return", 'var s = "a\r' + HIDDEN_RUN + '\rvar t = "b"'],
+  ["code after a backslash that ends the script", "var s = 'a\\"],
 ];
 
 test("the JXA policy refuses code a template, comment or regular expression would hide", () => {
@@ -178,6 +193,12 @@ test("the JXA policy still reads templates, comments and division that run nothi
     '/* it\'s a "comment" */ Application("Finder").name()',
     'var n = Application("Finder").windows.length / 2; n',
     'var n = (1 + 2) / 3; n',
+    '#!/usr/bin/env jxa\nApplication("Finder").name()',
+    "var s = 'a\\\nb'; s",
+    "var s = 'a\\\r\nb'; s",
+    "var s = 'a\u2028b'; s",
+    'class A extends Object {}\nApplication("Finder").name()',
+    'for (var i = 0; i < 2; i++) { if (i) continue\n}\nApplication("Finder").name()',
   ]) {
     const r = checkAppScript(script, "javascript", { CODEWHALE_CU_APP_SCRIPT: "apps" });
     assert.equal(r.refused, null, script);
@@ -192,6 +213,14 @@ test("the AppleScript policy refuses code a comment or quoted name would hide", 
     ["a quote in a nested block comment", '(* (* *) " *)\ntell application (appName) to quit\n(* " *)'],
     ["a quote in a piped name", 'set |a"| to 1\ntell application (appName) to quit\nset b to "x"'],
     ["a quote in a comment ended by a continuation", '-- "\xac\ntell application (appName) to quit\n-- "'],
+    ["an unterminated string", 'set a to "x\ntell application (appName) to quit'],
+    ["an unterminated piped name", 'set |a to 1\ntell application (appName) to quit'],
+    ["an unterminated block comment", '(* x\ntell application (appName) to quit'],
+    ["an escaped pipe inside a piped name", 'set |a\\|b| to 1\ntell application (appName) to quit\nset |c| to 1'],
+    ["a string inside a block comment that hides a nested opener", '(* "(*" *)\ntell application (appName) to quit'],
+    ["a line comment inside a block comment that hides the closer", '(* -- *)\ntell application (appName) to quit\n*)'],
+    ["a piped name inside a block comment", '(* |(*| *)\ntell application (appName) to quit'],
+    ["a backslash that ends the script", 'set a to "x\\'],
   ].filter(([, script]) => !checkAppScript(script, "applescript", { CODEWHALE_CU_APP_SCRIPT: "apps" }).refused).map(([what]) => what);
   assert.deepEqual(accepted, []);
 });
@@ -199,7 +228,11 @@ test("the AppleScript policy refuses code a comment or quoted name would hide", 
 test("the AppleScript policy still reads scripts with comments and continuations", () => {
   for (const script of [
     '-- it\'s a "comment"\ntell application "Finder" to get name of every window',
-    '(* a "comment" *) tell application "Finder" to get name of every window',
+    '(* a comment (* nested *) *) tell application "Finder" to get name of every window',
+    'tell application "Finder" to get name of every window -- "(*"\n# "',
+    'set |a\\|b| to 1\ntell application "Finder" to get name of every window',
+    'set a to "x\\"y"\ntell application "Finder" to get name of every window',
+    'set a to "line one\nline two"\ntell application "Finder" to get name of every window',
     'tell application \xac\n"Finder" to get name of every window',
   ]) {
     const r = checkAppScript(script, "applescript", { CODEWHALE_CU_APP_SCRIPT: "apps" });
