@@ -310,18 +310,17 @@ test("kill_app refuses ambiguity and never terminates its own process chain", as
 
 test("kill_app refuses a name that matches two processes and ends the one that is named by pid", { skip: process.platform !== "linux" }, async (t) => {
   x11Env(t);
-  // Two copies of sleep under the same unique name: two processes, one kernel name.
   const name = `cwamb-${process.pid.toString(36)}`;
   const children = [];
   for (const sub of ["a", "b"]) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), `cu-amb-${sub}-`));
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
     const bin = path.join(dir, name);
-    fs.copyFileSync("/bin/sleep", bin);
+    fs.writeFileSync(bin, "#!/bin/sh\nread _\n");
     fs.chmodSync(bin, 0o755);
-    const child = spawn(bin, ["60"], { stdio: "ignore" });
+    const child = spawn(bin, [], { stdio: ["pipe", "ignore", "ignore"] });
     children.push(child);
-    t.after(() => { try { child.kill("SIGKILL"); } catch {} });
+    t.after(() => { try { child.stdin.destroy(); } catch {} try { child.kill("SIGKILL"); } catch {} });
   }
   await new Promise((r) => setTimeout(r, 300));
   const backend = create({ exec: { run: async () => ({ code: 1, stdout: "", stderr: "", timedOut: false, signal: null }), have } });
@@ -334,15 +333,14 @@ test("kill_app refuses a name that matches two processes and ends the one that i
 
 test("kill_app ends a process that ignores its window and reports the method", { skip: process.platform !== "linux" }, async (t) => {
   x11Env(t);
-  // A copy of sleep under a unique name, so its kernel name is unambiguous.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cu-kill-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const name = `cwkt-${process.pid.toString(36)}`;
   const bin = path.join(dir, name);
-  fs.copyFileSync("/bin/sleep", bin);
+  fs.writeFileSync(bin, "#!/bin/sh\nread _\n");
   fs.chmodSync(bin, 0o755);
-  const child = spawn(bin, ["60"], { stdio: "ignore" });
-  t.after(() => { try { child.kill("SIGKILL"); } catch {} });
+  const child = spawn(bin, [], { stdio: ["pipe", "ignore", "ignore"] });
+  t.after(() => { try { child.stdin.destroy(); } catch {} try { child.kill("SIGKILL"); } catch {} });
   await new Promise((r) => setTimeout(r, 200));
   const backend = create({ exec: { run: async () => ({ code: 1, stdout: "", stderr: "", timedOut: false, signal: null }), have } });
   const out = await backend.kill_app({ pid: child.pid });
