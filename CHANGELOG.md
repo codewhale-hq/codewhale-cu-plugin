@@ -1,6 +1,8 @@
 # Release notes
 
-## Unreleased
+## 0.16.4 — 2026-11-16
+
+Release candidate; publication and its evidence are recorded in the [qualification record](docs/RELEASE_CHECKLIST.md) once published.
 
 - **Hardened `app_script` script policy parsing.** Comment, string, template, regular-expression, destructured/chained bracket, identifier-alias and CR continuation forms that previously obscured target apps or denied APIs in AppleScript and JXA are now parsed consistently or refused before reaching `osascript`.
 - **The helper's `hello` reply now reports macOS Accessibility and Screen Recording grants.** On macOS, `hello` includes `app.grants` with `accessibility` and `screen_recording` booleans read directly from the helper's own OS grant state without triggering a screen capture or permission prompt, and omits `grants` on other platforms or when the native check is unavailable (CW-8195).
