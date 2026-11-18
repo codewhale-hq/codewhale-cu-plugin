@@ -15,7 +15,7 @@ import { spawnDockerComputer, destroyDockerComputer, destroySessionSpawns } from
 import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD, resolveTool, elementRefTarget, ELEMENT_REF_PATTERN, parseGrant, MERGED_EXPANSION, LEASE_GATED_TOOLS } from "../src/tools.mjs";
 import { tryJson, withSignal, throwIfAborted, wait, currentSignal } from "../src/exec.mjs";
 import { inputRefusal, watchLease, HUMAN_DRIVING } from "../src/lease.mjs";
-import { APP_VERSION, helperStaleness, helperBuildDrift, hello, setAppHostIdentity } from "../src/app-socket.mjs";
+import { APP_VERSION, helperStaleness, helperBuildDrift, liveHelperHealth, hello, setAppHostIdentity } from "../src/app-socket.mjs";
 import { launchRefusal } from "../src/launch-policy.mjs";
 import { checkAppScript } from "../src/app-script-policy.mjs";
 import { createNativePrompt, DECLINED_MESSAGE } from "../src/native-prompt.mjs";
@@ -2052,6 +2052,7 @@ async function callTool(params, bindWhen = null) {
     return { content: [{ type: "text", text: JSON.stringify(fail(computer, code, err.message ?? String(err), {
       tool: name, switched,
       ...(err.extra ?? {}),
+      ...(err.repair ? { repair: err.repair } : {}),
       ...(grant ? { grant } : {}),
       ...(outcomeUnknown ? { request_dispatched: true, outcome_unknown: true,
         note: "Dispatch to the previous route was attempted; its effect is unconfirmed. Observe the current target; do not automatically retry the action." } : {}),
@@ -2235,11 +2236,22 @@ async function callToolRecorded(params, refused = null) {
 }
 
 const HANDLERS = {
-  initialize(params) {
+  async initialize(params) {
     clientElicitation = params?.capabilities?.elicitation != null;
     const info = params?.clientInfo;
     clientInfo = info && typeof info === "object" ? { name: info.name ?? null, version: info.version ?? null } : null;
     setAppHostIdentity({ label: clientInfo?.name === "codewhale-tui" ? "Codewhale" : clientInfo?.name });
+    let health = null;
+    try { health = await liveHelperHealth(); } catch { health = null; }
+    const baseSkill = skillPack.find((file) => file.uri === SKILL_ROOT_URI).text;
+    let lead = null;
+    if (health?.code === "app_missing") {
+      const fullLead = `Local Mac Computer Use helper is missing. ${health.repair} Remote computers (ssh, docker, hdc) are unaffected.`;
+      const maxLeadBytes = 4096 - Buffer.byteLength(baseSkill, "utf8") - 2;
+      lead = Buffer.byteLength(fullLead, "utf8") <= maxLeadBytes
+        ? fullLead
+        : "Local Mac Computer Use helper is missing; remote computers are unaffected. Reinstall or set up the helper before local Mac actions.";
+    }
     return {
       protocolVersion: params?.protocolVersion ?? "2025-06-18",
       capabilities: {
@@ -2247,8 +2259,8 @@ const HANDLERS = {
         resources: { listChanged: false, subscribe: false },
         extensions: { "io.modelcontextprotocol/skills": {} },
       },
-      instructions: skillPack.find((file) => file.uri === SKILL_ROOT_URI).text,
-      serverInfo: { name: SERVER_NAME, version: APP_VERSION, platforms: ["darwin", "win32", "linux", "harmonyos"], transports: ["local", "ssh", "hdc"] },
+      instructions: [lead, baseSkill].filter(Boolean).join("\n\n"),
+      serverInfo: { name: SERVER_NAME, version: APP_VERSION, ...(health ? { health } : {}), platforms: ["darwin", "win32", "linux", "harmonyos"], transports: ["local", "ssh", "hdc"] },
     };
   },
   "tools/list"() {

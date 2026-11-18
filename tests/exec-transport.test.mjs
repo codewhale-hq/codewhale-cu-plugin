@@ -5,10 +5,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import net from "node:net";
+import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import { run, runOk, runInputLease, ExecError, have, trim, withSignal } from "../src/exec.mjs";
 import { safeRemotePath, b64, localExec, hdcExec, executorFor } from "../src/transport.mjs";
-import { appRequest, appSessionRequest, ensureApp, writeRegistration, setAppHostIdentity } from "../src/app-socket.mjs";
+import { appRequest, appSessionRequest, ensureApp, helperHealth, liveHelperHealth, writeRegistration, setAppHostIdentity } from "../src/app-socket.mjs";
 
 test("a missing helper gives a setup or repair path without falling back to macOS host input",async t=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),"cu-missing-app-"));
@@ -281,4 +282,64 @@ test("helper authentication precedes actions and only a written action failure h
   // Nothing written: an unreachable helper is a plain failure, safe to retry.
   process.env.CODEWHALE_CU_APP_SOCKET=path.join(dir,"absent.sock");
   await assert.rejects(appRequest({tool:"left_click",args:{}},{timeoutMs:1_000,signal:null}),error=>error.code==="app_unavailable"&&error.requestDispatched===undefined);
+});
+
+test("a registered helper that is gone is reported as needing repair at initialize and on every refusal",async t=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"cu-health-"));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const env={...process.env,CODEWHALE_CU_STATE_DIR:directory,CODEWHALE_CU_APP_SOCKET:path.join(directory,"app.sock")};
+  delete env.CODEWHALE_CU_APP;
+  fs.writeFileSync(path.join(directory,"app.json"),JSON.stringify({path:path.join(directory,"Codewhale Computer Use.app")}));
+  const server=spawn(process.execPath,[path.join(import.meta.dirname,"..","mcp","server.mjs")],{env,stdio:["pipe","pipe","ignore"]});
+  t.after(()=>server.kill("SIGTERM"));
+  const lines=[];let buffer="";
+  server.stdout.on("data",chunk=>{buffer+=chunk;let i;while((i=buffer.indexOf("\n"))>=0){lines.push(JSON.parse(buffer.slice(0,i)));buffer=buffer.slice(i+1);}});
+  const rpc=async(id,method,params)=>{server.stdin.write(JSON.stringify({jsonrpc:"2.0",id,method,params})+"\n");for(let n=0;n<200;n++){const found=lines.find(l=>l.id===id);if(found)return found.result;await new Promise(r=>setTimeout(r,50));}throw new Error(`no reply to ${method}`);};
+  const init=await rpc(1,"initialize",{protocolVersion:"2025-06-18"});
+  {
+    assert.equal(init.serverInfo.health.status,"needs_repair");
+    assert.equal(init.serverInfo.health.code,"app_missing");
+    assert.match(init.serverInfo.health.repair,/Reinstall/);
+    assert.match(init.instructions,/^Local Mac Computer Use helper is missing/);
+    assert.match(init.instructions,/refusal-codes\.md/);
+    assert.ok(Buffer.byteLength(init.instructions,"utf8")<=4096);
+  }
+  if(process.platform==="darwin"){
+    const call=await rpc(2,"tools/call",{name:"list_apps",arguments:{}});
+    const body=JSON.parse(call.content[0].text);
+    assert.equal(body.error.code,"app_missing");
+    assert.match(body.repair,/Reinstall/);
+  }
+});
+
+test("helperHealth covers unmanaged and managed missing helpers and liveHelperHealth trusts a live socket",async t=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"cu-health-unit-"));
+  const previous=process.env.CODEWHALE_CU_STATE_DIR, previousApp=process.env.CODEWHALE_CU_APP, previousSock=process.env.CODEWHALE_CU_APP_SOCKET;
+  process.env.CODEWHALE_CU_STATE_DIR=directory; delete process.env.CODEWHALE_CU_APP;
+  process.env.CODEWHALE_CU_APP_SOCKET=path.join(directory,"app.sock");
+  t.after(()=>{if(previous===undefined) delete process.env.CODEWHALE_CU_STATE_DIR; else process.env.CODEWHALE_CU_STATE_DIR=previous;if(previousApp!==undefined) process.env.CODEWHALE_CU_APP=previousApp;if(previousSock===undefined) delete process.env.CODEWHALE_CU_APP_SOCKET; else process.env.CODEWHALE_CU_APP_SOCKET=previousSock;fs.rmSync(directory,{recursive:true,force:true});});
+  const present=path.join(directory,"present.app");
+  fs.mkdirSync(present);
+  writeRegistration({path:present});
+  assert.equal(helperHealth(),null);
+  const gone=path.join(directory,"gone.app");
+  writeRegistration({path:gone});
+  const unmanaged=helperHealth();
+  assert.equal(unmanaged.status,"needs_repair");
+  assert.match(unmanaged.reason,/gone\.app, but that app is missing/);
+  const publicKey=crypto.generateKeyPairSync("ed25519").publicKey.export({format:"der",type:"spki"}).toString("base64");
+  const container=path.join(directory,"Codewhale.app");
+  const helperBundle=path.join(directory,"Codewhale Computer Use.app");
+  writeRegistration({path:helperBundle,managed:{protocol:1,publicKey,container,helperBundle}});
+  const managed=helperHealth();
+  assert.equal(managed.status,"needs_repair");
+  assert.equal(managed.code,"app_missing");
+  assert.match(managed.repair,/Codewhale\.app, go to Settings, Connectors, This Mac, and choose "Set up Computer Use on this Mac"/);
+  assert.doesNotMatch(managed.repair,/reinstalling Codewhale/);
+  const socketPath=path.join(directory,"live.sock");
+  process.env.CODEWHALE_CU_APP_SOCKET=socketPath;
+  const sockServer=net.createServer(conn=>{conn.once("data",()=>conn.end(JSON.stringify({ok:true,app:{version:"0.16.4"}})+"\n"));});
+  await new Promise(resolve=>sockServer.listen(socketPath,resolve));
+  t.after(()=>sockServer.close());
+  assert.equal(await liveHelperHealth({timeoutMs:1_000}),null);
 });

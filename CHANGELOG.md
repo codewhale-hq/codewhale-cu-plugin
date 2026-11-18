@@ -1,5 +1,9 @@
 # Release notes
 
+## Unreleased
+
+- **A missing helper is reported as needing repair instead of connected (CW-8266).** When the registered Computer Use helper app is gone from its registered path and no helper is answering on the local socket, `initialize` carries `serverInfo.health` (`status`, `code`, `reason`, `repair`) and leads its instructions within the 4096-byte budget with the repair step for this Mac while noting remote computers are unaffected, and every `app_missing` or `app_setup_required` refusal repeats that step as `repair`. For a desktop-managed helper the step is Settings, Connectors, This Mac, "Set up Computer Use on this Mac".
+
 ## 0.16.4 — 2026-11-16
 
 Release candidate; publication and its evidence are recorded in the [qualification record](docs/RELEASE_CHECKLIST.md) once published.

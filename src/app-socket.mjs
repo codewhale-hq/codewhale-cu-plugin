@@ -412,6 +412,29 @@ export async function launchManagedApp({ updateId, action = "complete" } = {}) {
   throw Object.assign(new ExecError("The exact managed helper did not start; its pending transaction remains fenced"), { code: "app_unavailable" });
 }
 
+function setupRequiredHealth() {
+  return { status: "setup_required", code: "app_setup_required", reason: `${APP_NAME} is not installed`, repair: `Install ${APP_NAME} from https://codewhale.net/computer-use and open it once to finish macOS permission setup.` };
+}
+
+export function helperHealth(reg = readRegistration()) {
+  if (process.env.CODEWHALE_CU_APP === "off") return null;
+  if (!reg) {
+    if (process.platform !== "darwin") return null;
+    return setupRequiredHealth();
+  }
+  if (reg.managed?.update || typeof reg.path !== "string" || fs.existsSync(reg.path)) return null;
+  const repair = reg.managed
+    ? `Open ${path.basename(reg.managed.container)}, go to Settings, Connectors, This Mac, and choose "Set up Computer Use on this Mac" to reinstall the helper at ${reg.path}.`
+    : `Reinstall it from https://codewhale.net/computer-use and open it once to refresh ${registrationPath()}.`;
+  return { status: "needs_repair", code: "app_missing", reason: `${APP_NAME} is registered at ${reg.path}, but that app is missing`, repair };
+}
+
+export async function liveHelperHealth({ timeoutMs = 300 } = {}) {
+  if (process.env.CODEWHALE_CU_APP === "off") return null;
+  if (await hello({ timeoutMs })) return null;
+  return helperHealth();
+}
+
 let lastLaunchAt = 0;
 
 /**
@@ -428,11 +451,15 @@ export async function ensureApp({ launch = true } = {}) {
   const reg = readRegistration();
   if (reg?.managed?.update) throw Object.assign(new ExecError("The containing desktop must complete or recover its pending Computer Use update"), { code: "managed_update_pending" });
   if (!reg) {
-    if (process.platform === "darwin") throw Object.assign(new ExecError(`Install ${APP_NAME} from https://codewhale.net/computer-use and open it once to finish macOS permission setup. Then retry; its native approval and Pause/Stop controls must be available before computer access.`), { code: "app_setup_required" });
+    if (process.platform === "darwin") {
+      const health = setupRequiredHealth();
+      throw Object.assign(new ExecError(`${health.reason}. ${health.repair} Then retry; its native approval and Pause/Stop controls must be available before computer access.`), { code: health.code, repair: health.repair });
+    }
     return { via: "direct", reason: `${APP_NAME} is not installed. Input and screen permissions belong to the current host.` };
   }
-  if (typeof reg.path === "string" && !fs.existsSync(reg.path)) {
-    throw Object.assign(new ExecError(`${APP_NAME} is registered at ${reg.path}, but that app is missing. Reinstall it and open it once to refresh ${registrationPath()}.`), { code: "app_missing" });
+  const missingHelper = helperHealth(reg);
+  if (missingHelper?.code === "app_missing") {
+    throw Object.assign(new ExecError(`${missingHelper.reason}. ${missingHelper.repair}`), { code: missingHelper.code, repair: missingHelper.repair });
   }
   if (!launch || Date.now() - lastLaunchAt < 15_000) {
     throw Object.assign(new ExecError(`${APP_NAME} is installed but not responding. Open it from Applications and retry; its controls must remain in charge of input.`), { code: "app_unavailable" });
