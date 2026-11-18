@@ -336,7 +336,7 @@ test("helperHealth covers unmanaged and managed missing helpers and liveHelperHe
   assert.equal(managed.code,"app_missing");
   assert.match(managed.repair,/Codewhale\.app, go to Settings, Connectors, This Mac, and choose "Set up Computer Use on this Mac"/);
   assert.doesNotMatch(managed.repair,/reinstalling Codewhale/);
-  const socketPath=path.join(directory,"live.sock");
+  const socketPath=process.platform==="win32"?`\\\\.\\pipe\\cu-health-live-${process.pid}-${Date.now()}`:path.join(directory,"live.sock");
   process.env.CODEWHALE_CU_APP_SOCKET=socketPath;
   const sockServer=net.createServer(conn=>{conn.once("data",()=>conn.end(JSON.stringify({ok:true,app:{version:"0.16.4"}})+"\n"));});
   await new Promise(resolve=>sockServer.listen(socketPath,resolve));

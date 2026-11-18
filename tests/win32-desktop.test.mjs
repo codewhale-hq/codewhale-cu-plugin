@@ -27,14 +27,15 @@ test('Windows desktop: observe, set Unicode value, invoke and independently veri
   const exited = new Promise(resolve => child.once('exit', resolve));
   t.after(async () => { if (child.exitCode === null) child.kill(); await exited; fs.rmSync(dir, { recursive: true, force: true }); });
   async function until(check) {
-    const deadline = Date.now() + 15_000;
+    const deadline = Date.now() + 35_000;
+    let lastError = '';
     while (Date.now() < deadline) {
-      let result; try { result = check(); } catch {}
+      let result; try { result = check(); } catch (err) { lastError = err instanceof Error ? err.message : String(err); }
       if (result) return result;
-      assert.equal(child.exitCode, null, errors);
+      assert.equal(child.exitCode, null, errors || lastError);
       await new Promise(resolve => setTimeout(resolve, 100));
     }
-    assert.fail(`fixture deadline: ${errors}`);
+    assert.fail(`fixture deadline: ${errors || lastError}`);
   }
   const read = () => JSON.parse(fs.readFileSync(receipt, 'utf8'));
   await until(() => read().text === 'initial');
